@@ -190,7 +190,9 @@ class scDPF(object):
     def annotate_adata(self):
         self.adata.obsm['X_hfactors'] = self.pmeans['hz'] / self.pmeans['cell_scale'].reshape(-1,1)
         self.adata.obsm['X_factors'] = self.pmeans['z'] / self.pmeans['cell_scale'].reshape(-1,1)
-        print('Added `X_hfactors` and `X_factors` to adata.obsm')
+        self.adata.obs['X_hfactor'] = np.argmax(self.adata.obsm['X_hfactors'], axis=1).astype(str)
+        self.adata.obs['X_factor'] = np.argmax(self.adata.obsm['X_factors'], axis=1).astype(str)
+        print('Added `X_hfactors` and `X_factors` to adata.obsm and the corresponding cell assignments to adata.obs')
 
     def plot_ard(self, layer_idx=0):
         plt.bar(np.arange(self.layer_sizes[layer_idx]), self.pmeans[f'{self.layer_names[layer_idx]}_scale'])
@@ -227,11 +229,15 @@ class scDPF(object):
             enrichments.append(enr)
         return enrichments
 
-    def get_graph(self, enrichments=None, top=10, hfactor_list=None, factor_list=None):
+    def get_graph(self, enrichments=None, top=10, hfactor_list=None, factor_list=None, ard_filter=[0., 0.]):
         if hfactor_list is None:
             hfactor_list = np.arange(self.n_hfactors)
+            if ard_filter:
+                hfactor_list = np.where(self.pmeans[f'{self.layer_names[1]}_scale']  > ard_filter[0])[0]
         if factor_list is None:
             factor_list = np.arange(self.n_factors)
+            if ard_filter:
+                factor_list = np.where(self.pmeans[f'{self.layer_names[0]}_scale']  > ard_filter[1])[0]
 
         gene_rankings = self.get_rankings()
         normalized_htopic_weights = self.pmeans['hW']/np.sum(self.pmeans['hW'][:, factor_list], axis=1).reshape(-1,1)
@@ -253,67 +259,3 @@ class scDPF(object):
             for topic in factor_list:
                 g.edge('ht' + str(htopic), 't'+str(topic), penwidth=str(normalized_htopic_weights[htopic,topic]*normalized_hfactor_scales[htopic]))
         return g
-
-
-subadata = adata.raw.to_adata()[:100, :50]
-subadata.X = subadata.X.toarray()
-scdpf = scDPF(subadata)
-elbos = scdpf.optimize(n_epochs=10, batch_size=10, step_size=0.001)
-
-
-plt.figure(figsize=(16,3))
-scdpf.plot_ard(layer_idx=1)
-
-enrichments = scdpf.get_enrichments()
-scdpf.get_graph(enrichments=enrichments, factor_list=[0,1,2,3], hfactor_list=[0,1])
-
-
-# Print top 10 words for first 10 topics.
-genes = scdpf.adata.var_names
-gene_scores = scdpf.pmeans['W']/scdpf.pmeans['gene_scale']
-gene_scores.shape
-for k in range(min(10, gene_scores.shape[0])):
-    top_words_idx = gene_scores[k, :].argsort()[-5:][::-1]
-    top_words = " ".join([f'{genes[i]} ({gene_scores[k,:][i]:.3f})' for i in top_words_idx])
-    print("Topic {}: {}".format(k, top_words))
-
-
-import numpy as np
-import pandas as pd
-import scanpy as sc
-
-sc.settings.verbosity = 3             # verbosity: errors (0), warnings (1), info (2), hints (3)
-sc.logging.print_header()
-sc.settings.set_figure_params(dpi=80, facecolor='white')
-
-results_file = 'write/pbmc3k.h5ad'  # the file that will store the analysis results
-adata = sc.read_10x_mtx(
-    'data/filtered_gene_bc_matrices/hg19/',  # the directory with the `.mtx` file
-    var_names='gene_symbols',                # use gene symbols for the variable names (variables-axis index)
-    cache=True)
-adata.var_names_make_unique()  # this is unnecessary if using `var_names='gene_ids'` in `sc.read_10x_mtx`
-sc.pp.filter_cells(adata, min_genes=200)
-sc.pp.filter_genes(adata, min_cells=3)
-adata.var['mt'] = adata.var_names.str.startswith('MT-')  # annotate the group of mitochondrial genes as 'mt'
-sc.pp.calculate_qc_metrics(adata, qc_vars=['mt'], percent_top=None, log1p=False, inplace=True)
-adata = adata[adata.obs.n_genes_by_counts < 2500, :]
-adata = adata[adata.obs.pct_counts_mt < 5, :]
-adata.raw = adata
-sc.pp.normalize_total(adata, target_sum=1e4)
-sc.pp.log1p(adata)
-sc.pp.highly_variable_genes(adata, min_mean=0.0125, max_mean=3, min_disp=0.5)
-adata = adata[:, adata.var.highly_variable]
-sc.pp.regress_out(adata, ['total_counts', 'pct_counts_mt'])
-sc.pp.scale(adata, max_value=10)
-sc.tl.pca(adata, svd_solver='arpack')
-sc.pp.neighbors(adata, n_neighbors=10, n_pcs=40)
-sc.tl.umap(adata)
-sc.tl.leiden(adata)
-sc.pl.umap(adata, color=['leiden', 'CST3', 'NKG7'])
-adata.raw.to_adata()
-subadata = adata.raw.to_adata()[:100, :100]
-subadata.X = subadata.X.toarray()
-subadata.X
-scdpf = scDPF(subadata)
-scdpf.adata.X
-scdpf.optimize()
