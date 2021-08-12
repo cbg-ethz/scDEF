@@ -6,6 +6,7 @@ from jax.experimental import optimizers
 from jax import random
 from jax.scipy.stats import norm, gamma, poisson
 import jax.numpy as jnp
+import jax.nn as jnn
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -21,15 +22,15 @@ config.update("jax_debug_infs", False)
 
 
 def gaussian_sample(rng, mean, log_scale):
-    scale = jnp.exp(log_scale)
+    scale = jnn.softplus(log_scale)
     return mean + scale * random.normal(rng, mean.shape)
 
 def gaussian_logpdf(x, mean, log_scale):
-    scale = jnp.exp(log_scale)
+    scale = jnn.softplus(log_scale)
     return jnp.sum(vmap(norm.logpdf)(x, mean * jnp.ones(x.shape), scale * jnp.ones(x.shape)))
 
 def gamma_sample(rng, log_shape, log_scale):
-    shape, scale = jnp.exp(log_shape), jnp.exp(log_scale)
+    shape, scale = jnn.softplus(log_shape), jnn.softplus(log_scale)
     return scale * random.gamma(rng, shape)
 
 def gamma_logpdf(x, log_shape, log_scale):
@@ -37,9 +38,10 @@ def gamma_logpdf(x, log_shape, log_scale):
     return jnp.sum(vmap(gamma.logpdf)(x, shape * jnp.ones(x.shape), scale=scale * jnp.ones(x.shape)))
 
 class scDPF(object):
-    def __init__(self, adata, n_hfactors=10, n_factors=30):
+    def __init__(self, adata, n_hfactors=10, n_factors=30, shape=0.1):
         self.n_factors = n_factors
         self.n_hfactors = n_hfactors
+        self.shape = shape
         self.layer_names = ['factor', 'hfactor']
         self.layer_sizes = [n_factors, n_hfactors]
         self.load_adata(adata)
@@ -57,30 +59,32 @@ class scDPF(object):
 
     def init_var_params(self):
         self.var_params = [
-            jnp.array((jnp.zeros((self.n_cells,)), jnp.zeros((self.n_cells,)))),
-            jnp.array((jnp.zeros((self.n_genes,)), jnp.zeros((self.n_genes,)))),
-            jnp.array((jnp.zeros((self.n_hfactors,)), jnp.zeros((self.n_hfactors,)))),
-            jnp.array((jnp.zeros((self.n_factors,)), jnp.zeros((self.n_factors,)))),
-            jnp.array((jnp.zeros((self.n_cells, self.n_hfactors)), jnp.zeros((self.n_cells, self.n_hfactors)))),
-            jnp.array((jnp.zeros((self.n_hfactors, self.n_factors)), jnp.zeros((self.n_hfactors, self.n_factors)))),
-            jnp.array((jnp.zeros((self.n_cells, self.n_factors)), jnp.zeros((self.n_cells, self.n_factors)))),
-            jnp.array((jnp.zeros((self.n_factors, self.n_genes)), jnp.zeros((self.n_factors, self.n_genes)))),
+            jnp.array((np.random.normal(0, 0.1, size=self.n_cells), jnp.zeros((self.n_cells,)))),
+            jnp.array((np.random.normal(0, 0.1, size=self.n_genes), jnp.zeros((self.n_genes,)))),
+            jnp.array((0.*np.random.normal(0, 0.1, size=self.n_hfactors), jnp.zeros((self.n_hfactors,)))),
+            jnp.array((0.*np.random.normal(0, 0.1, size=self.n_factors), jnp.zeros((self.n_factors,)))),
+            jnp.array((np.random.normal(0, 0.1, size=(self.n_cells, self.n_hfactors)), jnp.zeros((self.n_cells, self.n_hfactors)))),
+            jnp.array((np.random.normal(0, 0.1, size=(self.n_hfactors, self.n_factors)), jnp.zeros((self.n_hfactors, self.n_factors)))),
+            jnp.array((np.random.normal(0, 0.1, size=(self.n_cells, self.n_factors)), jnp.zeros((self.n_cells, self.n_factors)))),
+            jnp.array((np.random.normal(0, 0.1, size=(self.n_factors, self.n_genes)), jnp.zeros((self.n_factors, self.n_genes)))),
         ]
 
     def elbo(self, rng, indices, var_params):
+        print("Computing ELBO...")
         # Single-sample Monte Carlo estimate of the variational lower bound.
-        cell_scale_params = var_params[0]
-        gene_scale_params = var_params[1]
-        hfactor_scale_params = var_params[2]
-        factor_scale_params = var_params[3]
-        hz_params = var_params[4]
-        hW_params = var_params[5]
-        z_params = var_params[6]
-        W_params = var_params[7]
+        min_loc = jnp.log(1e-2)
+        cell_scale_params = jnp.clip(var_params[0], a_min=min_loc)
+        gene_scale_params = jnp.clip(var_params[1], a_min=min_loc)
+        hfactor_scale_params = jnp.clip(var_params[2], a_min=min_loc)
+        factor_scale_params = jnp.clip(var_params[3], a_min=min_loc)
+        hz_params = jnp.clip(var_params[4], a_min=min_loc)
+        hW_params = jnp.clip(var_params[5], a_min=min_loc)
+        z_params = jnp.clip(var_params[6], a_min=min_loc)
+        W_params = jnp.clip(var_params[7], a_min=min_loc)
 
         # Sample from variational distribution
-        cell_scales = gaussian_sample(rng, cell_scale_params[0][indices], cell_scale_params[1][indices])
-        gene_scales = gaussian_sample(rng, gene_scale_params[0], gene_scale_params[1])
+        cell_scales = gaussian_sample(rng, jnp.clip(cell_scale_params[0][indices], a_min=min_loc), cell_scale_params[1][indices])
+        gene_scales = gaussian_sample(rng, jnp.clip(gene_scale_params[0], a_min=min_loc), gene_scale_params[1])
 
         hfactor_scales = gaussian_sample(rng, hfactor_scale_params[0], hfactor_scale_params[1])
         factor_scales = gaussian_sample(rng, factor_scale_params[0], factor_scale_params[1])
@@ -96,14 +100,17 @@ class scDPF(object):
 
         # Compute KL divergence
         kl = 0
-        kl += gamma_logpdf(jnp.exp(cell_scales), jnp.log(1.), jnp.log(1.)) - gaussian_logpdf(cell_scales, cell_scale_params[0][indices], cell_scale_params[1][indices])
         kl += gamma_logpdf(jnp.exp(gene_scales), jnp.log(1.), jnp.log(1.)) - gaussian_logpdf(gene_scales, gene_scale_params[0], gene_scale_params[1])
         kl += gamma_logpdf(jnp.exp(hfactor_scales), jnp.log(.1), jnp.log(1.)) - gaussian_logpdf(hfactor_scales, hfactor_scale_params[0], hfactor_scale_params[1])
         kl += gamma_logpdf(jnp.exp(factor_scales), jnp.log(.1), jnp.log(1.)) - gaussian_logpdf(factor_scales, factor_scale_params[0], factor_scale_params[1])
-        kl += gamma_logpdf(jnp.exp(hz), jnp.log(.1), cell_scales.reshape(-1,1)) - gaussian_logpdf(hz, hz_params[0][indices], hz_params[1][indices])
-        kl += gamma_logpdf(jnp.exp(hW), jnp.log(.3), hfactor_scales.reshape(-1,1)) - gaussian_logpdf(hW, hW_params[0], hW_params[1])
-        kl += gamma_logpdf(jnp.exp(z), jnp.log(.1), jnp.log(10. * jnp.exp(hz).dot(jnp.exp(hW)))) - gaussian_logpdf(z, z_params[0][indices], z_params[1][indices])
-        kl += gamma_logpdf(jnp.exp(W), jnp.log(.3), factor_scales.reshape(-1,1)+gene_scales.reshape(1,-1)) - gaussian_logpdf(W, W_params[0], W_params[1])
+        kl += gamma_logpdf(jnp.exp(hW), jnp.log(.1), jnp.log(1./0.3) + hfactor_scales.reshape(-1,1)) - gaussian_logpdf(hW, hW_params[0], hW_params[1])
+        kl += gamma_logpdf(jnp.exp(W), jnp.log(.1), jnp.log(1./0.3) + gene_scales.reshape(1,-1) + factor_scales.reshape(-1,1)) - gaussian_logpdf(W, W_params[0], W_params[1])
+        kl *= indices.shape[0] / self.X.shape[0] # scale by minibatch size
+
+        kl += gamma_logpdf(jnp.exp(cell_scales), jnp.log(1.), jnp.log(1.)) - gaussian_logpdf(cell_scales, cell_scale_params[0][indices], cell_scale_params[1][indices])
+        kl += gamma_logpdf(jnp.exp(hz), jnp.log(self.shape), jnp.log(1./self.shape) + cell_scales.reshape(-1,1)) - gaussian_logpdf(hz, hz_params[0][indices], hz_params[1][indices])
+        kl += gamma_logpdf(jnp.exp(z), jnp.log(self.shape), jnp.log(1./self.shape * jnp.exp(hz).dot(jnp.exp(hW)))) - gaussian_logpdf(z, z_params[0][indices], z_params[1][indices])
+
         return ll + kl
 
     def batch_elbo(self, rng, indices, var_params, num_samples):
