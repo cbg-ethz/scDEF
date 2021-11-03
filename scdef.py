@@ -1,15 +1,16 @@
 from functools import partial
 import string
 
-from jax.api import jit, grad, vmap, value_and_grad
+from jax.api import jit, grad, vmap
 from jax.experimental import optimizers
-from jax import random
+from jax import random, value_and_grad
 from jax.scipy.stats import norm, gamma, poisson
 import jax.numpy as jnp
 import jax.nn as jnn
 
 import matplotlib
 import matplotlib.pyplot as plt
+import seaborn as sns
 import gseapy as gp
 from graphviz import Graph
 from tqdm import tqdm
@@ -20,21 +21,20 @@ from jax.config import config
 config.update("jax_debug_nans", False)
 config.update("jax_debug_infs", False)
 
-
 def gaussian_sample(rng, mean, log_scale):
-    scale = jnn.softplus(log_scale)
+    scale = jnp.exp(log_scale)
     return mean + scale * random.normal(rng, mean.shape)
 
 def gaussian_logpdf(x, mean, log_scale):
-    scale = jnn.softplus(log_scale)
+    scale = jnp.exp(log_scale)
     return jnp.sum(vmap(norm.logpdf)(x, mean * jnp.ones(x.shape), scale * jnp.ones(x.shape)))
 
 def gamma_sample(rng, log_shape, log_scale):
-    shape, scale = jnn.softplus(log_shape), jnn.softplus(log_scale)
+    shape, scale = jnp.exp(log_shape), jnp.exp(log_scale)
     return scale * random.gamma(rng, shape)
 
-def gamma_logpdf(x, log_shape, log_scale):
-    shape, scale = jnp.exp(log_shape), jnp.exp(log_scale)
+def gamma_logpdf(x, shape, rate):
+    scale = 1./rate
     return jnp.sum(vmap(gamma.logpdf)(x, shape * jnp.ones(x.shape), scale=scale * jnp.ones(x.shape)))
 
 class scDPF(object):
@@ -48,6 +48,7 @@ class scDPF(object):
         self.n_cells, self.n_genes = adata.shape
         self.init_var_params()
         self.set_posterior_means()
+        self.hpal = sns.color_palette('Set2', n_hfactors)
         self.graph = self.get_graph()
 
     def load_adata(self, adata):
@@ -59,57 +60,90 @@ class scDPF(object):
 
     def init_var_params(self):
         self.var_params = [
-            jnp.array((np.random.normal(0, 0.1, size=self.n_cells), jnp.zeros((self.n_cells,)))),
-            jnp.array((np.random.normal(0, 0.1, size=self.n_genes), jnp.zeros((self.n_genes,)))),
-            jnp.array((0.*np.random.normal(0, 0.1, size=self.n_hfactors), jnp.zeros((self.n_hfactors,)))),
-            jnp.array((0.*np.random.normal(0, 0.1, size=self.n_factors), jnp.zeros((self.n_factors,)))),
-            jnp.array((np.random.normal(0, 0.1, size=(self.n_cells, self.n_hfactors)), jnp.zeros((self.n_cells, self.n_hfactors)))),
-            jnp.array((np.random.normal(0, 0.1, size=(self.n_hfactors, self.n_factors)), jnp.zeros((self.n_hfactors, self.n_factors)))),
-            jnp.array((np.random.normal(0, 0.1, size=(self.n_cells, self.n_factors)), jnp.zeros((self.n_cells, self.n_factors)))),
-            jnp.array((np.random.normal(0, 0.1, size=(self.n_factors, self.n_genes)), jnp.zeros((self.n_factors, self.n_genes)))),
+            jnp.array((-np.log(np.sum(self.X, axis=1)), jnp.ones((self.n_cells,)))),
+            jnp.array(np.random.normal(5, 0.1, size=self.n_genes)),
+            jnp.array((0*np.random.normal(5, 0.1, size=self.n_hfactors), jnp.ones((self.n_hfactors,)))),
+            jnp.array((0*np.random.normal(5, 0.1, size=self.n_factors), jnp.ones((self.n_factors,)))),
+            jnp.array((np.random.normal(1., 0.1, size=(self.n_cells, self.n_hfactors)),
+                        jnp.zeros((self.n_cells, self.n_hfactors)))),
+            jnp.array(np.random.normal(1., 0.1, size=(self.n_hfactors, self.n_factors))),
+            jnp.array((np.random.normal(0.5, 0.1, size=(self.n_cells, self.n_factors)),
+                        jnp.zeros((self.n_cells, self.n_factors)))),
+            jnp.array(np.random.normal(0.5, 0.1, size=(self.n_factors, self.n_genes)))
         ]
 
     def elbo(self, rng, indices, var_params):
         print("Computing ELBO...")
         # Single-sample Monte Carlo estimate of the variational lower bound.
-        min_loc = jnp.log(1e-2)
+        min_loc = jnp.log(1e-3)
         cell_scale_params = jnp.clip(var_params[0], a_min=min_loc)
-        gene_scale_params = jnp.clip(var_params[1], a_min=min_loc)
-        hfactor_scale_params = jnp.clip(var_params[2], a_min=min_loc)
-        factor_scale_params = jnp.clip(var_params[3], a_min=min_loc)
+#         gene_scale_params = jnp.clip(var_params[1], a_min=min_loc)
+        unconst_gene_scales = jnp.clip(var_params[1], a_min=min_loc)
+#         hfactor_scale_params = jnp.clip(var_params[2], a_min=min_loc)
+#         factor_scale_params = jnp.clip(var_params[3], a_min=min_loc)
         hz_params = jnp.clip(var_params[4], a_min=min_loc)
-        hW_params = jnp.clip(var_params[5], a_min=min_loc)
+#         hW_params = jnp.clip(var_params[5], a_min=min_loc)
+        unconst_hW = jnp.clip(var_params[5], a_min=min_loc)
         z_params = jnp.clip(var_params[6], a_min=min_loc)
-        W_params = jnp.clip(var_params[7], a_min=min_loc)
+#         W_params = jnp.clip(var_params[7], a_min=min_loc)
+        unconst_W = jnp.clip(var_params[7], a_min=min_loc)
 
         # Sample from variational distribution
-        cell_scales = gaussian_sample(rng, jnp.clip(cell_scale_params[0][indices], a_min=min_loc), cell_scale_params[1][indices])
-        gene_scales = gaussian_sample(rng, jnp.clip(gene_scale_params[0], a_min=min_loc), gene_scale_params[1])
+        log_cell_scales = gaussian_sample(rng, cell_scale_params[0][indices], cell_scale_params[1][indices])
+        cell_scales = jnp.exp(log_cell_scales)
+#         log_gene_scales = gaussian_sample(rng, gene_scale_params[0], gene_scale_params[1])
+#         gene_scales = jnp.exp(log_gene_scales)
+        gene_scales = jnn.softplus(unconst_gene_scales)
 
-        hfactor_scales = gaussian_sample(rng, hfactor_scale_params[0], hfactor_scale_params[1])
-        factor_scales = gaussian_sample(rng, factor_scale_params[0], factor_scale_params[1])
+#         log_hfactor_scales = gaussian_sample(rng, hfactor_scale_params[0], hfactor_scale_params[1])
+#         hfactor_scales = jnp.exp(log_hfactor_scales)
+#         log_factor_scales = gaussian_sample(rng, factor_scale_params[0], factor_scale_params[1])
+#         factor_scales = jnp.exp(log_factor_scales)
 
-        hz = gaussian_sample(rng, hz_params[0][indices], hz_params[1][indices])
-        hW = gaussian_sample(rng, hW_params[0], hW_params[1])
+        log_hz = gaussian_sample(rng, hz_params[0][indices], hz_params[1][indices])
+        hz = jnp.exp(log_hz)
+#         log_hW = gaussian_sample(rng, hW_params[0], hW_params[1])
+#         hW = jnp.exp(log_hW)
+        hW = jnn.softplus(unconst_hW)
+        mean_top = jnp.matmul(hz, hW)
 
-        z = gaussian_sample(rng, z_params[0][indices], z_params[1][indices])
-        W = gaussian_sample(rng, W_params[0], W_params[1])
+        log_z = gaussian_sample(rng, z_params[0][indices], z_params[1][indices])
+        z = jnp.exp(log_z)
+#         log_W = gaussian_sample(rng, W_params[0], W_params[1])
+#         W = jnp.exp(log_W)
+        W = jnn.softplus(unconst_W)
+        mean_bottom = jnp.matmul(z, W)
 
         # Compute log likelihood
-        ll = jnp.sum(vmap(poisson.logpmf)(self.X[indices], jnp.exp(z).dot(jnp.exp(W))))
+        ll = jnp.sum(vmap(poisson.logpmf)(self.X[indices], mean_bottom))
 
         # Compute KL divergence
-        kl = 0
-        kl += gamma_logpdf(jnp.exp(gene_scales), jnp.log(1.), jnp.log(1.)) - gaussian_logpdf(gene_scales, gene_scale_params[0], gene_scale_params[1])
-        kl += gamma_logpdf(jnp.exp(hfactor_scales), jnp.log(.1), jnp.log(1.)) - gaussian_logpdf(hfactor_scales, hfactor_scale_params[0], hfactor_scale_params[1])
-        kl += gamma_logpdf(jnp.exp(factor_scales), jnp.log(.1), jnp.log(1.)) - gaussian_logpdf(factor_scales, factor_scale_params[0], factor_scale_params[1])
-        kl += gamma_logpdf(jnp.exp(hW), jnp.log(.1), jnp.log(1./0.3) + hfactor_scales.reshape(-1,1)) - gaussian_logpdf(hW, hW_params[0], hW_params[1])
-        kl += gamma_logpdf(jnp.exp(W), jnp.log(.1), jnp.log(1./0.3) + gene_scales.reshape(1,-1) + factor_scales.reshape(-1,1)) - gaussian_logpdf(W, W_params[0], W_params[1])
+        kl = 0.
+        kl += gamma_logpdf(gene_scales, 1., 1.) #-\
+#                 gaussian_logpdf(log_gene_scales, gene_scale_params[0], gene_scale_params[1])
+
+#         kl += gamma_logpdf(hfactor_scales, .1, 1.) -\
+#                 gaussian_logpdf(log_hfactor_scales, hfactor_scale_params[0], hfactor_scale_params[1])
+
+#         kl += gamma_logpdf(factor_scales, 1., 1.) -\
+#                 gaussian_logpdf(log_factor_scales, factor_scale_params[0], factor_scale_params[1])
+
+        kl += gamma_logpdf(hW, .3, .1) #-\
+#                 gaussian_logpdf(log_hW, hW_params[0], hW_params[1])
+
+        kl += gamma_logpdf(W, .3, .1 * gene_scales.reshape(1,-1)) #-\
+#                 gaussian_logpdf(log_W, W_params[0], W_params[1])
+
         kl *= indices.shape[0] / self.X.shape[0] # scale by minibatch size
 
-        kl += gamma_logpdf(jnp.exp(cell_scales), jnp.log(1.), jnp.log(1.)) - gaussian_logpdf(cell_scales, cell_scale_params[0][indices], cell_scale_params[1][indices])
-        kl += gamma_logpdf(jnp.exp(hz), jnp.log(self.shape), jnp.log(1./self.shape) + cell_scales.reshape(-1,1)) - gaussian_logpdf(hz, hz_params[0][indices], hz_params[1][indices])
-        kl += gamma_logpdf(jnp.exp(z), jnp.log(self.shape), jnp.log(1./self.shape * jnp.exp(hz).dot(jnp.exp(hW)))) - gaussian_logpdf(z, z_params[0][indices], z_params[1][indices])
+        kl += gamma_logpdf(cell_scales, 1., 1.) -\
+                gaussian_logpdf(log_cell_scales, cell_scale_params[0][indices], cell_scale_params[1][indices])
+
+        kl += gamma_logpdf(hz, self.shape, self.shape) -\
+                gaussian_logpdf(log_hz, hz_params[0][indices], hz_params[1][indices])
+
+        kl += gamma_logpdf(z, self.shape, cell_scales.reshape(-1,1) * self.shape / mean_top) -\
+                gaussian_logpdf(log_z, z_params[0][indices], z_params[1][indices])
 
         return ll + kl
 
@@ -185,18 +219,18 @@ class scDPF(object):
 
         self.pmeans = {
             'cell_scale': np.exp(cell_scale_params[0]),
-            'gene_scale': np.exp(gene_scale_params[0]),
+            'gene_scale': np.array(jnn.softplus(gene_scale_params)), #np.exp(gene_scale_params[0]),
             'hfactor_scale': np.exp(hfactor_scale_params[0]),
             'factor_scale': np.exp(factor_scale_params[0]),
             'hz': np.exp(hz_params[0]),
-            'hW': np.exp(hW_params[0]),
+            'hW': np.array(jnn.softplus(hW_params)),#np.exp(hW_params[0]),
             'z': np.exp(z_params[0]),
-            'W': np.exp(W_params[0]),
+            'W': np.array(jnn.softplus(W_params))#np.exp(W_params[0]),
         }
 
     def annotate_adata(self):
-        self.adata.obsm['X_hfactors'] = self.pmeans['hz'] / self.pmeans['cell_scale'].reshape(-1,1)
-        self.adata.obsm['X_factors'] = self.pmeans['z'] / self.pmeans['cell_scale'].reshape(-1,1)
+        self.adata.obsm['X_hfactors'] = self.pmeans['hz'] * self.pmeans['cell_scale'].reshape(-1,1)
+        self.adata.obsm['X_factors'] = self.pmeans['z'] * self.pmeans['cell_scale'].reshape(-1,1)
         self.adata.obs['X_hfactor'] = np.argmax(self.adata.obsm['X_hfactors'], axis=1).astype(str)
         self.adata.obs['X_factor'] = np.argmax(self.adata.obsm['X_factors'], axis=1).astype(str)
         print('Added `X_hfactors` and `X_factors` to adata.obsm and the corresponding cell assignments to adata.obs')
@@ -253,7 +287,7 @@ class scDPF(object):
         g = Graph()
         for htopic in hfactor_list:
             g.node('ht' + str(htopic), label=str(htopic),
-                    fillcolor=matplotlib.colors.to_hex((64/255, 224/255, 208/255, normalized_hfactor_scales[htopic]), keep_alpha=True), ordering='out')
+                    fillcolor=matplotlib.colors.to_hex(self.hpal[htopic]), ordering='out', style='filled')
         for topic in factor_list:
             if enrichments is not None:
                 tlab = str(topic) + '\n\n' + "\n".join([enrichments[topic].results['Term'].values[i] + f" ({enrichments[topic].results['Adjusted P-value'][i]:.3f})" for i in range(top)])
@@ -264,5 +298,5 @@ class scDPF(object):
                     fillcolor=matplotlib.colors.to_hex((64/255, 224/255, 208/255, normalized_factor_scales[topic]), keep_alpha=True), ordering='in')
         for htopic in hfactor_list:
             for topic in factor_list:
-                g.edge('ht' + str(htopic), 't'+str(topic), penwidth=str(normalized_htopic_weights[htopic,topic]*normalized_hfactor_scales[htopic]))
+                g.edge('ht' + str(htopic), 't'+str(topic), penwidth=str(normalized_htopic_weights[htopic,topic]*2), color=matplotlib.colors.to_hex(self.hpal[htopic]))
         return g
