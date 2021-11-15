@@ -186,6 +186,7 @@ class scDPF(object):
         print("\nStarting training...")
         t = 0
         for epoch in tqdm(range(n_epochs)):
+            t = 0
             epoch_losses = []
             start_time = time.time()
             for it in range(num_batches):
@@ -243,8 +244,8 @@ class scDPF(object):
         plt.title(f'Layer {layer_idx}')
         plt.show()
 
-    def get_rankings(self, layer_idx=0):
-        term_names = self.adata.var_names
+    def get_rankings(self, layer_idx=0, thres=.1):
+        term_names = np.array(self.adata.var_names)
         term_scores = self.pmeans['W']/self.pmeans['gene_scale']
         if layer_idx == 1:
             term_names = np.arange(self.n_factors).astype(str)
@@ -253,13 +254,39 @@ class scDPF(object):
         top_terms = []
         for k in range(self.layer_sizes[layer_idx]):
             top_terms_idx = (term_scores[k, :]).argsort()[::-1]
-            top_terms_list = [term_names[i] for i in top_terms_idx]
+            sorted_term_scores_k = term_scores[k,:][top_terms_idx]
+            top_terms_idx = top_terms_idx[np.where(sorted_term_scores_k > thres)[0]]
+            top_terms_list = term_names[top_terms_idx].tolist()
             top_terms.append(top_terms_list)
         return top_terms
 
-    def get_enrichments(self, libs=['KEGG_2019_Human']):
+    def get_annotations(self, marker_reference, gene_rankings=None):
+        if gene_rankings is None:
+            gene_rankings = self.get_rankings(layer_idx=0)
+
+        annotations = []
+        keys = list(marker_reference.keys())
+        for rank in gene_rankings:
+            # Get annotation in marker_reference that contains the highest score
+            # score is length of intersection over length of union
+            scores = np.array([len(set(rank).intersection(set(marker_reference[a])))/len(set(rank).union(set(marker_reference[a]))) for a in keys])
+            sorted_ann_idx = np.argsort(scores)[::-1]
+            sorted_scores = scores[sorted_ann_idx]
+
+            # Get only annotations for which score is not zero
+            sorted_ann_idx = sorted_ann_idx[np.where(sorted_scores > 0)[0]]
+
+            ann = np.array(keys)[sorted_ann_idx]
+            ann = np.array([f'{a} ({sorted_scores[i]:.4f})' for i, a in enumerate(ann)]).tolist()
+            annotations.append(ann)
+        return annotations
+
+
+    def get_enrichments(self, libs=['KEGG_2019_Human'], gene_rankings=None):
+        if gene_rankings is None:
+            gene_rankings = self.get_rankings(layer_idx=0)
+
         enrichments = []
-        gene_rankings = self.get_rankings(layer_idx=0)
         for rank in tqdm(gene_rankings):
             enr = gp.enrichr(gene_list=rank,
                          gene_sets=libs,
@@ -270,7 +297,7 @@ class scDPF(object):
             enrichments.append(enr)
         return enrichments
 
-    def get_graph(self, enrichments=None, top=10, hfactor_list=None, factor_list=None, ard_filter=[0., 0.]):
+    def get_graph(self, annotations=None, enrichments=None, top=10, hfactor_list=None, factor_list=None, ard_filter=[0., 0.], gene_rankings=None):
         if hfactor_list is None:
             hfactor_list = np.arange(self.n_hfactors)
             if ard_filter:
@@ -280,10 +307,16 @@ class scDPF(object):
             if ard_filter:
                 factor_list = np.where(self.pmeans[f'{self.layer_names[0]}_scale']  > ard_filter[1])[0]
 
-        gene_rankings = self.get_rankings()
         normalized_htopic_weights = self.pmeans['hW']/np.sum(self.pmeans['hW'][:, factor_list], axis=1).reshape(-1,1)
         normalized_hfactor_scales = self.pmeans['hfactor_scale']/np.sum(self.pmeans['hfactor_scale'][hfactor_list])
         normalized_factor_scales = self.pmeans['factor_scale']/np.sum(self.pmeans['factor_scale'][factor_list])
+
+        # Assign factors to hierarchical factors to set the plotting order
+        assignments = []
+        for topic in factor_list:
+            assignments.append(np.argmax(normalized_htopic_weights[:,topic]))
+        factor_list = np.argsort(np.array(assignments))
+
         g = Graph()
         for htopic in hfactor_list:
             g.node('ht' + str(htopic), label=str(htopic),
@@ -292,8 +325,14 @@ class scDPF(object):
             if enrichments is not None:
                 tlab = str(topic) + '\n\n' + "\n".join([enrichments[topic].results['Term'].values[i] + f" ({enrichments[topic].results['Adjusted P-value'][i]:.3f})" for i in range(top)])
                 # tlab = enrichments[topic].results['Term'].values[0] + f" ({enrichments[topic].results['Adjusted P-value'][0]:.3f})" + '\n\n' + tlab
+            elif annotations is not None:
+                tlab = str(topic) + '\n\n' + "\n".join([annotations[topic][i] for i in range(min(len(annotations[topic]), top))])
             else:
+                if gene_rankings is None:
+                    gene_rankings = self.get_rankings()
                 tlab = str(topic) + '\n\n' + "\n".join(gene_rankings[topic][:top])
+
+            # Get top factors from this hierarchical first
             g.node('t' + str(topic), label=tlab, fontsize="11",
                     fillcolor=matplotlib.colors.to_hex((64/255, 224/255, 208/255, normalized_factor_scales[topic]), keep_alpha=True), ordering='in')
         for htopic in hfactor_list:
