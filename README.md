@@ -1,4 +1,8 @@
 # scDEF
+
+[![PyPI](https://img.shields.io/pypi/v/scdef.svg?style=flat)](https://pypi.python.org/pypi/scdef)
+[![Tests](https://github.com/pedrofale/scdef/actions/workflows/main.yaml/badge.svg)](https://github.com/pedrofale/scdef/actions/workflows/main.yaml)
+
 Extract hierarchical signatures of cell state from single-cell data using a deep exponential family model and variational inference.
 
 ## Installation
