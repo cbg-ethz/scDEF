@@ -1,13 +1,13 @@
 # scDEF
 Extract hierarchical signatures of cell state from single-cell data using a deep exponential family model and variational inference.
 
-# Installation
+## Installation
 ```
 $ pip install scdef
 ```
 
-# Usage
-## Command line
+## Usage
+### Command line
 `scdef` can be used from the command line:
 ```
 $ scdef data.h5
@@ -22,7 +22,7 @@ Full overview:
 $ scdef --help
 ```
 
-## Python API
+### Python API
 Alternatively, it is possible to use it in code:
 ```python
 >>> from scdef import scDEF
