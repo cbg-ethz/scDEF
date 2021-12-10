@@ -38,44 +38,69 @@ def gamma_logpdf(x, shape, rate):
     return jnp.sum(vmap(gamma.logpdf)(x, shape * jnp.ones(x.shape), scale=scale * jnp.ones(x.shape)))
 
 class scDPF(object):
-    def __init__(self, adata, n_hfactors=10, n_factors=30, shape=0.1):
+    def __init__(self, adata, n_hfactors=10, n_factors=30, shape=0.1, batch_key='batch'):
         self.n_factors = n_factors
         self.n_hfactors = n_hfactors
+        self.n_batches = 0
         self.shape = shape
         self.layer_names = ['factor', 'hfactor']
         self.layer_sizes = [n_factors, n_hfactors]
-        self.load_adata(adata)
+        self.load_adata(adata, batch_key=batch_key)
         self.n_cells, self.n_genes = adata.shape
         self.init_var_params()
         self.set_posterior_means()
         self.hpal = sns.color_palette('Set2', n_hfactors)
         self.graph = self.get_graph()
 
-    def load_adata(self, adata):
+    def load_adata(self, adata, batch_key='batch'):
         if not isinstance(adata, AnnData):
             raise TypeError("adata must be an instance of AnnData.")
         self.adata = adata
         self.adata.raw = self.adata
-        self.X = jnp.array(self.adata.raw.X)
+        self.X = np.array(self.adata.raw.X)
+        self.n_batches = 0
+        self.batch_indices_onehot = np.zeros((self.adata.shape[0], self.n_batches))
+        self.batch_lib_sizes = np.sum(self.X, axis=1)
+        self.batch_lib_ratio = np.ones((self.X.shape[0],)) * np.mean(self.batch_lib_sizes)/np.var(self.batch_lib_sizes)
+        if batch_key in self.adata.obs.columns:
+            batches = np.array(self.adata.obs[batch_key].values.unique())
+            self.n_batches = len(batches)
+            if self.n_batches == 1:
+                self.n_batches = 0
+            print(f"Found {self.n_batches} values for `{batch_key}` in data: {batches}")
+            self.batch_indices_onehot = np.zeros((self.adata.shape[0], self.n_batches))
+            if self.n_batches > 1:
+                for i, b in enumerate(batches):
+                    cells = np.where(self.adata.obs[batch_key] == b)[0]
+                    self.batch_indices_onehot[cells, i] = 1
+                    self.batch_lib_sizes[cells] = np.sum(self.X, axis=1)[cells]
+                    self.batch_lib_ratio[cells] = np.mean(self.batch_lib_sizes[cells])/np.var(self.batch_lib_sizes[cells])
+        self.batch_indices_onehot = jnp.array(self.batch_indices_onehot)
+        self.batch_lib_sizes = jnp.array(self.batch_lib_sizes)
+        self.batch_lib_ratio = jnp.array(self.batch_lib_ratio)
+        self.X = jnp.array(self.X)
 
     def init_var_params(self):
         self.var_params = [
-            jnp.array((-np.log(np.sum(self.X, axis=1)), jnp.ones((self.n_cells,)))),
-            jnp.array(np.random.normal(5, 0.1, size=self.n_genes)),
-            jnp.array((0*np.random.normal(5, 0.1, size=self.n_hfactors), jnp.ones((self.n_hfactors,)))),
-            jnp.array((0*np.random.normal(5, 0.1, size=self.n_factors), jnp.ones((self.n_factors,)))),
-            jnp.array((np.random.normal(1., 0.1, size=(self.n_cells, self.n_hfactors)),
+            jnp.array((-np.log(np.sum(self.X, axis=1)), 1*jnp.ones((self.n_cells,)))), # cell scale
+            jnp.array(np.random.normal(-5, 0.1, size=self.n_genes)),                  # gene scale
+            jnp.array((0*np.random.normal(5, 0.1, size=self.n_hfactors), jnp.ones((self.n_hfactors,)))), # hfactor scale
+            jnp.array((0*np.random.normal(5, 0.1, size=self.n_factors), jnp.ones((self.n_factors,)))), # factor scale
+            jnp.array((np.random.normal(1., 0.1, size=(self.n_cells, self.n_hfactors)),  # hz
                         jnp.zeros((self.n_cells, self.n_hfactors)))),
-            jnp.array(np.random.normal(1., 0.1, size=(self.n_hfactors, self.n_factors))),
-            jnp.array((np.random.normal(0.5, 0.1, size=(self.n_cells, self.n_factors)),
+            jnp.array(np.random.normal(1., 0.1, size=(self.n_hfactors, self.n_factors))), # hW
+            jnp.array((np.random.normal(0.5, 0.1, size=(self.n_cells, self.n_factors)),  # z
                         jnp.zeros((self.n_cells, self.n_factors)))),
-            jnp.array(np.random.normal(0.5, 0.1, size=(self.n_factors, self.n_genes)))
+            jnp.array(np.random.normal(0.5, 0.1, size=(self.n_factors, self.n_genes))), # W
+            jnp.array(np.random.normal(0.5, 2., size=(self.n_batches, self.n_genes))), # W_noise
         ]
 
     def elbo(self, rng, indices, var_params):
         print("Computing ELBO...")
         # Single-sample Monte Carlo estimate of the variational lower bound.
-        min_loc = jnp.log(1e-3)
+        batch_indices_onehot = self.batch_indices_onehot[indices]
+        
+        min_loc = jnp.log(1e-6)
         cell_scale_params = jnp.clip(var_params[0], a_min=min_loc)
 #         gene_scale_params = jnp.clip(var_params[1], a_min=min_loc)
         unconst_gene_scales = jnp.clip(var_params[1], a_min=min_loc)
@@ -87,61 +112,71 @@ class scDPF(object):
         z_params = jnp.clip(var_params[6], a_min=min_loc)
 #         W_params = jnp.clip(var_params[7], a_min=min_loc)
         unconst_W = jnp.clip(var_params[7], a_min=min_loc)
-
+        unconst_W_noise = jnp.clip(var_params[8], a_min=jnp.log(1e-30))
+    
         # Sample from variational distribution
         log_cell_scales = gaussian_sample(rng, cell_scale_params[0][indices], cell_scale_params[1][indices])
         cell_scales = jnp.exp(log_cell_scales)
 #         log_gene_scales = gaussian_sample(rng, gene_scale_params[0], gene_scale_params[1])
 #         gene_scales = jnp.exp(log_gene_scales)
         gene_scales = jnn.softplus(unconst_gene_scales)
-
+        
 #         log_hfactor_scales = gaussian_sample(rng, hfactor_scale_params[0], hfactor_scale_params[1])
 #         hfactor_scales = jnp.exp(log_hfactor_scales)
 #         log_factor_scales = gaussian_sample(rng, factor_scale_params[0], factor_scale_params[1])
 #         factor_scales = jnp.exp(log_factor_scales)
-
+    
         log_hz = gaussian_sample(rng, hz_params[0][indices], hz_params[1][indices])
         hz = jnp.exp(log_hz)
 #         log_hW = gaussian_sample(rng, hW_params[0], hW_params[1])
 #         hW = jnp.exp(log_hW)
         hW = jnn.softplus(unconst_hW)
         mean_top = jnp.matmul(hz, hW)
-
+        
         log_z = gaussian_sample(rng, z_params[0][indices], z_params[1][indices])
         z = jnp.exp(log_z)
+#         log_z_noise = gaussian_sample(rng, z_noise_params[0][indices], z_noise_params[1][indices])
+#         z_noise = jnp.exp(log_z_noise)
 #         log_W = gaussian_sample(rng, W_params[0], W_params[1])
 #         W = jnp.exp(log_W)
         W = jnn.softplus(unconst_W)
-        mean_bottom = jnp.matmul(z, W)
+        W_noise = jnn.softplus(unconst_W_noise)
+        mean_bottom_bio = jnp.matmul(z, W)
+        mean_bottom_batch = jnp.matmul(batch_indices_onehot, W_noise) # jnn.softplus(jnp.matmul(batch_indices_onehot, unconst_W_noise))
+        mean_bottom = mean_bottom_bio + mean_bottom_batch/cell_scales.reshape(-1,1)
 
         # Compute log likelihood
         ll = jnp.sum(vmap(poisson.logpmf)(self.X[indices], mean_bottom))
 
         # Compute KL divergence
         kl = 0.
-        kl += gamma_logpdf(gene_scales, 1., 1.) #-\
-#                 gaussian_logpdf(log_gene_scales, gene_scale_params[0], gene_scale_params[1])
-
+        gene_size = jnp.sum(self.X, axis=0)
+        kl += gamma_logpdf(gene_scales, 1., jnp.mean(gene_size)/jnp.var(gene_size)) #-\
+#                 gaussian_logpdf(log_gene_scales, gene_scale_params[0], gene_scale_params[1])    
+        
 #         kl += gamma_logpdf(hfactor_scales, .1, 1.) -\
 #                 gaussian_logpdf(log_hfactor_scales, hfactor_scale_params[0], hfactor_scale_params[1])
-
+        
 #         kl += gamma_logpdf(factor_scales, 1., 1.) -\
 #                 gaussian_logpdf(log_factor_scales, factor_scale_params[0], factor_scale_params[1])
-
-        kl += gamma_logpdf(hW, .3, .1) #-\
+        
+        kl += gamma_logpdf(hW, .3, 1.) #-\
 #                 gaussian_logpdf(log_hW, hW_params[0], hW_params[1])
-
-        kl += gamma_logpdf(W, .3, .1 * gene_scales.reshape(1,-1)) #-\
+        
+        kl += gamma_logpdf(W, .3, 1. * gene_scales.reshape(1,-1)) #-\
 #                 gaussian_logpdf(log_W, W_params[0], W_params[1])
-
+        
+        kl += gamma_logpdf(W_noise, 1., .1 * gene_scales.reshape(1,-1)) #gaussian_logpdf(unconst_W_noise, 0., -unconst_gene_scales.reshape(1,-1)) #-\
+#                 gaussian_logpdf(log_W, W_params[0], W_params[1])
+    
         kl *= indices.shape[0] / self.X.shape[0] # scale by minibatch size
-
-        kl += gamma_logpdf(cell_scales, 1., 1.) -\
+        
+        kl += gamma_logpdf(cell_scales, .1, .1*self.batch_lib_ratio[indices]) -\
                 gaussian_logpdf(log_cell_scales, cell_scale_params[0][indices], cell_scale_params[1][indices])
-
+        
         kl += gamma_logpdf(hz, self.shape, self.shape) -\
                 gaussian_logpdf(log_hz, hz_params[0][indices], hz_params[1][indices])
-
+        
         kl += gamma_logpdf(z, self.shape, cell_scales.reshape(-1,1) * self.shape / mean_top) -\
                 gaussian_logpdf(log_z, z_params[0][indices], z_params[1][indices])
 
@@ -169,7 +204,7 @@ class scDPF(object):
             params = get_params(opt_state)
             value, gradient = loss_grad(indices, params, i)
             return value, opt_update(i, gradient, opt_state)
-
+        
         num_complete_batches, leftover = divmod(self.n_cells, batch_size)
         num_batches = num_complete_batches + bool(leftover)
         def data_stream():
@@ -217,6 +252,7 @@ class scDPF(object):
         hW_params = self.var_params[5]
         z_params = self.var_params[6]
         W_params = self.var_params[7]
+        W_noise_params = self.var_params[8]
 
         self.pmeans = {
             'cell_scale': np.exp(cell_scale_params[0]),
@@ -226,7 +262,8 @@ class scDPF(object):
             'hz': np.exp(hz_params[0]),
             'hW': np.array(jnn.softplus(hW_params)),#np.exp(hW_params[0]),
             'z': np.exp(z_params[0]),
-            'W': np.array(jnn.softplus(W_params))#np.exp(W_params[0]),
+            'W': np.array(jnn.softplus(W_params)),#np.exp(W_params[0]),
+            'W_noise': np.array(jnn.softplus(W_noise_params)),#np.exp(W_params[0]),
         }
 
     def annotate_adata(self):
@@ -263,7 +300,7 @@ class scDPF(object):
     def get_annotations(self, marker_reference, gene_rankings=None):
         if gene_rankings is None:
             gene_rankings = self.get_rankings(layer_idx=0)
-
+        
         annotations = []
         keys = list(marker_reference.keys())
         for rank in gene_rankings:
@@ -281,11 +318,11 @@ class scDPF(object):
             annotations.append(ann)
         return annotations
 
-
+    
     def get_enrichments(self, libs=['KEGG_2019_Human'], gene_rankings=None):
         if gene_rankings is None:
             gene_rankings = self.get_rankings(layer_idx=0)
-
+        
         enrichments = []
         for rank in tqdm(gene_rankings):
             enr = gp.enrichr(gene_list=rank,
