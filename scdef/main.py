@@ -6,6 +6,7 @@ from .scdef import scDEF
 import numpy as np
 import pandas as pd
 
+import logging
 import click
 import os
 from pathlib import Path
@@ -64,6 +65,8 @@ from pathlib import Path
 def main(
     input_file, level_sizes, epochs, minibatch_size, step_size, mc_samples, max_genes, batch_key, verbose, output_path
 ):
+    logging.basicConfig(level=logging.INFO)
+
     adata = sc.read_h5ad(input_file)
 
     # Do some basic pre-processing
@@ -84,33 +87,20 @@ def main(
     raw_adata = raw_adata[:, adata.var.highly_variable]
 
     # Run scDEF
-    scdpf = scDPF(raw_adata, n_factors=level_sizes[0], n_hfactors=level_sizes[1], shape=1.)
-    elbos = scdpf.optimize(n_epochs=epochs, batch_size=minibatch_size, step_size=step_size, num_samples=mc_samples)
+    scdef = scDEF(raw_adata, n_factors=level_sizes[0], n_hfactors=level_sizes[1], shape=1.)
+    elbos = scdef.optimize(n_epochs=epochs, batch_size=minibatch_size, step_size=step_size, num_samples=mc_samples)
    
-    if verbose:
-        # Check diagnostics
-        scdpf.report_diagnostics()
+    summary = scdef.get_summary(top_genes=5)
 
-    scdpf.adata.obsm['X_hfactors'] = scdpf.pmeans['hz']
-    scdpf.adata.obsm['X_factors'] = scdpf.pmeans['z'] * scdpf.pmeans['cell_scale'].reshape(-1,1)
-    scdpf.adata.obs['X_hfactor'] = np.argmax(scdpf.adata.obsm['X_hfactors'], axis=1).astype(str)
-    scdpf.adata.obs['X_factor'] = np.argmax(scdpf.adata.obsm['X_factors'], axis=1).astype(str)
-
-    for i in range(10):
-        scdpf.adata.obs[f'{i}'] = scdpf.adata.obsm['X_factors'][:,i]
-    
-    for i in range(3):
-        scdpf.adata.obs[f'h{i}'] = scdpf.adata.obsm['X_hfactors'][:,i]
-
-    graph = scdpf.get_graph(enrichments=None, ard_filter=[.001, .001], top=10)
+    graph = scdef.get_graph()
 
     # Save object, annotated AnnData and graph
     Path(output_path).mkdir(parents=True, exist_ok=True)
-    pickle.dump(scdpf, os.path.join(output_path, 'scdpf.pkl'))
-    scdpf.adata.write(os.path.join(output_path), 'annotated_adata.h5')
+    pickle.dump(scdef, os.path.join(output_path, 'scdef.pkl'))
+    scdef.adata.write(os.path.join(output_path), 'annotated_adata.h5')
     graph.render(directory=output_path)
 
-    print(f"Saved results to {output_path}.")
+    logging.info(f"Saved results to {output_path}.")
 
 
 if __name__ == "__main__":
