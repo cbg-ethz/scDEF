@@ -18,6 +18,7 @@ import time
 
 import logging
 
+import scipy
 from anndata import AnnData
 from jax.config import config
 config.update("jax_debug_nans", False)
@@ -39,7 +40,7 @@ def gamma_logpdf(x, shape, rate):
     scale = 1./rate
     return jnp.sum(vmap(gamma.logpdf)(x, shape * jnp.ones(x.shape), scale=scale * jnp.ones(x.shape)))
 
-class scDEF(object):
+class scDPF(object):
     def __init__(self, adata, n_factors=10, n_hfactors=3, shape=.3, batch_key='batch', logginglevel=logging.INFO):
         self.logger = logging.getLogger('scDEF')
         self.logger.setLevel(logginglevel)
@@ -62,7 +63,10 @@ class scDEF(object):
             raise TypeError("adata must be an instance of AnnData.")
         self.adata = adata
         self.adata.raw = self.adata
-        self.X = np.array(self.adata.raw.X)
+        if isinstance(self.adata.raw.X, scipy.sparse.csr_matrix):
+            self.X = np.array(self.adata.raw.X.toarray())
+        else:
+            self.X = np.array(self.adata.raw.X)
         self.n_batches = 1
         self.batch_indices_onehot = np.ones((self.adata.shape[0], self.n_batches))
         self.batch_lib_sizes = np.sum(self.X, axis=1)
@@ -72,7 +76,7 @@ class scDEF(object):
             self.n_batches = len(batches)
             if self.n_batches == 1:
                 self.n_batches = 0
-            print(f"Found {self.n_batches} values for `{batch_key}` in data: {batches}")
+            self.logger.info(f"Found {self.n_batches} values for `{batch_key}` in data: {batches}")
             self.batch_indices_onehot = np.zeros((self.adata.shape[0], self.n_batches))
             if self.n_batches > 1:
                 for i, b in enumerate(batches):
@@ -102,9 +106,10 @@ class scDEF(object):
                         np.random.normal(0, 0.1, size=(self.n_cells, self.n_factors)))),
             jnp.array(((np.random.normal(.5, 0.1, size=(self.n_factors, self.n_genes))),  # W
                         np.random.normal(0, 0.1, size=(self.n_factors, self.n_genes)))),
-            jnp.array(np.random.normal(0., 0.1, size=(self.n_batches, self.n_genes))), # W_noise
-            jnp.array((np.random.normal(0., 0.1, size=(self.n_cells, self.n_batches)),  # z_noise
-                    jnp.zeros((self.n_cells, self.n_batches)))),
+            jnp.array(((np.random.normal(.5, 0.1, size=(self.n_batches, self.n_genes))),  # W_noise
+                        np.random.normal(0, 0.1, size=(self.n_batches, self.n_genes)))),
+            jnp.array((np.random.normal(.5, 0.1, size=(self.n_cells, self.n_batches)),  # z_noise
+                        np.random.normal(0, 0.1, size=(self.n_cells, self.n_batches)))),
         ]
 
     def elbo(self, rng, indices, var_params):
@@ -123,8 +128,8 @@ class scDEF(object):
         z_params = jnp.clip(var_params[6], a_min=min_loc)
         W_params = jnp.clip(var_params[7], a_min=min_loc)
 #         unconst_W = jnp.clip(var_params[7], a_min=min_loc)
-        unconst_W_noise = jnp.clip(var_params[8], a_min=jnp.log(1e-30))
-        z_noise_params = jnp.clip(var_params[9], a_min=jnp.log(1e-30))
+        W_noise_params = jnp.clip(var_params[8], a_min=min_loc)
+        z_noise_params = jnp.clip(var_params[9], a_min=min_loc)
     
         min_concentration = 1e-10
         min_scale = 1e-10
@@ -149,6 +154,12 @@ class scDEF(object):
         hW_concentration = jnp.maximum(jnn.softplus(hW_params[0]), min_concentration)
         hW_rate = 1./jnp.maximum(jnn.softplus(hW_params[1]), min_scale)
     
+        z_noise_concentration = jnp.maximum(jnn.softplus(z_noise_params[0][indices]), min_concentration)
+        z_noise_rate = 1./jnp.maximum(jnn.softplus(z_noise_params[1][indices]), min_scale)
+        
+        W_noise_concentration = jnp.maximum(jnn.softplus(W_noise_params[0]), min_concentration)
+        W_noise_rate = 1./jnp.maximum(jnn.softplus(W_noise_params[1]), min_scale)
+    
         # Sample from variational distribution
         cell_scales = gamma_sample(rng, cell_scale_concentration, cell_scale_rate)
 #         cell_scales = jnp.exp(log_cell_scales)
@@ -172,13 +183,15 @@ class scDEF(object):
 #         z = jnp.exp(log_z)
 #         log_z_noise = gaussian_sample(rng, z_noise_params[0][indices], z_noise_params[1][indices])
 #         z_noise = jnp.exp(log_z_noise)
+#         z_noise = gamma_sample(rng, z_noise_concentration, z_noise_rate)
         W = gamma_sample(rng, W_concentration, W_rate)
 #         W = jnp.exp(log_W)
 #         W = jnn.softplus(unconst_W)
 #         W_noise = jnn.softplus(unconst_W_noise)
+#         W_noise = gamma_sample(rng, W_noise_concentration, W_noise_rate)
         mean_bottom_bio = jnp.matmul(z, W)
-#         mean_bottom_batch = jnp.matmul(z_noise, W_noise) # jnn.softplus(jnp.matmul(batch_indices_onehot, unconst_W_noise))
-        mean_bottom = mean_bottom_bio #+ mean_bottom_batch/cell_scales.reshape(-1,1)
+#         mean_bottom_batch = jnp.matmul(batch_indices_onehot * z_noise, W_noise) # jnn.softplus(jnp.matmul(batch_indices_onehot, unconst_W_noise))
+        mean_bottom = mean_bottom_bio #+ mean_bottom_batch
 
         # Compute log likelihood
         ll = jnp.sum(vmap(poisson.logpmf)(self.X[indices], mean_bottom))
@@ -202,8 +215,8 @@ class scDEF(object):
         kl += gamma_logpdf(W, .1, 1 * gene_scales.reshape(1,-1) * factor_scales.reshape(-1,1)) -\
                 gamma_logpdf(W, W_concentration, W_rate)
         
-#         kl += gamma_logpdf(W_noise, 1., 1. * gene_scales.reshape(1,-1)) #-\
-#                 gaussian_logpdf(log_W, W_params[0], W_params[1])
+#         kl += gamma_logpdf(W_noise, 10, 10. * gene_scales.reshape(1,-1)) -\
+#                 gamma_logpdf(W_noise, W_noise_concentration, W_noise_rate)
     
         kl *= indices.shape[0] / self.X.shape[0] # scale by minibatch size
         
@@ -216,8 +229,8 @@ class scDEF(object):
         kl += gamma_logpdf(z, self.shape,  self.shape * factor_scales.reshape(1,-1) / mean_top ) -\
                 gamma_logpdf(z, z_concentration, z_rate)
         
-#         kl += gaussian_logpdf(log_z_noise, 0., 0.) -\
-#                 gaussian_logpdf(log_z_noise, z_noise_params[0][indices], z_noise_params[1][indices])
+#         kl += gamma_logpdf(z_noise, 10., 10. * cell_scales.reshape(-1,1)) -\
+#                 gamma_logpdf(z_noise, z_noise_concentration, z_noise_rate)
 
         return ll + kl
 
@@ -305,8 +318,8 @@ class scDEF(object):
             'hW': np.array(jnn.softplus(hW_params[0]) * jnn.softplus(hW_params[1])),
             'z': np.array(jnn.softplus(z_params[0]) * jnn.softplus(z_params[1])),
             'W': np.array(jnn.softplus(W_params[0]) * jnn.softplus(W_params[1])),
-            'W_noise': np.array(jnn.softplus(W_noise_params)),#np.exp(W_params[0]),
-            'z_noise': np.exp(z_noise_params[0]),
+            'W_noise': np.array(jnn.softplus(W_noise_params[0]) * jnn.softplus(W_noise_params[1])),
+            'z_noise': np.array(jnn.softplus(z_noise_params[0]) * jnn.softplus(z_noise_params[1])),
         }
 
         self.pvars = {
@@ -318,8 +331,8 @@ class scDEF(object):
             'hW': np.array(jnn.softplus(hW_params[0]) * jnn.softplus(hW_params[1])**2),
             'z': np.array(jnn.softplus(z_params[0]) * jnn.softplus(z_params[1])**2),
             'W': np.array(jnn.softplus(W_params[0]) * jnn.softplus(W_params[1])**2),
-            'W_noise': np.array(jnn.softplus(W_noise_params)),#np.exp(W_params[0]),
-            'z_noise': np.exp(z_noise_params[0]),
+            'W_noise': np.array(jnn.softplus(W_noise_params[0]) * jnn.softplus(W_noise_params[1])**2),
+            'z_noise': np.array(jnn.softplus(z_noise_params[0]) * jnn.softplus(z_noise_params[1])**2),
         }
 
     def filter_factors(self, q=0.4, annotate=True):
@@ -345,8 +358,8 @@ class scDEF(object):
         self.adata.obs['cell_scale'] = 1/self.pmeans['cell_scale']
         for i in range(len(tokeep)):
             self.adata.obs[f'{i}'] = self.adata.obsm['X_factors'][:,i]
-            self.adata.obs[f'm{i}'] = self.adata.obsm['X_factors_mean'][:,i]
-            self.adata.obs[f'v{i}'] = self.adata.obsm['X_factors_var'][:,i]
+#             self.adata.obs[f'm{i}'] = self.adata.obsm['X_factors_mean'][:,i]
+#             self.adata.obs[f'v{i}'] = self.adata.obsm['X_factors_var'][:,i]
         for i in range(scdpf.n_hfactors):
             self.adata.obs[f'h{i}'] = self.adata.obsm['X_hfactors'][:,i]
         self.logger.info("Updated adata.obs: `X_hfactor`, `X_factor`, 'cell_scale', and cell weights for each "\
@@ -358,10 +371,15 @@ class scDEF(object):
         self.logger.info("Updated adata.var: `gene_scale` and gene weights for each factor.")
 
     def plot_ard(self, layer_idx=0, q=None):
-        plt.bar(np.arange(self.layer_sizes[layer_idx]), self.pmeans[f'{self.layer_names[layer_idx]}_scale'])
-        if isistance(q, float):
+        if isinstance(q, float):
             thres = np.quantile(self.pmeans[f'{self.layer_names[0]}_scale'], q=q)
             plt.axhline(thres, color='red', ls='--')
+            above = np.where(self.pmeans[f'{self.layer_names[0]}_scale'] >= thres)[0]
+            below = np.where(self.pmeans[f'{self.layer_names[0]}_scale'] < thres)[0]
+            plt.bar(np.arange(self.layer_sizes[layer_idx])[above], self.pmeans[f'{self.layer_names[layer_idx]}_scale'][above])
+            plt.bar(np.arange(self.layer_sizes[layer_idx])[below], self.pmeans[f'{self.layer_names[layer_idx]}_scale'][below])
+        else:
+            plt.bar(np.arange(self.layer_sizes[layer_idx]), self.pmeans[f'{self.layer_names[layer_idx]}_scale'])
         plt.ylabel('Contribution')
         plt.xlabel('Factor')
         plt.xticks(np.arange(self.layer_sizes[layer_idx]))
