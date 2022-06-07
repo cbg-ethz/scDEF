@@ -1,9 +1,16 @@
-# scDEF
+<div align="left">
+  <img src="https://github.com/pedrofale/scDEF/raw/main/figures/scdef.png", width="300px">
+</div>
+<p></p>
 
 [![pypi](https://img.shields.io/pypi/v/scdef.svg?style=flat)](https://pypi.python.org/pypi/scdef)
-[![build](https://github.com/pedrofale/scdef/actions/workflows/main.yaml/badge.svg)](https://github.com/pedrofale/scdef/actions/workflows/main.yaml)
+[![build](https://github.com/pedrofale/scdef/actions/workflows/main.yaml/badge.svg)](https://github.com/pedrofale/scDEF/actions/workflows/main.yaml)
 
-Extract hierarchical signatures of cell state from single-cell data using a deep exponential family model.
+Extract hierarchical signatures of cell state from single-cell gene expression data using a deep exponential family model.
+scDEF is a single model for (hierarchical) clustering, gene signature learning, dimensionality reduction and batch integration.
+The API is designed to work with [AnnData](https://anndata.readthedocs.io/en/latest/) objects.
+
+Check out the [tutorial](https://github.com/pedrofale/scDEF/blob/main/notebooks/tutorial.ipynb) for more information.
 
 ## Installation
 ```
@@ -14,11 +21,11 @@ $ pip install scdef
 ### Command line
 `scdef` can be used from the command line:
 ```
-$ scdef data.h5
+$ scdef data.h5ad
 ```
 This will produce the following files:
 * `scdef.pkl`: file containing the `scDEF` object;
-* `scdef_data.h5`: file containing the `AnnData` object with annotations obtained by `scDEF`;
+* `scdef_data.h5ad`: file containing the `AnnData` object with annotations obtained by `scDEF`;
 * `graph.pdf`: the `scDEF` graph containing the learned factors and their hierarchical groupings.
 
 Full overview:
