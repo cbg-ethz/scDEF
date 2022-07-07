@@ -6,8 +6,8 @@
 [![pypi](https://img.shields.io/pypi/v/scdef.svg?style=flat)](https://pypi.python.org/pypi/scdef)
 [![build](https://github.com/pedrofale/scdef/actions/workflows/main.yaml/badge.svg)](https://github.com/pedrofale/scDEF/actions/workflows/main.yaml)
 
-Extract hierarchical signatures of cell state from single-cell gene expression data.
-scDEF is a [deep exponential family](https://proceedings.mlr.press/v38/ranganath15.html) model for (hierarchical) clustering, gene signature learning, dimensionality reduction and batch integration.
+Extract hierarchical signatures of cell state from single-cell data.
+scDEF is a collection of [deep exponential family](https://proceedings.mlr.press/v38/ranganath15.html) models for hierarchical clustering and gene signature learning, dimensionality reduction, batch integration and multi-modal data integration.
 The API is designed to work with [AnnData](https://anndata.readthedocs.io/en/latest/) objects.
 
 Check out the [tutorial](https://github.com/pedrofale/scDEF/blob/main/notebooks/tutorial.ipynb) for more information.
