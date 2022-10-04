@@ -1,0 +1,8 @@
+de_prob: 0.05
+de_facscale: 0.5
+n_cells: 2000
+n_genes: 800
+n_reps: 5
+n_groups: 8
+n_batches: [2, 4]
+frac_shared: [0., .5, 1.]
