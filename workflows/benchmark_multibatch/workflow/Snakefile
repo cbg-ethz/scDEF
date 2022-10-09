@@ -13,7 +13,7 @@ rule all:
 rule generate_data:
     params:
         de_prob = config["de_prob"],
-        de_facscale = config["de_facscale"],
+        batch_facscale = config["batch_facscale"],
         n_cells = config["n_cells"],
         n_genes = config["n_genes"],
         n_groups = config["n_groups"],
@@ -35,7 +35,8 @@ rule run_scdef:
         counts_fname = 'results/data/{n_batches}/{frac_shared}/{rep_id}_counts.csv',
         meta_fname = 'results/data/{n_batches}/{frac_shared}/{rep_id}_meta.csv',
     output:
-        fname = 'results/scDEF/{n_batches}/{frac_shared}/{rep_id}_ari.txt',
+        ari_fname = 'results/scDEF/{n_batches}/{frac_shared}/{rep_id}_ari.txt',
+        mod_fname = 'results/scDEF/{n_batches}/{frac_shared}/{rep_id}_mod.txt',
     script:
         "scripts/run_scdef.py"
 
@@ -46,7 +47,8 @@ rule run_schpf:
         counts_fname = 'results/data/{n_batches}/{frac_shared}/{rep_id}_counts.csv',
         meta_fname = 'results/data/{n_batches}/{frac_shared}/{rep_id}_meta.csv',
     output:
-        fname = 'results/scHPF/{n_batches}/{frac_shared}/{rep_id}_ari.txt',
+        ari_fname = 'results/scHPF/{n_batches}/{frac_shared}/{rep_id}_ari.txt',
+        mod_fname = 'results/scHPF/{n_batches}/{frac_shared}/{rep_id}_mod.txt',
     script:
         "scripts/run_schpf.py"
 
@@ -57,14 +59,15 @@ rule run_scvi:
         counts_fname = 'results/data/{n_batches}/{frac_shared}/{rep_id}_counts.csv',
         meta_fname = 'results/data/{n_batches}/{frac_shared}/{rep_id}_meta.csv',
     output:
-        fname = 'results/scVI/{n_batches}/{frac_shared}/{rep_id}_ari.txt',
+        ari_fname = 'results/scVI/{n_batches}/{frac_shared}/{rep_id}_ari.txt',
+        mod_fname = 'results/scVI/{n_batches}/{frac_shared}/{rep_id}_mod.txt',
     script:
         "scripts/run_scvi.py"
 
 rule gather_scores:
     input:
         fname_list = expand(
-            'results/{method}/{n_batches}/{frac_shared}/{rep_id}_ari.txt',
+            'results/{method}/{n_batches}/{frac_shared}/{rep_id}_mod.txt',
             method=["scDEF", "scHPF", "scVI"], frac_shared=FRACS_SHARED,
             n_batches=N_BATCHES, rep_id=[r for r in range(N_REPS)])
     output:

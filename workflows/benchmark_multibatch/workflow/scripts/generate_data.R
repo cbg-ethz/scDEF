@@ -1,6 +1,8 @@
 suppressMessages(library(splatter))
 suppressMessages(library(ggplot2))
 suppressMessages(library(scater))
+suppressMessages(library(SeuratData))
+suppressMessages(library(Seurat))
 
 n_cells_per_batch <- snakemake@params[["n_cells"]]
 n_batches <- snakemake@params[["n_batches"]]
@@ -11,11 +13,14 @@ frac_shared <- as.numeric(snakemake@params[["frac_shared"]])
 n_groups <- as.numeric(snakemake@params[["n_groups"]])
 
 # Create a Splat with all batches
-params <- newSplatParams()
+data("pbmc3k")
+c <- as.matrix(GetAssayData(object = pbmc3k, slot = "counts"))
+
+params <- splatEstimate(c)
 params <- setParam(params, "nGenes", snakemake@params[["n_genes"]])
 params <- setParam(params, "batchCells", n_cells)
 params <- setParam(params, "de.prob", snakemake@params[["de_prob"]])
-params <- setParam(params, "de.facScale", snakemake@params[["de_facscale"]])
+params <- setParam(params, "batch.facScale", snakemake@params[["batch_facscale"]])
 params <- setParam(params, "seed", as.numeric(snakemake@params[["seed"]]))
 group_probs <- rep(1/n_groups, n_groups)
 params <- setParam(params, "group.prob", group_probs)

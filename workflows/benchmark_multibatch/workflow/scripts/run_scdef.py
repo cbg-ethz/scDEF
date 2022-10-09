@@ -9,10 +9,18 @@ meta = pd.read_csv(snakemake.input["meta_fname"])
 
 adata = anndata.AnnData(X=counts.values.T, obs=meta)
 
-scd = scdef.scDEF(adata, n_factors=15, n_hfactors=5, shape=.3)
-elbos = scd.optimize(n_epochs=1, batch_size=256, step_size=.05, num_samples=1, seed=42, init=False)
+scd = scdef.scDEF(adata, n_factors=20, n_hfactors=5, shape=.3)
+elbos = scd.optimize(n_epochs=1500, batch_size=256, step_size=.05, num_samples=2, seed=42, init=False)
 
+scd.filter_factors(annotate=True, q=[0.3, 0.])
 ari = adjusted_rand_score(adata.obs['Group'], scd.adata.obs['X_factor'])
 
-with open(snakemake.output["fname"], "w") as file:
+# Compute mean cell score per group
+mean_cluster_scores = scdef.util.get_mean_cellscore_per_group(scd.pmeans['z'][:,tokeep[0]] * scd.pmeans['cell_scale'], adata.obs['Group'].values)
+mod = scdef.util.mod_core(mean_cluster_scores.T)
+
+with open(snakemake.output["ari_fname"], "w") as file:
     file.write(str(ari))
+
+with open(snakemake.output["mod_fname"], "w") as file:
+    file.write(str(mod))
