@@ -10,7 +10,7 @@ for _ in range(3):  # go up to results/
 outFileName = snakemake.output[0]
 
 pattern = (
-    collectionName + "/**/**/*ari.txt"
+    collectionName + "/**/**/*mod.txt"
 )  # all files matching this pattern are processed
 
 fileList = glob.glob(pattern, recursive=False)
@@ -39,9 +39,9 @@ for filename in fileList:
 
 columns = [
     "method",
-    "de_fscale",
+    "de_prob",
     "rep_id",
-    "ari",
+    "mod",
 ]
 
 import pandas as pd
@@ -51,10 +51,10 @@ scores = pd.melt(
     scores,
     id_vars=[
         "method",
-        "de_fscale",
+        "de_prob",
         "rep_id",
     ],
-    value_vars="ari",
+    value_vars="mod",
     var_name="score",
 )
 scores.to_csv(outFileName, index=False)

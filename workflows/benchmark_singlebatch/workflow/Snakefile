@@ -2,7 +2,7 @@ import os
 
 configfile: "config/config.yaml"
 
-DE_FACSCALES = config["de_facscale"]
+DE_PROBS = config["de_probs"]
 N_REPS = config["n_reps"]
 
 rule all:
@@ -11,16 +11,15 @@ rule all:
 
 rule generate_data:
     params:
-        de_prob = config["de_prob"],
-        de_facscale = "{de_facscale}",
+        de_prob = "{de_prob}",
         n_cells = config["n_cells"],
         n_genes = config["n_genes"],
         n_groups = config["n_groups"],
         seed = "{rep_id}",
     output:
-        counts_fname = 'results/data/{de_facscale}/{rep_id}_counts.csv',
-        meta_fname = 'results/data/{de_facscale}/{rep_id}_meta.csv',
-        plot_fname = 'results/data/{de_facscale}/{rep_id}_plot.png',
+        counts_fname = 'results/data/{de_prob}/{rep_id}_counts.csv',
+        meta_fname = 'results/data/{de_prob}/{rep_id}_meta.csv',
+        plot_fname = 'results/data/{de_prob}/{rep_id}_plot.png',
     script:
         "scripts/generate_data.R"
 
@@ -28,10 +27,11 @@ rule run_scdef:
     params:
         seed = "{rep_id}",
     input:
-        counts_fname = 'results/data/{de_facscale}/{rep_id}_counts.csv',
-        meta_fname = 'results/data/{de_facscale}/{rep_id}_meta.csv',
+        counts_fname = 'results/data/{de_prob}/{rep_id}_counts.csv',
+        meta_fname = 'results/data/{de_prob}/{rep_id}_meta.csv',
     output:
-        fname = 'results/scDEF/{de_facscale}/{rep_id}_ari.txt',
+        ari_fname = 'results/scDEF/{de_prob}/{rep_id}_ari.txt',
+        mod_fname = 'results/scDEF/{de_prob}/{rep_id}_mod.txt',
     script:
         "scripts/run_scdef.py"
 
@@ -39,10 +39,11 @@ rule run_schpf:
     params:
         seed = "{rep_id}",
     input:
-        counts_fname = 'results/data/{de_facscale}/{rep_id}_counts.csv',
-        meta_fname = 'results/data/{de_facscale}/{rep_id}_meta.csv',
+        counts_fname = 'results/data/{de_prob}/{rep_id}_counts.csv',
+        meta_fname = 'results/data/{de_prob}/{rep_id}_meta.csv',
     output:
-        fname = 'results/scHPF/{de_facscale}/{rep_id}_ari.txt',
+        ari_fname = 'results/scHPF/{de_prob}/{rep_id}_ari.txt',
+        mod_fname = 'results/scHPF/{de_prob}/{rep_id}_mod.txt',
     script:
         "scripts/run_schpf.py"
 
@@ -50,18 +51,19 @@ rule run_scvi:
     params:
         seed = "{rep_id}",
     input:
-        counts_fname = 'results/data/{de_facscale}/{rep_id}_counts.csv',
-        meta_fname = 'results/data/{de_facscale}/{rep_id}_meta.csv',
+        counts_fname = 'results/data/{de_prob}/{rep_id}_counts.csv',
+        meta_fname = 'results/data/{de_prob}/{rep_id}_meta.csv',
     output:
-        fname = 'results/scVI/{de_facscale}/{rep_id}_ari.txt',
+        ari_fname = 'results/scVI/{de_prob}/{rep_id}_ari.txt',
+        mod_fname = 'results/scVI/{de_prob}/{rep_id}_mod.txt',
     script:
         "scripts/run_scvi.py"
 
 rule gather_scores:
     input:
         fname_list = expand(
-            'results/{method}/{de_facscale}/{rep_id}_ari.txt',
-            method=["scDEF", "scHPF", "scVI"], de_facscale=DE_FACSCALES,
+            'results/{method}/{de_prob}/{rep_id}_mod.txt',
+            method=["scDEF", "scHPF", "scVI"], de_prob=DE_PROBS,
             rep_id=[r for r in range(N_REPS)])
     output:
         'results/scores.csv'

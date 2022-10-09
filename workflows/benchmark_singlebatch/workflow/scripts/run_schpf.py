@@ -1,3 +1,4 @@
+import scdef
 import numpy as np
 import pandas as pd
 import scanpy as sc
@@ -15,9 +16,9 @@ X = scipy.sparse.coo_matrix(adata.X)
 # Run for range of K and choose best one
 models = []
 losses = []
-for k in range(9, 11):
+for k in range(5, 15):
     sch = schpf.scHPF(k)
-    sch.fit(X, max_iter=2)
+    sch.fit(X)
     models.append(sch)
     losses.append(sch.loss[-1])
 best = models[np.argmin(losses)]
@@ -27,5 +28,12 @@ assignments = np.argmax(cscores,axis=1)
 
 ari = adjusted_rand_score(adata.obs['Group'].values, assignments)
 
-with open(snakemake.output["fname"], "w") as file:
+# Compute mean cell score per group
+mean_cluster_scores = scdef.util.get_mean_cellscore_per_group(cscores, adata.obs['Group'].values)
+mod = scdef.util.mod_core(mean_cluster_scores.T)
+
+with open(snakemake.output["ari_fname"], "w") as file:
     file.write(str(ari))
+
+with open(snakemake.output["mod_fname"], "w") as file:
+    file.write(str(mod))

@@ -1,3 +1,4 @@
+import scdef
 import pandas as pd
 import scanpy as sc
 import anndata
@@ -9,19 +10,34 @@ meta = pd.read_csv(snakemake.input["meta_fname"])
 
 adata = anndata.AnnData(X=counts.values.T, obs=meta)
 
-scvi.model.SCVI.setup_anndata(
+scvi.model.LinearSCVI.setup_anndata(
     adata,
+    categorical_covariate_keys="Batch",
 )
 
-model = scvi.model.SCVI(adata)
-model.train(max_epochs=2)
+# Run for range of K and choose best one
+models = []
+losses = []
+for k in range(5, 15):
+    model = scvi.model.LinearSCVI(adata)
+    model.train()
+    models.append(model)
+    losses.append(model.history['elbo_train'].values[-1][0])
+best = models[np.argmin(losses)]
 
-latent = model.get_latent_representation()
+latent = best.get_latent_representation()
 adata.obsm["X_scVI"] = latent
 sc.pp.neighbors(adata, use_rep="X_scVI")
 sc.tl.leiden(adata)
 
 ari = adjusted_rand_score(adata.obs['Group'], adata.obs['leiden'])
 
-with open(snakemake.output["fname"], "w") as file:
+# Compute mean cell score per group
+mean_cluster_scores = scdef.util.get_mean_cellscore_per_group(latent, adata.obs['Group'].values)
+mod = scdef.util.mod_core(mean_cluster_scores.T)
+
+with open(snakemake.output["ari_fname"], "w") as file:
     file.write(str(ari))
+
+with open(snakemake.output["mod_fname"], "w") as file:
+    file.write(str(mod))
