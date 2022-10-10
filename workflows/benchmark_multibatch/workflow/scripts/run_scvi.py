@@ -35,7 +35,7 @@ ari = adjusted_rand_score(adata.obs['Group'], adata.obs['leiden'])
 
 # Compute mean cell score per group
 mean_cluster_scores = scdef.util.get_mean_cellscore_per_group(latent, adata.obs['Group'].values)
-mod = scdef.util.mod_score(mean_cluster_scores.T)
+mod = scdef.util.mod_score(np.abs(mean_cluster_scores.T))
 
 with open(snakemake.output["ari_fname"], "w") as file:
     file.write(str(ari))
