@@ -1,3 +1,4 @@
+import numpy as np
 import scdef
 import pandas as pd
 import scanpy as sc
