@@ -15,6 +15,7 @@ elbos = scd.optimize(n_epochs=1500, batch_size=256, step_size=.05, num_samples=2
 scd.filter_factors(annotate=True, q=[0.3, 0.])
 ari = adjusted_rand_score(adata.obs['Group'], scd.adata.obs['X_factor'])
 
+tokeep = scd.filter_factors(annotate=False, q=[0.3, 0.])
 # Compute mean cell score per group
 mean_cluster_scores = scdef.util.get_mean_cellscore_per_group(scd.pmeans['z'][:,tokeep[0]] * scd.pmeans['cell_scale'], adata.obs['Group'].values)
 mod = scdef.util.mod_score(mean_cluster_scores.T)
