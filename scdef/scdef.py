@@ -169,7 +169,7 @@ class scDEF(object):
         z = gamma_sample(rng, z_concentration, z_rate)
         W = gamma_sample(rng, W_concentration, W_rate)
         mean_bottom_bio = jnp.matmul(z, W)
-        mean_bottom = mean_bottom_bio #+ mean_bottom_batch
+        mean_bottom = mean_bottom_bio 
 
         # Compute log likelihood
         ll = jnp.sum(vmap(poisson.logpmf)(self.X[indices], mean_bottom))
