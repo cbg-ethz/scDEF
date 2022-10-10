@@ -23,7 +23,7 @@ def get_mean_cellscore_per_group(cell_scores, cell_groups):
     unique_cluster_ids = np.unique(cell_groups)
     mean_cluster_scores = []
     for c in unique_cluster_ids:
-        cell_idx = np.where(cluster_assignments == c)[0]
+        cell_idx = np.where(cell_groups == c)[0]
         mean_cluster_scores.append(np.mean(cell_scores[cell_idx], axis=0))
     mean_cluster_scores = np.array(mean_cluster_scores)
     return mean_cluster_scores
