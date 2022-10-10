@@ -1,3 +1,4 @@
+import numpy as np
 import jax.numpy as jnp
 from jax import vmap, random
 from jax.scipy.stats import norm, gamma, poisson
@@ -39,4 +40,4 @@ def mod_score(factors_by_groups_matrix):
     n2 = factors_by_groups_matrix/np.sum(factors_by_groups_matrix, axis=0)[np.newaxis,:]
     n2 = np.mean(np.max(n2, axis=0))
 
-    return np.mean([n1,n2]), n1, n2
+    return np.mean([n1,n2])
