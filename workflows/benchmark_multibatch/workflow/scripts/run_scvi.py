@@ -10,7 +10,7 @@ meta = pd.read_csv(snakemake.input["meta_fname"])
 
 adata = anndata.AnnData(X=counts.values.T, obs=meta)
 
-scvi.model.SCVI.setup_anndata(
+scvi.model.LinearSCVI.setup_anndata(
     adata,
     categorical_covariate_keys="Batch",
 )
