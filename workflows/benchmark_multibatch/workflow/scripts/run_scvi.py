@@ -42,3 +42,7 @@ with open(snakemake.output["ari_fname"], "w") as file:
 
 with open(snakemake.output["mod_fname"], "w") as file:
     file.write(str(mod))
+
+ent = scdef.util.entropy_score(np.abs(mean_cluster_scores.T))
+with open(snakemake.output["ent_fname"], "w") as file:
+    file.write(str(ent))

@@ -41,3 +41,17 @@ def mod_score(factors_by_groups_matrix):
     n2 = np.mean(np.max(n2, axis=0))
 
     return np.mean([n1,n2])
+
+def entropy_score(factors_by_groups_matrix):
+    total_factor_relative_weight = np.sum(factors_by_groups_matrix,axis=1)
+    total_factor_relative_weight = total_factor_relative_weight / np.sum(total_factor_relative_weight)
+
+    # Per factor
+    n1 = factors_by_groups_matrix/np.sum(factors_by_groups_matrix, axis=1)[:,np.newaxis]
+    n1 = np.sum(-np.sum(n1*np.log(n1), axis=1) * total_factor_relative_weight)
+
+    # Per group
+    n2 = factors_by_groups_matrix/np.sum(factors_by_groups_matrix, axis=0)[np.newaxis,:]
+    n2 = np.mean(-np.sum(n2*np.log(n2), axis=0))
+
+    return np.mean([n1,n2])

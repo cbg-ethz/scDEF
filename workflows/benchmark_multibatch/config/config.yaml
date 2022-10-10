@@ -2,7 +2,7 @@ de_prob: 0.7
 batch_facscale: 0.3
 n_cells: 2000
 n_genes: 800
-n_reps: 5
+n_reps: 10
 n_groups: 8
 n_batches: [2, 4]
 frac_shared: [0., .5, 1.]

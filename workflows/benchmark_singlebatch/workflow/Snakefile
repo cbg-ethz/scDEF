@@ -36,6 +36,7 @@ rule run_scdef:
     output:
         ari_fname = 'results/scDEF/{de_prob}/{rep_id}_ari.txt',
         mod_fname = 'results/scDEF/{de_prob}/{rep_id}_mod.txt',
+        ent_fname = 'results/scDEF/{de_prob}/{rep_id}_ent.txt',
     script:
         "scripts/run_scdef.py"
 
@@ -50,6 +51,7 @@ rule run_schpf:
     output:
         ari_fname = 'results/scHPF/{de_prob}/{rep_id}_ari.txt',
         mod_fname = 'results/scHPF/{de_prob}/{rep_id}_mod.txt',
+        ent_fname = 'results/scHPF/{de_prob}/{rep_id}_ent.txt',
     script:
         "scripts/run_schpf.py"
 
@@ -64,13 +66,14 @@ rule run_scvi:
     output:
         ari_fname = 'results/scVI/{de_prob}/{rep_id}_ari.txt',
         mod_fname = 'results/scVI/{de_prob}/{rep_id}_mod.txt',
+        ent_fname = 'results/scVI/{de_prob}/{rep_id}_ent.txt',
     script:
         "scripts/run_scvi.py"
 
 rule gather_scores:
     input:
         fname_list = expand(
-            'results/{method}/{de_prob}/{rep_id}_mod.txt',
+            'results/{method}/{de_prob}/{rep_id}_ent.txt',
             method=["scDEF", "scHPF", "scVI"], de_prob=DE_PROBS,
             rep_id=[r for r in range(N_REPS)])
     output:

@@ -41,6 +41,7 @@ rule run_scdef:
     output:
         ari_fname = 'results/scDEF/{n_batches}/{frac_shared}/{rep_id}_ari.txt',
         mod_fname = 'results/scDEF/{n_batches}/{frac_shared}/{rep_id}_mod.txt',
+        ent_fname = 'results/scDEF/{n_batches}/{frac_shared}/{rep_id}_ent.txt',
     script:
         "scripts/run_scdef.py"
 
@@ -55,6 +56,7 @@ rule run_schpf:
     output:
         ari_fname = 'results/scHPF/{n_batches}/{frac_shared}/{rep_id}_ari.txt',
         mod_fname = 'results/scHPF/{n_batches}/{frac_shared}/{rep_id}_mod.txt',
+        ent_fname = 'results/scHPF/{n_batches}/{frac_shared}/{rep_id}_ent.txt',
     script:
         "scripts/run_schpf.py"
 
@@ -69,13 +71,14 @@ rule run_scvi:
     output:
         ari_fname = 'results/scVI/{n_batches}/{frac_shared}/{rep_id}_ari.txt',
         mod_fname = 'results/scVI/{n_batches}/{frac_shared}/{rep_id}_mod.txt',
+        ent_fname = 'results/scVI/{n_batches}/{frac_shared}/{rep_id}_ent.txt',
     script:
         "scripts/run_scvi.py"
 
 rule gather_scores:
     input:
         fname_list = expand(
-            'results/{method}/{n_batches}/{frac_shared}/{rep_id}_mod.txt',
+            'results/{method}/{n_batches}/{frac_shared}/{rep_id}_ent.txt',
             method=["scDEF", "scHPF", "scVI"], frac_shared=FRACS_SHARED,
             n_batches=N_BATCHES, rep_id=[r for r in range(N_REPS)])
     output:

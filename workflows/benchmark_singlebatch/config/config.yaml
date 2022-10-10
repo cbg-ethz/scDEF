@@ -1,5 +1,5 @@
 de_probs: [0.3, 0.5, 0.7]
 n_cells: 2000
 n_genes: 800
-n_reps: 5
+n_reps: 10
 n_groups: 8
