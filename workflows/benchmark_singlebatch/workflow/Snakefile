@@ -10,6 +10,8 @@ rule all:
         fname = f'results/singlebatch_benchmark_figure.png'
 
 rule generate_data:
+    resources:
+        mem_mb = 40000,
     params:
         de_prob = "{de_prob}",
         n_cells = config["n_cells"],

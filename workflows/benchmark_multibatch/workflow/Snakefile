@@ -11,6 +11,8 @@ rule all:
         fname = f'results/multibatch_benchmark_figure.png'
 
 rule generate_data:
+    resources:
+        mem_mb = 40000,
     params:
         de_prob = config["de_prob"],
         batch_facscale = config["batch_facscale"],
