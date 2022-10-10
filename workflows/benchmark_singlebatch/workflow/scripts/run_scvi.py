@@ -12,7 +12,6 @@ adata = anndata.AnnData(X=counts.values.T, obs=meta)
 
 scvi.model.LinearSCVI.setup_anndata(
     adata,
-    categorical_covariate_keys="Batch",
 )
 
 # Run for range of K and choose best one
