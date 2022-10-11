@@ -8,7 +8,6 @@ from jax.scipy.stats import norm, gamma, poisson
 import jax.numpy as jnp
 import jax.nn as jnn
 
-import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -22,6 +21,9 @@ import logging
 import scipy
 from anndata import AnnData
 from jax.config import config
+
+import numpy as np
+
 config.update("jax_debug_nans", False)
 config.update("jax_debug_infs", False)
 
@@ -40,7 +42,6 @@ def gamma_sample(rng, shape, rate):
 def gamma_logpdf(x, shape, rate):
     scale = 1./rate
     return jnp.sum(vmap(gamma.logpdf)(x, shape * jnp.ones(x.shape), scale=scale * jnp.ones(x.shape)))
-
 
 class scDEF(object):
     def __init__(self, adata, n_factors=10, n_hfactors=3, shape=.3, batch_key='batch', logginglevel=logging.INFO):
@@ -73,7 +74,7 @@ class scDEF(object):
         self.n_batches = 1
         self.batch_indices_onehot = np.ones((self.adata.shape[0], self.n_batches))
         self.batch_lib_sizes = np.sum(self.X, axis=1)
-        self.batch_lib_ratio = np.ones((self.X.shape[0],)) * np.mean(self.batch_lib_sizes)/np.var(self.batch_lib_sizes)
+        self.batch_lib_ratio = np.ones((self.X.shape[0],1)) * np.mean(self.batch_lib_sizes)/np.var(self.batch_lib_sizes)
         if batch_key in self.adata.obs.columns:
             batches = np.array(self.adata.obs[batch_key].values.unique())
             self.n_batches = len(batches)
@@ -97,21 +98,21 @@ class scDEF(object):
     def init_var_params(self):
         self.var_params = [
             jnp.array((np.log(np.random.uniform(0.5, 1.5,size=[self.n_cells,1])),
-                       np.log(np.random.uniform(0.5 * self.batch_lib_ratio[0], 1.5* self.batch_lib_ratio[0],size=[self.n_cells,1])))),
+                       np.log(np.random.uniform(0.5 * self.batch_lib_ratio[0] , 1.5 * self.batch_lib_ratio[0],size=[self.n_cells,1])))),
             jnp.array((np.log(np.random.uniform(0.5, 1.5,size=[1,self.n_genes])),
-                       np.log(np.random.uniform(0.5 * self.gene_ratio, 1.5* self.gene_ratio,size=[1,self.n_genes])))),
+                       np.log(np.random.uniform(0.5 , 1.5 ,size=[1,self.n_genes])))),
             jnp.array((np.log(np.random.uniform(0.5, 1.5, size=[self.n_hfactors,1])),
                        np.log(np.random.uniform(0.5, 1.5, size=[self.n_hfactors,1])))), # hfactor_scales
             jnp.array((np.log(np.random.uniform(0.5, 1.5, size=[self.n_factors,1])),
                        np.log(np.random.uniform(0.5, 1.5, size=[self.n_factors,1])))), # factor_scales
-            jnp.array((np.log(np.random.uniform(0.5 * self.shape, 1.5* self.shape,size=[self.n_cells,self.n_hfactors])), # hz
-                       np.log(np.random.uniform(0.5 * self.shape, 1.5* self.shape,size=[self.n_cells,self.n_hfactors])))),
-            jnp.array((np.log(np.random.uniform(0.5 * .3, 1.5* .3,size=[self.n_hfactors,self.n_factors])), # hW
-                       np.log(np.random.uniform(0.5, 1.5,size=[self.n_hfactors,self.n_factors])))),
-            jnp.array((np.log(np.random.uniform(0.5 * self.shape, 1.5* self.shape,size=[self.n_cells,self.n_factors])), # z
-                       np.log(np.random.uniform(0.5, 1.5,size=[self.n_cells,self.n_factors])))),
-            jnp.array((np.log(np.random.uniform(0.5 * .3, 1.5* .3,size=[self.n_factors,self.n_genes])), # W
-                       np.log(np.random.uniform(0.5, 1.5,size=[self.n_factors,self.n_genes])))),
+            jnp.array((np.log(np.random.uniform(0.5 * self.shape, 1.5 * self.shape, size=[self.n_cells,self.n_hfactors])), # hz
+                       np.log(np.random.uniform(0.5 * self.shape, 1.5 * self.shape, size=[self.n_cells,self.n_hfactors])))),
+            jnp.array((np.log(np.random.uniform(0.5 * .3, 1.5* .3, size=[self.n_hfactors,self.n_factors])), # hW
+                       np.log(np.random.uniform(0.5, 1.5, size=[self.n_hfactors,self.n_factors])))),
+            jnp.array((np.log(np.random.uniform(0.5 * self.shape, 1.5* self.shape, size=[self.n_cells,self.n_factors])), # z
+                       np.log(np.random.uniform(0.5, 1.5, size=[self.n_cells,self.n_factors])))),
+            jnp.array((np.log(np.random.uniform(0.5 * .3, 1.5* .3, size=[self.n_factors,self.n_genes])), # W
+                       np.log(np.random.uniform(0.5, 1.5, size=[self.n_factors,self.n_genes])))),
         ]
 
     def elbo(self, rng, indices, var_params):
@@ -169,7 +170,7 @@ class scDEF(object):
         z = gamma_sample(rng, z_concentration, z_rate)
         W = gamma_sample(rng, W_concentration, W_rate)
         mean_bottom_bio = jnp.matmul(z, W)
-        mean_bottom = mean_bottom_bio 
+        mean_bottom = mean_bottom_bio
 
         # Compute log likelihood
         ll = jnp.sum(vmap(poisson.logpmf)(self.X[indices], mean_bottom))
@@ -193,14 +194,14 @@ class scDEF(object):
 
         kl *= indices.shape[0] / self.X.shape[0] # scale by minibatch size
 
-        kl += gamma_logpdf(cell_budgets, 1., 1.*self.batch_lib_ratio[indices]) -\
+        kl += gamma_logpdf(cell_budgets, 1., self.batch_lib_ratio[indices]) -\
                 gamma_logpdf(cell_budgets, cell_budget_concentration, cell_budget_rate)
 
-        kl += gamma_logpdf(hz, 1.,  1. / hfactor_scales.T  ) -\
+        kl += gamma_logpdf(hz, self.shape, self.shape / hfactor_scales.T  ) -\
                 gamma_logpdf(hz, hz_concentration, hz_rate)
 
         # Tieing the scales avoids the factors with low scales in W learn z's that correlate with cell scales
-        kl += gamma_logpdf(z, self.shape, self.shape * cell_budgets / (mean_top * factor_scales.T) ) -\
+        kl += gamma_logpdf(z, self.shape, self.shape * cell_budgets / (mean_top * factor_scales.T ) ) -\
                 gamma_logpdf(z, z_concentration, z_rate)
 
 
@@ -213,6 +214,7 @@ class scDEF(object):
         return jnp.mean(vectorized_elbo(rngs, indices, var_params))
 
     def optimize(self, n_epochs=1000, batch_size=128, step_size=0.01, num_samples=1, init=False, seed=42):
+        np.random.seed(seed)
         if init:
             self.init_var_params()
         init_params = self.var_params
@@ -263,12 +265,10 @@ class scDEF(object):
         self.filter_factors(annotate=True)
         return losses
 
-
     def get_dimensions(self, threshold=0.1):
         # Look at the scale of the factors and get the ones which are actually used
         return dict(hfactor=np.where(self.pmeans['hfactor_scale'] > threshold)[0],
                     factor=np.where(self.pmeans['factor_scale'] > threshold)[0])
-
 
     def set_posterior_means(self):
         cell_scale_params = self.var_params[0]
