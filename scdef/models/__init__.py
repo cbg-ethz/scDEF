@@ -1,1 +1,0 @@
-from .informed import iscDEF
