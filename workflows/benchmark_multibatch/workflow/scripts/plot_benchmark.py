@@ -5,9 +5,10 @@ import pandas as pd
 import numpy as np
 
 df = pd.read_csv(snakemake.input[0])
-df = df.rename(columns = {'frac_shared':'Fraction of shared cell groups', 'value':'Adjusted rand score', 'method': "Method"})
+df = df.rename(columns = {'frac_shared':'Fraction of shared cell groups', 'value':'Entropy of factor-cell group association', 'method': "Method"})
+df = df.replace({"scVI": "LDVAE"})
 
-axx = sns.catplot(data=df, x="Fraction of shared cell groups", y="Adjusted rand score", hue="Method", col="n_batches", kind="box", boxprops=dict(alpha=.3))
+axx = sns.catplot(data=df, x="Fraction of shared cell groups", y="Entropy of factor-cell group association", hue="Method", col="n_batches", kind="box", boxprops=dict(alpha=.3))
 colors = []
 box_patches = [patch for patch in axx.axes[0][0].patches if type(patch) == mpl.patches.PathPatch]
 for i, box in enumerate(box_patches):
@@ -30,7 +31,7 @@ for i, ax in enumerate(axes):
     print(i)
     ax.set_title(f"{n_batches[i]} batches")
 
-axx2 = axx.map_dataframe(sns.swarmplot,  x="Fraction of shared cell groups", y="Adjusted rand score", hue="Method", dodge=True, palette=colors)
+axx2 = axx.map_dataframe(sns.swarmplot,  x="Fraction of shared cell groups", y="Entropy of factor-cell group association", hue="Method", dodge=True, palette=colors)
 axes = axx2.axes.flatten()
 for i, ax in enumerate(axes):
     print(i)

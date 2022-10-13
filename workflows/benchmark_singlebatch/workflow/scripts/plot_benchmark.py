@@ -18,9 +18,10 @@ for i, box in enumerate(box_patches):
         lin.set_markeredgecolor(color)
 sns.swarmplot(data=df, x="de_prob", y="value", hue="method", dodge=True, ax=ax, alpha=0.8)
 # remove extra legend handles and rename
-handles, labels = ax.get_legend_handles_labels()
-ax.legend(handles[:3], labels[:3], title='Method',loc='upper left')
-ax.set(xlabel='Probability of genes being differentially expressed in each group', ylabel='Factor-cell group concordance')
+# handles, labels = ax.get_legend_handles_labels()
+# ax.legend(handles[:3], labels[:3], title='Method')
+plt.legend([],[], frameon=False)
+ax.set(xlabel='Probability of genes being differentially expressed in each cell group', ylabel='Entropy of factor-cell group association')
 
 sns.despine()
 
