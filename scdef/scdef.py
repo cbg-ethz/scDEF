@@ -43,6 +43,12 @@ def gamma_logpdf(x, shape, rate):
     scale = 1./rate
     return jnp.sum(vmap(gamma.logpdf)(x, shape * jnp.ones(x.shape), scale=scale * jnp.ones(x.shape)))
 
+def map_scores_to_fontsizes(scores, max_fontsize=11, min_fontsize=5):
+    scores = scores - np.min(scores)
+    scores = scores / np.max(scores)
+    fontsizes = min_fontsize + scores * (max_fontsize-min_fontsize)
+    return fontsizes
+
 class scDEF(object):
     def __init__(self, adata, n_factors=10, n_hfactors=3, shape=.3, batch_key='batch', logginglevel=logging.INFO):
         self.logger = logging.getLogger('scDEF')
@@ -360,12 +366,17 @@ class scDEF(object):
         plt.title(f'Layer {layer_idx}')
         plt.show()
 
-    def get_rankings(self, layer_idx=0, q=.1, return_scores=False):
+    def get_rankings(self, layer_idx=0, q=.1, genes=True, factor_list=None, return_scores=False, lower_relevance_correct=True):
         term_names = np.array(self.adata.var_names)
         term_scores = self.pmeans['W']*self.pmeans['gene_scale']
         if layer_idx == 1:
-            term_names = np.arange(self.n_factors).astype(str)
-            term_scores = self.pmeans['hW']
+            if genes:
+                if factor_list is None:
+                    factor_list = np.arange(self.layer_sizes[0])
+                term_scores = self.pmeans['hW'][:,factor_list].dot(self.pmeans['W'][factor_list,:]*self.pmeans['gene_scale'])
+            else:
+                term_names = np.arange(self.n_factors).astype(str)
+                term_scores = self.pmeans['hW']
 
         top_terms = []
         top_scores = []
@@ -419,7 +430,7 @@ class scDEF(object):
             enrichments.append(enr)
         return enrichments
 
-    def get_graph(self, annotations=None, enrichments=None, top=10, hfactor_list=None, factor_list=None, ard_filter=[0.3, 0.], gene_rankings=None, reindex=True, batch_counts=True):
+    def get_graph(self, annotations=None, enrichments=None, top=[10, 5], hfactor_list=None, factor_list=None, ard_filter=[0.3, 0.], gene_rankings=None, reindex=True, batch_counts=True, **fontsize_kwargs):
         if hfactor_list is None:
             hfactor_list = np.arange(self.n_hfactors)
             if ard_filter:
@@ -430,7 +441,9 @@ class scDEF(object):
                 factor_list = self.filter_factors(q=ard_filter, annotate=False)[0]
 
         normalized_htopic_weights = self.pmeans['hW'][:,factor_list]/np.sum(self.pmeans['hW'][:, factor_list], axis=1).reshape(-1,1)
+        # ??
         normalized_hfactor_scales = self.pmeans['hfactor_scale']/np.sum(self.pmeans['hfactor_scale'][hfactor_list])
+        # ??
         normalized_factor_scales = self.pmeans['factor_scale']/np.sum(self.pmeans['factor_scale'][factor_list])
 
         # Assign factors to hierarchical factors to set the plotting order
@@ -440,18 +453,30 @@ class scDEF(object):
         factor_order = np.argsort(np.array(assignments))
 
         g = Graph()
+        upper_gene_rankings, upper_gene_scores = self.get_rankings(layer_idx=1, genes=True, factor_list=factor_list, return_scores=True)
         for i, htopic in enumerate(hfactor_list):
             if reindex:
                 tlab = str(i)
             else:
                 tlab = str(htopic)
+            htopic_gene_rankings = upper_gene_rankings[htopic][:top[1]]
+            htopic_gene_scores = upper_gene_scores[htopic][:top[1]]
+            fontsizes = map_scores_to_fontsizes(upper_gene_scores[htopic], **fontsize_kwargs)[:top[1]]
+            gene_labels = []
+            for j, gene in enumerate(htopic_gene_rankings):
+                gene_labels.append(f'<FONT POINT-SIZE="{fontsizes[j]}">{gene}</FONT>')
+            tlab += '<br/><br/>' + "<br/>".join(gene_labels)
+            tlab = '<' + tlab + '>'
             g.node('ht' + str(htopic), label=tlab,
-                    fillcolor=matplotlib.colors.to_hex(self.hpal[htopic]), ordering='out', style='filled')
+                    fillcolor=matplotlib.colors.to_hex(self.hpal[i]), ordering='out', style='filled')
 
         if self.batch_key in self.adata.obs.columns:
             batches = np.unique(self.adata.obs[self.batch_key])
         else:
             batch_counts = False
+
+        if gene_rankings is None:
+            gene_rankings, gene_scores = self.get_rankings(layer_idx=0, return_scores=True)
 
         for pos in factor_order:
             topic = factor_list[pos]
@@ -469,22 +494,27 @@ class scDEF(object):
                 tlab += '\n' + ', '.join(prevs)
 
             if enrichments is not None:
-                tlab += '\n\n' + "\n".join([enrichments[topic].results['Term'].values[i] + f" ({enrichments[topic].results['Adjusted P-value'][i]:.3f})" for i in range(top)])
+                tlab += '\n\n' + "\n".join([enrichments[topic].results['Term'].values[i] + f" ({enrichments[topic].results['Adjusted P-value'][i]:.3f})" for i in range(top[0])])
                 # tlab = enrichments[topic].results['Term'].values[0] + f" ({enrichments[topic].results['Adjusted P-value'][0]:.3f})" + '\n\n' + tlab
             elif annotations is not None:
-                tlab += '\n\n' + "\n".join([annotations[topic][i] for i in range(min(len(annotations[topic]), top))])
+                tlab += '\n\n' + "\n".join([annotations[topic][i] for i in range(min(len(annotations[topic]), top[0]))])
             else:
-                if gene_rankings is None:
-                    gene_rankings = self.get_rankings()
-                tlab += '\n\n' + "\n".join(gene_rankings[topic][:top])
+                topic_gene_rankings = gene_rankings[topic][:top[0]]
+                topic_gene_scores = gene_scores[topic][:top[0]]
+                fontsizes = map_scores_to_fontsizes(gene_scores[topic], **fontsize_kwargs)[:top[0]]
+                gene_labels = []
+                for j, gene in enumerate(topic_gene_rankings):
+                    gene_labels.append(f'<FONT POINT-SIZE="{fontsizes[j]}">{gene}</FONT>')
+                tlab += '<br/><br/>' + "<br/>".join(gene_labels)
+                tlab = '<' + tlab + '>'
 
             # Get top factors from this hierarchical first
-            g.node('t' + str(topic), label=tlab, fontsize="11", ordering='in')
+            g.node('t' + str(topic), label=tlab, ordering='in')
 
-        for htopic in hfactor_list:
+        for i, htopic in enumerate(hfactor_list):
             for pos in factor_order:
                 topic = factor_list[pos]
-                g.edge('ht' + str(htopic), 't'+str(topic), penwidth=str(4*normalized_htopic_weights[htopic,pos]), color=matplotlib.colors.to_hex(self.hpal[htopic]))
+                g.edge('ht' + str(htopic), 't'+str(topic), penwidth=str(4*normalized_htopic_weights[htopic,pos]), color=matplotlib.colors.to_hex(self.hpal[i]))
 
         return g
 
