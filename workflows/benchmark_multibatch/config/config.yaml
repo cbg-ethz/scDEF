@@ -2,7 +2,18 @@ de_prob: 0.7
 batch_facscale: 0.3
 n_cells: 2000
 n_genes: 800
-n_reps: 10
-n_groups: 8
-n_batches: [2, 4]
-frac_shared: [0., .5, 1.]
+n_reps: 2
+n_groups: 12
+n_batches: [4]
+frac_shared: [0., .25, .5, .75, 1.]
+n_top_genes: 500
+k_min: 5
+k_max: 6
+chc_reps: 2
+test_frac: 0.1
+scdef:
+  ard: 0.9
+  n_factors: 30
+  n_hfactors: 10
+  shape: 0.3
+  n_iters: 10

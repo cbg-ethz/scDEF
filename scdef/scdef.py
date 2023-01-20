@@ -50,7 +50,7 @@ def map_scores_to_fontsizes(scores, max_fontsize=11, min_fontsize=5):
     return fontsizes
 
 class scDEF(object):
-    def __init__(self, adata, n_factors=10, n_hfactors=3, shape=.3, batch_key='batch', logginglevel=logging.INFO):
+    def __init__(self, adata, n_factors=10, n_hfactors=3, shape=.3, batch_key='batch', seed=42, logginglevel=logging.INFO):
         self.logger = logging.getLogger('scDEF')
         self.logger.setLevel(logginglevel)
 
@@ -58,6 +58,7 @@ class scDEF(object):
         self.n_hfactors = n_hfactors
         self.n_batches = 0
         self.shape = shape
+        self.seed = seed
         self.layer_names = ['factor', 'hfactor']
         self.layer_sizes = [n_factors, n_hfactors]
         self.load_adata(adata, batch_key=batch_key)
@@ -65,8 +66,14 @@ class scDEF(object):
         self.n_cells, self.n_genes = adata.shape
         self.init_var_params()
         self.set_posterior_means()
-        self.hpal = sns.color_palette('Set2', n_hfactors)
+        self.fpal = sns.color_palette(n_colors=n_factors)
+        self.hpal = sns.color_palette('husl', n_hfactors)
         self.graph = self.get_graph()
+        self.opt_init = None
+        self.get_params = None
+        self.opt_update = None
+        self.elbos = []
+        self.step_sizes = []
 
     def load_adata(self, adata, batch_key='batch'):
         if not isinstance(adata, AnnData):
@@ -102,24 +109,60 @@ class scDEF(object):
         self.X = jnp.array(self.X)
 
     def init_var_params(self):
+        rngs = random.split(random.PRNGKey(self.seed), 18)
+
         self.var_params = [
-            jnp.array((np.log(np.random.uniform(0.5, 1.5,size=[self.n_cells,1])),
-                       np.log(np.random.uniform(0.5 * self.batch_lib_ratio[0] , 1.5 * self.batch_lib_ratio[0],size=[self.n_cells,1])))),
-            jnp.array((np.log(np.random.uniform(0.5, 1.5,size=[1,self.n_genes])),
-                       np.log(np.random.uniform(0.5 , 1.5 ,size=[1,self.n_genes])))),
-            jnp.array((np.log(np.random.uniform(0.5, 1.5, size=[self.n_hfactors,1])),
-                       np.log(np.random.uniform(0.5, 1.5, size=[self.n_hfactors,1])))), # hfactor_scales
-            jnp.array((np.log(np.random.uniform(0.5, 1.5, size=[self.n_factors,1])),
-                       np.log(np.random.uniform(0.5, 1.5, size=[self.n_factors,1])))), # factor_scales
-            jnp.array((np.log(np.random.uniform(0.5 * self.shape, 1.5 * self.shape, size=[self.n_cells,self.n_hfactors])), # hz
-                       np.log(np.random.uniform(0.5 * self.shape, 1.5 * self.shape, size=[self.n_cells,self.n_hfactors])))),
-            jnp.array((np.log(np.random.uniform(0.5 * .3, 1.5* .3, size=[self.n_hfactors,self.n_factors])), # hW
-                       np.log(np.random.uniform(0.5, 1.5, size=[self.n_hfactors,self.n_factors])))),
-            jnp.array((np.log(np.random.uniform(0.5 * self.shape, 1.5* self.shape, size=[self.n_cells,self.n_factors])), # z
-                       np.log(np.random.uniform(0.5, 1.5, size=[self.n_cells,self.n_factors])))),
-            jnp.array((np.log(np.random.uniform(0.5 * .3, 1.5* .3, size=[self.n_factors,self.n_genes])), # W
-                       np.log(np.random.uniform(0.5, 1.5, size=[self.n_factors,self.n_genes])))),
+            jnp.array((jnp.log(random.uniform(rngs[0], minval=0.5, maxval=1.5,shape=[self.n_cells,1])),
+                       jnp.log(random.uniform(rngs[1], minval=0.5, maxval=1.5, shape=[self.n_cells,1])))),
+            jnp.array((jnp.log(random.uniform(rngs[2], minval=0.5, maxval=1.5,shape=[1,self.n_genes])),
+                       jnp.log(random.uniform(rngs[3], minval=0.5, maxval=1.5 ,shape=[1,self.n_genes])))),
+            jnp.array((jnp.log(random.uniform(rngs[4], minval=0.5, maxval=1.5, shape=[self.n_hfactors,1])),
+                       jnp.log(random.uniform(rngs[5], minval=0.5, maxval=1.5, shape=[self.n_hfactors,1])))), # hfactor_scales
+            jnp.array((jnp.log(random.uniform(rngs[6], minval=0.5, maxval=1.5, shape=[self.n_factors,1])),
+                       jnp.log(random.uniform(rngs[7], minval=0.5, maxval=1.5, shape=[self.n_factors,1])))), # factor_scales
+            jnp.array((jnp.log(random.uniform(rngs[8], minval=0.5, maxval=1.5 , shape=[self.n_cells,self.n_hfactors]) ), # hz
+                       jnp.log(random.uniform(rngs[9], minval=0.5, maxval=1.5 , shape=[self.n_cells,self.n_hfactors]) ))),
+            jnp.array((jnp.log(random.uniform(rngs[10], minval=0.5, maxval=1.5, shape=[self.n_hfactors,self.n_factors]) ), # hW
+                       jnp.log(random.uniform(rngs[11], minval=0.5, maxval=1.5, shape=[self.n_hfactors,self.n_factors])))),
+            jnp.array((jnp.log(random.uniform(rngs[12], minval=0.5, maxval=1.5, shape=[self.n_cells,self.n_factors]) ), # z
+                       jnp.log(random.uniform(rngs[13], minval=0.5, maxval=1.5, shape=[self.n_cells,self.n_factors])))),
+            jnp.array((jnp.log(random.uniform(rngs[14], minval=0.5, maxval=1.5, shape=[self.n_factors,self.n_genes]) ), # W
+                       jnp.log(random.uniform(rngs[15], minval=0.5, maxval=1.5, shape=[self.n_factors,self.n_genes])))),
+            jnp.array((jnp.log(random.uniform(rngs[16], minval=0.5, maxval=1.5, shape=[self.n_batches,self.n_genes]) ), # batch W
+                       jnp.log(random.uniform(rngs[17], minval=0.5, maxval=1.5, shape=[self.n_batches,self.n_genes])))),
         ]
+
+
+#     def init_var_params(self):
+#         # cell_scales, gene_scales
+#         # layer 0: factor_scales, z, W
+#         # ...
+#         # layer : factor_scales, z, W
+#         self.var_params = [
+#             jnp.array((np.log(np.random.uniform(0.5, 1.5,size=[self.n_cells,1])),
+#                        np.log(np.random.uniform(0.5, 1.5, size=[self.n_cells,1])))),
+#             jnp.array((np.log(np.random.uniform(0.5, 1.5,size=[1,self.n_genes])),
+#                        np.log(np.random.uniform(0.5, 1.5 ,size=[1,self.n_genes])))),
+#         ]
+
+#         for layer, layer_size in enumerate(self.layer_sizes):
+#             self.var_params.extend(
+#                 [ jnp.array((np.log(np.random.uniform(0.5, 1.5, size=[layer_size,1])),
+#                        np.log(np.random.uniform(0.5, 1.5, size=[layer_size,1])))), # factor_scales
+#                 jnp.array((np.log(np.random.uniform(0.5, 1.5 , size=[self.n_cells,layer_size]) ),
+#                            np.log(np.random.uniform(0.5, 1.5 , size=[self.n_cells,layer_size]) ))), # z
+#                 ]
+#             )
+#             if layer == 0:
+#                 self.var_params.extend(
+#                     jnp.array((np.log(np.random.uniform(0.5, 1.5, size=[layer_size,self.n_genes]) ),
+#                            np.log(np.random.uniform(0.5, 1.5, size=[layer_size,self.n_genes])))), # W
+#                 )
+#             else:
+#                 self.var_params.extend(
+#                     jnp.array((np.log(np.random.uniform(0.5, 1.5, size=[layer_size,layer_size-1]) ),
+#                            np.log(np.random.uniform(0.5, 1.5, size=[layer_size,layer_size-1])))), # W
+#                 )
 
     def elbo(self, rng, indices, var_params):
         # Single-sample Monte Carlo estimate of the variational lower bound.
@@ -134,6 +177,7 @@ class scDEF(object):
         hW_params = jnp.clip(var_params[5], a_min=min_loc)
         z_params = jnp.clip(var_params[6], a_min=min_loc)
         W_params = jnp.clip(var_params[7], a_min=min_loc)
+        batchW_params = jnp.clip(var_params[8], a_min=min_loc)
 
         min_concentration = 1e-10
         min_scale = 1e-10
@@ -163,6 +207,9 @@ class scDEF(object):
         hW_concentration = jnp.maximum(jnp.exp(hW_params[0]), min_concentration)
         hW_rate = jnp.minimum(jnp.maximum(jnp.exp(hW_params[1]), min_rate), max_rate)
 
+        batchW_concentration = jnp.maximum(jnp.exp(batchW_params[0]), min_concentration)
+        batchW_rate = jnp.minimum(jnp.maximum(jnp.exp(batchW_params[1]), min_rate), max_rate)
+
         # Sample from variational distribution
         cell_budgets = gamma_sample(rng, cell_budget_concentration, cell_budget_rate)
         gene_budgets = gamma_sample(rng, gene_budget_concentration, gene_budget_rate)
@@ -175,8 +222,9 @@ class scDEF(object):
 
         z = gamma_sample(rng, z_concentration, z_rate)
         W = gamma_sample(rng, W_concentration, W_rate)
-        mean_bottom_bio = jnp.matmul(z, W)
-        mean_bottom = mean_bottom_bio
+        batchW = gamma_sample(rng, batchW_concentration, batchW_rate)
+        mean_bottom_bio = jnp.matmul(z  / cell_budgets, W )
+        mean_bottom = mean_bottom_bio + jnp.matmul(self.batch_indices_onehot[indices], batchW)
 
         # Compute log likelihood
         ll = jnp.sum(vmap(poisson.logpmf)(self.X[indices], mean_bottom))
@@ -186,30 +234,35 @@ class scDEF(object):
         kl += gamma_logpdf(gene_budgets, 1., self.gene_ratio) -\
                 gamma_logpdf(gene_budgets, gene_budget_concentration, gene_budget_rate)
 
-        kl += gamma_logpdf(hfactor_scales, 1e-0, 1e-0) -\
+        kl += gamma_logpdf(hfactor_scales, 1., 1.) -\
                 gamma_logpdf(hfactor_scales, hfactor_scale_concentration, hfactor_scale_rate)
 
-        kl += gamma_logpdf(factor_scales, 1e-0, 1e-0) -\
+        kl += gamma_logpdf(factor_scales, 1., 1. / hfactor_scales.T.dot(hW).T) -\
                 gamma_logpdf(factor_scales, factor_scale_concentration, factor_scale_rate)
 
-        kl += gamma_logpdf(hW, .3, 1. / hfactor_scales  ) -\
+        kl += gamma_logpdf(hW, .3, 1. / hfactor_scales) -\
                 gamma_logpdf(hW, hW_concentration, hW_rate)
 
-        kl += gamma_logpdf(W, .3, 1 * gene_budgets / factor_scales ) -\
+        kl += gamma_logpdf(W, .3, 1. * gene_budgets / factor_scales) -\
                 gamma_logpdf(W, W_concentration, W_rate)
+
+        kl += gamma_logpdf(batchW, 10., 10.) -\
+                gamma_logpdf(batchW, batchW_concentration, batchW_rate)
+
+#         kl += gamma_logpdf(factor_budgets, 1, self.batch_lib_ratio[0]) -\
+#             gamma_logpdf(factor_budgets, factor_budget_concentration, factor_budget_rate)
 
         kl *= indices.shape[0] / self.X.shape[0] # scale by minibatch size
 
-        kl += gamma_logpdf(cell_budgets, 1., self.batch_lib_ratio[indices]) -\
+        kl += gamma_logpdf(cell_budgets, 1., self.batch_lib_ratio[0]) -\
                 gamma_logpdf(cell_budgets, cell_budget_concentration, cell_budget_rate)
 
-        kl += gamma_logpdf(hz, self.shape, self.shape / hfactor_scales.T  ) -\
+        kl += gamma_logpdf(hz, self.shape, self.shape) -\
                 gamma_logpdf(hz, hz_concentration, hz_rate)
 
         # Tieing the scales avoids the factors with low scales in W learn z's that correlate with cell scales
-        kl += gamma_logpdf(z, self.shape, self.shape * cell_budgets / (mean_top * factor_scales.T ) ) -\
+        kl += gamma_logpdf(z, self.shape, self.shape  / (mean_top)) -\
                 gamma_logpdf(z, z_concentration, z_rate)
-
 
         return ll + kl
 
@@ -219,12 +272,15 @@ class scDEF(object):
         vectorized_elbo = vmap(self.elbo, in_axes=(0, None, None))
         return jnp.mean(vectorized_elbo(rngs, indices, var_params))
 
-    def optimize(self, n_epochs=1000, batch_size=128, step_size=0.01, num_samples=1, init=False, seed=42):
-        np.random.seed(seed)
-        if init:
-            self.init_var_params()
+    def optimize(self, n_epochs=1000, batch_size=None, step_size=0.1, num_samples=5, init=False):
+        if init or self.opt_init is None:
+            self.logger.info(f"Initializing optimizer with learning rate {step_size}")
+            self.opt_init, self.opt_update, self.get_params = optimizers.adam(step_size=step_size)
+
+        if batch_size is None:
+            batch_size = self.adata.shape[0]
+
         init_params = self.var_params
-        opt_init, opt_update, get_params = optimizers.adam(step_size=step_size)
 
         def objective(indices, var_params, key):
             return -self.batch_elbo(key, indices, var_params, num_samples) # minimize -ELBO
@@ -232,9 +288,9 @@ class scDEF(object):
         loss_grad = jit(value_and_grad(objective, argnums=1))
 
         def update(indices, i, key, opt_state):
-            params = get_params(opt_state)
+            params = self.get_params(opt_state)
             value, gradient = loss_grad(indices, params, key)
-            return value, opt_update(i, gradient, opt_state)
+            return value, self.opt_update(i, gradient, opt_state)
 
         num_complete_batches, leftover = divmod(self.n_cells, batch_size)
         num_batches = num_complete_batches + bool(leftover)
@@ -248,9 +304,10 @@ class scDEF(object):
                     yield jnp.array(batch_idx)
         batches = data_stream()
 
-        opt_state = opt_init(init_params)
+        opt_state = self.opt_init(init_params)
         losses = []
-        rng = random.PRNGKey(seed)
+
+        rng = random.PRNGKey(self.seed)
         t = 0
         pbar = tqdm(range(n_epochs))
         for epoch in pbar:
@@ -265,11 +322,23 @@ class scDEF(object):
             epoch_time = time.time() - start_time
             pbar.set_postfix({'Loss': losses[-1]})
 
-        params = get_params(opt_state)
+        self.elbos.append(losses)
+        self.step_sizes.append(step_size)
+
+        params = self.get_params(opt_state)
         self.var_params = params
         self.set_posterior_means()
-        self.filter_factors(annotate=True)
         return losses
+
+    def learn(self, lr_schedule=[.1, 0.05, 0.01], n_epoch_schedule=[1000, 1000, 1000], **kwargs):
+        if len(lr_schedule) != len(n_epoch_schedule):
+            raise ValueError("step_sizes list must be of same length as n_epochs list")
+
+        for i in range(len(lr_schedule)):
+            self.optimize(n_epochs=n_epoch_schedule[i], step_size=lr_schedule[i], init=True, **kwargs)
+
+        self.filter_factors(annotate=True)
+
 
     def get_dimensions(self, threshold=0.1):
         # Look at the scale of the factors and get the ones which are actually used
@@ -285,6 +354,7 @@ class scDEF(object):
         hW_params = self.var_params[5]
         z_params = self.var_params[6]
         W_params = self.var_params[7]
+        batchW_params = self.var_params[8]
 
         self.pmeans = {
             'cell_scale': np.array(jnp.exp(cell_scale_params[0]) / jnp.exp(cell_scale_params[1])),
@@ -295,23 +365,25 @@ class scDEF(object):
             'hW': np.array(jnp.exp(hW_params[0]) / jnp.exp(hW_params[1])),
             'z': np.array(jnp.exp(z_params[0]) / jnp.exp(z_params[1])),
             'W': np.array(jnp.exp(W_params[0]) / jnp.exp(W_params[1])),
+            'batchW': np.array(jnp.exp(batchW_params[0]) / jnp.exp(batchW_params[1])),
         }
 
         self.pvars = {
-            'cell_scale': np.array(jnn.softplus(cell_scale_params[0]) * jnn.softplus(cell_scale_params[1])**2),
-            'gene_scale': np.array(jnn.softplus(gene_scale_params[0]) * jnn.softplus(gene_scale_params[1])**2),
-            'hfactor_scale': np.array(jnn.softplus(hfactor_scale_params[0]) * jnn.softplus(hfactor_scale_params[1])**2),
-            'factor_scale': np.array(jnn.softplus(factor_scale_params[0]) * jnn.softplus(factor_scale_params[1])**2),
-            'hz': np.array(jnn.softplus(hz_params[0]) * jnn.softplus(hz_params[1])**2),
-            'hW': np.array(jnn.softplus(hW_params[0]) * jnn.softplus(hW_params[1])**2),
-            'z': np.array(jnn.softplus(z_params[0]) * jnn.softplus(z_params[1])**2),
-            'W': np.array(jnn.softplus(W_params[0]) * jnn.softplus(W_params[1])**2),
+            'cell_scale': np.array(jnp.exp(cell_scale_params[0]) * jnp.exp(cell_scale_params[1])**2),
+            'gene_scale': np.array(jnp.exp(gene_scale_params[0]) * jnp.exp(gene_scale_params[1])**2),
+            'hfactor_scale': np.array(jnp.exp(hfactor_scale_params[0]) * jnp.exp(hfactor_scale_params[1])**2),
+            'factor_scale': np.array(jnp.exp(factor_scale_params[0]) * jnp.exp(factor_scale_params[1])**2),
+            'hz': np.array(jnp.exp(hz_params[0]) * jnp.exp(hz_params[1])**2),
+            'hW': np.array(jnp.exp(hW_params[0]) * jnp.exp(hW_params[1])**2),
+            'z': np.array(jnp.exp(z_params[0]) * jnp.exp(z_params[1])**2),
+            'W': np.array(jnp.exp(W_params[0]) * jnp.exp(W_params[1])**2),
+            'batchW': np.array(jnp.exp(batchW_params[0]) * jnp.exp(batchW_params[1])**2),
         }
 
-    def filter_factors(self, q=[0.4, 0.4], annotate=True):
+    def filter_factors(self, ard=[0.5, 0.5], annotate=True):
         tokeep_list = []
         for layer in [0, 1]:
-            thres = np.quantile(self.pmeans[f'{self.layer_names[layer]}_scale'], q=q[layer])
+            thres = np.quantile(self.pmeans[f'{self.layer_names[layer]}_scale'], q=ard[layer])
             tokeep = np.where(self.pmeans[f'{self.layer_names[layer]}_scale'] >= thres)[0]
             tokeep_list.append(tokeep)
         if annotate:
@@ -319,14 +391,16 @@ class scDEF(object):
         else:
             return tokeep_list
 
-    def annotate_adata(self, tokeep=None):
+    def annotate_adata(self, tokeep=None, gene_budgets_correct=True):
         if tokeep is None:
             tokeep = [np.arange(self.n_factors), np.arange(self.n_hfactors)]
         elif not isinstance(tokeep, list):
             raise TypeError("`tokeep` must be a list of arrays!")
 
-        self.adata.obsm['X_hfactors'] = self.pmeans['hz'][:,tokeep[1]] * self.pmeans['cell_scale']
-        self.adata.obsm['X_factors'] = self.pmeans['z'][:,tokeep[0]] * self.pmeans['cell_scale']
+        self.hpal = sns.color_palette('husl', len(tokeep[1]))
+
+        self.adata.obsm['X_hfactors'] = self.pmeans['hz'][:,tokeep[1]] #* self.pmeans['cell_scale']
+        self.adata.obsm['X_factors'] = self.pmeans['z'][:,tokeep[0]] * self.pmeans['cell_scale'] #/ self.pmeans['factor_budget'].T[:,tokeep[0]]
 #         self.adata.obsm['X_factors_var'] = self.pvars['z'][:,tokeep]
 #         self.adata.obsm['X_factors_mean'] = self.pmeans['hz'].dot(self.pmeans['hW'])
         self.logger.info("Updated adata.obsm: `X_hfactors` and `X_factors`.")
@@ -334,65 +408,49 @@ class scDEF(object):
         self.adata.obs['X_hfactor'] = np.argmax(self.adata.obsm['X_hfactors'], axis=1).astype(str)
         self.adata.obs['X_factor'] = np.argmax(self.adata.obsm['X_factors'], axis=1).astype(str)
         self.adata.obs['cell_scale'] = 1/self.pmeans['cell_scale']
+        self.adata.uns['X_factor_colors'] = []
         for i in range(len(tokeep[0])):
+            self.adata.uns['X_factor_colors'].append(matplotlib.colors.to_hex(self.fpal[i]))
             self.adata.obs[f'cell_score_f{i}'] = self.adata.obsm['X_factors'][:,i]
 #             self.adata.obs[f'm{i}'] = self.adata.obsm['X_factors_mean'][:,i]
 #             self.adata.obs[f'v{i}'] = self.adata.obsm['X_factors_var'][:,i]
         self.adata.uns['X_hfactor_colors'] = []
         for i, idx in enumerate(tokeep[1]):
-            self.adata.uns['X_hfactor_colors'].append(matplotlib.colors.to_hex(self.hpal[idx]))
+            self.adata.uns['X_hfactor_colors'].append(matplotlib.colors.to_hex(self.hpal[i]))
             self.adata.obs[f'cell_score_h{i}'] = self.adata.obsm['X_hfactors'][:,i]
         self.logger.info("Updated adata.obs: `X_hfactor`, `X_factor`, 'cell_scale', and cell weights for each "\
                      "factor and hierarchical factor.")
 
         self.adata.var['gene_scale'] = 1/self.pmeans['gene_scale'].T
         for i in range(len(tokeep[0])):
-             self.adata.var[f'gene_score_{i}'] = (self.pmeans['W'][tokeep[0],:] * self.pmeans['gene_scale'])[i,:]
+            if gene_budgets_correct:
+                self.adata.var[f'gene_score_{i}'] = (self.pmeans['W'][tokeep[0],:] * self.pmeans['gene_scale'])[i,:]
+            else:
+                self.adata.var[f'gene_score_{i}'] = (self.pmeans['W'][tokeep[0],:])[i,:]
         self.logger.info("Updated adata.var: `gene_scale` and gene weights for each factor.")
 
-    def plot_ard(self, layer_idx=0, q=None):
-        if isinstance(q, float):
-            thres = np.quantile(self.pmeans[f'{self.layer_names[layer_idx]}_scale'].ravel(), q=q)
-            plt.axhline(thres, color='red', ls='--')
-            above = np.where(self.pmeans[f'{self.layer_names[layer_idx]}_scale'].ravel() >= thres)[0]
-            below = np.where(self.pmeans[f'{self.layer_names[layer_idx]}_scale'].ravel() < thres)[0]
-            plt.bar(np.arange(self.layer_sizes[layer_idx])[above], self.pmeans[f'{self.layer_names[layer_idx]}_scale'].ravel()[above])
-            plt.bar(np.arange(self.layer_sizes[layer_idx])[below], self.pmeans[f'{self.layer_names[layer_idx]}_scale'].ravel()[below])
-        else:
-            plt.bar(np.arange(self.layer_sizes[layer_idx]), self.pmeans[f'{self.layer_names[layer_idx]}_scale'].ravel())
+    def plot_ard(self, layer_idx=0, ard=0.5, scale='linear'):
+        scales = self.pmeans[f'{self.layer_names[layer_idx]}_scale'].ravel()
+        layer_size = len(scales)
+
+        thres = np.quantile(scales, q=ard)
+
+        plt.axhline(thres, color='red', ls='--')
+        above = np.where(scales >= thres)[0]
+        below = np.where(scales < thres)[0]
+        plt.bar(np.arange(layer_size)[above], scales[above])
+        plt.bar(np.arange(layer_size)[below], scales[below])
+
+        xlabel = "Factor" if layer_idx==0 else "H. Factor"
         plt.ylabel('Contribution')
-        plt.xlabel('Factor')
-        plt.xticks(np.arange(self.layer_sizes[layer_idx]))
+        plt.xlabel(xlabel)
+        if len(scales) > 15:
+            plt.xticks(np.arange(0, layer_size, 2))
+        else:
+            plt.xticks(np.arange(layer_size))
         plt.title(f'Layer {layer_idx}')
+        plt.yscale(scale)
         plt.show()
-
-    def get_rankings(self, layer_idx=0, q=.1, genes=True, factor_list=None, return_scores=False, lower_relevance_correct=True):
-        term_names = np.array(self.adata.var_names)
-        term_scores = self.pmeans['W']*self.pmeans['gene_scale']
-        if layer_idx == 1:
-            if genes:
-                if factor_list is None:
-                    factor_list = np.arange(self.layer_sizes[0])
-                term_scores = self.pmeans['hW'][:,factor_list].dot(self.pmeans['W'][factor_list,:]*self.pmeans['gene_scale'])
-            else:
-                term_names = np.arange(self.n_factors).astype(str)
-                term_scores = self.pmeans['hW']
-
-        top_terms = []
-        top_scores = []
-        for k in range(self.layer_sizes[layer_idx]):
-            top_terms_idx = (term_scores[k, :]).argsort()[::-1]
-            sorted_term_scores_k = term_scores[k,:][top_terms_idx]
-            thres = np.quantile(sorted_term_scores_k, q=q)
-            top_terms_idx = top_terms_idx[np.where(sorted_term_scores_k > thres)[0]]
-            top_terms_list = term_names[top_terms_idx].tolist()
-            top_scores_list = sorted_term_scores_k.tolist()
-            top_terms.append(top_terms_list)
-            top_scores.append(top_scores_list)
-
-        if return_scores:
-            return top_terms, top_scores
-        return top_terms
 
     def get_annotations(self, marker_reference, gene_rankings=None):
         if gene_rankings is None:
@@ -419,7 +477,6 @@ class scDEF(object):
         if gene_rankings is None:
             gene_rankings = self.get_rankings(layer_idx=0)
 
-        enrichments = []
         for rank in tqdm(gene_rankings):
             enr = gp.enrichr(gene_list=rank,
                          gene_sets=libs,
@@ -430,17 +487,54 @@ class scDEF(object):
             enrichments.append(enr)
         return enrichments
 
-    def get_graph(self, annotations=None, enrichments=None, top=[10, 5], hfactor_list=None, factor_list=None, ard_filter=[0.3, 0.], gene_rankings=None, reindex=True, batch_counts=True, **fontsize_kwargs):
+
+    def get_rankings(self, layer_idx=0, q=.1, genes=True, factor_list=None, return_scores=False, lower_relevance_correct=True, gene_budgets_correct=True):
+        term_names = np.array(self.adata.var_names)
+        if gene_budgets_correct:
+            term_scores = self.pmeans['W']*self.pmeans['gene_scale']
+        else:
+            term_scores = self.pmeans['W']
+        if layer_idx == 1:
+            if genes:
+                if factor_list is None:
+                    factor_list = np.arange(self.layer_sizes[0])
+                if gene_budgets_correct:
+                    term_scores = self.pmeans['hW'][:,factor_list].dot(self.pmeans['W'][factor_list,:]*self.pmeans['gene_scale'])
+                else:
+                    term_scores = self.pmeans['hW'][:,factor_list].dot(self.pmeans['W'][factor_list,:])
+            else:
+                term_names = np.arange(self.n_factors).astype(str)
+                term_scores = self.pmeans['hW']
+
+        top_terms = []
+        top_scores = []
+        for k in range(self.layer_sizes[layer_idx]):
+            top_terms_idx = (term_scores[k, :]).argsort()[::-1]
+            sorted_term_scores_k = term_scores[k,:][top_terms_idx]
+            thres = np.quantile(sorted_term_scores_k, q=q)
+            top_terms_idx = top_terms_idx[np.where(sorted_term_scores_k > thres)[0]]
+            top_terms_list = term_names[top_terms_idx].tolist()
+            top_scores_list = sorted_term_scores_k.tolist()
+            top_terms.append(top_terms_list)
+            top_scores.append(top_scores_list)
+
+        if return_scores:
+            return top_terms, top_scores
+        return top_terms
+
+    def get_graph(self, annotations=None, enrichments=None, top=[10, 5], hfactor_list=None, factor_list=None, ard_filter=[0.3, 0.], gene_rankings=None, reindex=True, batch_counts=True, gene_budgets_correct=True, **fontsize_kwargs):
         if hfactor_list is None:
             hfactor_list = np.arange(self.n_hfactors)
             if ard_filter:
-                hfactor_list = self.filter_factors(q=ard_filter, annotate=False)[1]
+                hfactor_list = self.filter_factors(ard=ard_filter, annotate=False)[1]
         if factor_list is None:
             factor_list = np.arange(self.n_factors)
             if ard_filter:
-                factor_list = self.filter_factors(q=ard_filter, annotate=False)[0]
+                factor_list = self.filter_factors(ard=ard_filter, annotate=False)[0]
 
-        normalized_htopic_weights = self.pmeans['hW'][:,factor_list]/np.sum(self.pmeans['hW'][:, factor_list], axis=1).reshape(-1,1)
+        self.hpal = sns.color_palette('husl', len(hfactor_list))
+
+        normalized_htopic_weights = self.pmeans['hW'][:,factor_list]/np.sum(self.pmeans['hW'], axis=1).reshape(-1,1)
         # ??
         normalized_hfactor_scales = self.pmeans['hfactor_scale']/np.sum(self.pmeans['hfactor_scale'][hfactor_list])
         # ??
@@ -453,7 +547,7 @@ class scDEF(object):
         factor_order = np.argsort(np.array(assignments))
 
         g = Graph()
-        upper_gene_rankings, upper_gene_scores = self.get_rankings(layer_idx=1, genes=True, factor_list=factor_list, return_scores=True)
+        upper_gene_rankings, upper_gene_scores = self.get_rankings(layer_idx=1, genes=True, factor_list=factor_list, return_scores=True, gene_budgets_correct=gene_budgets_correct)
         for i, htopic in enumerate(hfactor_list):
             if reindex:
                 tlab = str(i)
@@ -476,7 +570,7 @@ class scDEF(object):
             batch_counts = False
 
         if gene_rankings is None:
-            gene_rankings, gene_scores = self.get_rankings(layer_idx=0, return_scores=True)
+            gene_rankings, gene_scores = self.get_rankings(layer_idx=0, return_scores=True, gene_budgets_correct=gene_budgets_correct)
 
         for pos in factor_order:
             topic = factor_list[pos]
@@ -518,8 +612,8 @@ class scDEF(object):
 
         return g
 
-    def get_summary(self, q=[0.4, 0.4], top_genes=10, reindex=True):
-        tokeep = self.filter_factors(q=q, annotate=False)[0]
+    def get_summary(self, ard_filter=[0.5, 0.5], top_genes=10, reindex=True):
+        tokeep = self.filter_factors(ard=ard_filter, annotate=False)[0]
         n_factors_eff = len(tokeep)
         genes, scores = self.get_rankings(return_scores=True)
 

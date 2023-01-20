@@ -1,9 +1,8 @@
 import numpy as np
-import scdef
 import pandas as pd
 import scanpy as sc
 import anndata
-import scvi
+import scdef
 from sklearn.metrics import adjusted_rand_score, silhouette_score, roc_auc_score
 from sklearn.model_selection import train_test_split
 
@@ -19,6 +18,7 @@ markers = dict(zip(groups, [markers.loc[markers['cluster'] == g]['gene'].tolist(
 
 adata = anndata.AnnData(X=counts.values.T, obs=meta)
 adata.var_names = [f'Gene{i+1}' for i in range(adata.shape[1])]
+# Normalize per batch
 sc.pp.filter_genes(adata, min_counts=3)
 adata.layers["counts"] = adata.X.copy() # preserve counts
 sc.pp.normalize_total(adata, target_sum=1e4)
@@ -34,7 +34,7 @@ sc.pp.highly_variable_genes(
     batch_key="Batch"
 )
 
-latent, gene_scores, nadata = scdef.other_methods.run_scvi(adata)
+latent, gene_scores, nadata = scdef.other_methods.run_scanorama(adata)
 
 # Compute clustering scores
 asw = silhouette_score(latent, nadata.obs['Group'])
@@ -50,9 +50,9 @@ aucs = []
 for group in np.unique(nadata.obs['Group']):
     # True markers
     true_markers = markers[group]
-    true_markers = [1 if gene in true_markers else 0 for gene in nadata.var_names]
+    true_markers = [1 if gene in true_markers else 0 for gene in adata.var_names]
     # Get cluster that contains the most cells of this group
-    cells = np.where(adata.obs['Group'] == group)[0]
+    cells = np.where(nadata.obs['Group'] == group)[0]
     factors, counts = np.unique(nadata.obs['leiden'][cells], return_counts=True)
     factor = int(factors[np.argmax(counts)])
     # Compute ROC AUC
@@ -63,10 +63,13 @@ avg_auc = np.mean(aucs)
 coherences = []
 for i in range(chc_reps):
     train_set, heldout_set = train_test_split(np.arange(adata.shape[0]), test_size=test_frac, random_state=i, shuffle=True)
-    latent, gene_scores, nadata = scdef.other_methods.run_scvi(adata[train_set])
+    nadata = adata[train_set].copy()
+    nadata = nadata[np.argsort(nadata.obs['Batch'])]
+    latent, gene_scores, nadata = scdef.other_methods.run_scanorama(nadata)
     gene_rankings = []
     for k in range(len(gene_scores)):
-        gene_rankings.append(adata.var_names[np.argsort(gene_scores[k])][:50])
+        signature_scores = gene_scores[k]
+        gene_rankings.append(nadata.var_names[np.argsort(signature_scores)][:50])
     coherences.append(scdef.util.coherence_score(gene_rankings, adata[heldout_set])) # does not need labels, but needs held-out data?!
 chc = np.mean(coherences)
 

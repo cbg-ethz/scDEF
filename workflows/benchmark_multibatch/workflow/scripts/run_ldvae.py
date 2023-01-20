@@ -10,6 +10,8 @@ from sklearn.model_selection import train_test_split
 counts = pd.read_csv(snakemake.input["counts_fname"], index_col=0)
 meta = pd.read_csv(snakemake.input["meta_fname"])
 markers = pd.read_csv(snakemake.input["markers_fname"])
+k_min = snakemake.params["k_min"]
+k_max = snakemake.params["k_max"]
 n_top_genes = snakemake.params["n_top_genes"]
 chc_reps = snakemake.params["chc_reps"]
 test_frac = snakemake.params["test_frac"]
@@ -34,11 +36,12 @@ sc.pp.highly_variable_genes(
     batch_key="Batch"
 )
 
-latent, gene_scores, nadata = scdef.other_methods.run_scvi(adata)
+latent, loadings, nadata = scdef.other_methods.run_ldvae(adata, range(k_min,k_max))
+assignments = np.argmax(latent, axis=1)
 
 # Compute clustering scores
 asw = silhouette_score(latent, nadata.obs['Group'])
-ari = adjusted_rand_score(nadata.obs['Group'], nadata.obs['leiden'])
+ari = adjusted_rand_score(nadata.obs['Group'], assignments)
 
 # Compute mean cell score per group
 mean_cluster_scores = scdef.util.get_mean_cellscore_per_group(latent, nadata.obs['Group'].values)
@@ -53,20 +56,20 @@ for group in np.unique(nadata.obs['Group']):
     true_markers = [1 if gene in true_markers else 0 for gene in nadata.var_names]
     # Get cluster that contains the most cells of this group
     cells = np.where(adata.obs['Group'] == group)[0]
-    factors, counts = np.unique(nadata.obs['leiden'][cells], return_counts=True)
-    factor = int(factors[np.argmax(counts)])
+    factors, counts = np.unique(assignments[cells], return_counts=True)
+    factor = factors[np.argmax(counts)]
     # Compute ROC AUC
-    aucs.append(roc_auc_score(true_markers, gene_scores[factor]))
+    aucs.append(roc_auc_score(true_markers, loadings[factor]))
 avg_auc = np.mean(aucs)
 
 # Compute coherence score of gene signatures
 coherences = []
 for i in range(chc_reps):
     train_set, heldout_set = train_test_split(np.arange(adata.shape[0]), test_size=test_frac, random_state=i, shuffle=True)
-    latent, gene_scores, nadata = scdef.other_methods.run_scvi(adata[train_set])
+    latent, loadings, nadata = scdef.other_methods.run_ldvae(adata[train_set], range(k_min,k_max))
     gene_rankings = []
-    for k in range(len(gene_scores)):
-        gene_rankings.append(adata.var_names[np.argsort(gene_scores[k])][:50])
+    for k in range(latent.shape[1]):
+        gene_rankings.append(adata.var_names[np.argsort(loadings[k])][:50])
     coherences.append(scdef.util.coherence_score(gene_rankings, adata[heldout_set])) # does not need labels, but needs held-out data?!
 chc = np.mean(coherences)
 

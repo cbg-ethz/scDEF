@@ -55,3 +55,27 @@ def entropy_score(factors_by_groups_matrix):
     n2 = np.mean(-np.sum(n2*np.log(n2), axis=0))
 
     return np.mean([n1,n2])
+
+def compute_geneset_coherence(genes, counts_adata):
+    # As in Spectra: https://github.com/dpeerlab/spectra/blob/ff0e5c456127a33938b1ea560432f228dc26a08b/spectra/initialization.py
+    mat = np.array(counts_adata[:,genes].X)
+    n_genes = len(genes)
+    score = 0
+    for i in range(1, n_genes):
+        for j in range(i):
+            dw1 = mat[:, i] > 0
+            dw2 = mat[:, j] > 0
+            dw1w2 = (dw1 & dw2).astype(float).sum()
+            dw1 = dw1.astype(float).sum()
+            dw2 = dw2.astype(float).sum()
+            score += np.log((dw1w2 + 1)/(dw2))
+
+    denom = n_genes*(n_genes-1)/2
+
+    return score/denom
+
+def coherence_score(marker_gene_sets, heldout_counts_adata):
+    chs = []
+    for marker_genes in marker_gene_sets:
+        chs.append(compute_geneset_coherence(marker_genes, heldout_counts_adata))
+    return np.mean(chs)

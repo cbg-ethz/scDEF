@@ -34,7 +34,7 @@ sc.pp.highly_variable_genes(
     batch_key="Batch"
 )
 
-latent, gene_scores, nadata = scdef.other_methods.run_scvi(adata)
+latent, gene_scores, nadata = scdef.other_methods.run_unintegrated(adata)
 
 # Compute clustering scores
 asw = silhouette_score(latent, nadata.obs['Group'])
@@ -63,7 +63,7 @@ avg_auc = np.mean(aucs)
 coherences = []
 for i in range(chc_reps):
     train_set, heldout_set = train_test_split(np.arange(adata.shape[0]), test_size=test_frac, random_state=i, shuffle=True)
-    latent, gene_scores, nadata = scdef.other_methods.run_scvi(adata[train_set])
+    latent, gene_scores, nadata  = scdef.other_methods.run_unintegrated(adata[train_set])
     gene_rankings = []
     for k in range(len(gene_scores)):
         gene_rankings.append(adata.var_names[np.argsort(gene_scores[k])][:50])

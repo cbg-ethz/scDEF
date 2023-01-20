@@ -10,7 +10,7 @@ for _ in range(4):  # go up to results/
 outFileName = snakemake.output[0]
 
 pattern = (
-    collectionName + "/**/**/**/*mod.txt"
+    collectionName + "/**/**/**/*score.txt"
 )  # all files matching this pattern are processed
 
 fileList = glob.glob(pattern, recursive=False)
@@ -22,12 +22,12 @@ for filename in fileList:
     method = l[1]
     n_batches = l[2]
     frac_shared = l[3]
-    rep_id = l[4].split("_")[0]
+    rep_id, score, _ = l[4].split("_")
 
     # Parse scores
     with open(filename) as f:
         lines = f.read().splitlines()
-        mod = lines[0]
+        value = lines[0]
 
     rows.append(
         [
@@ -35,7 +35,8 @@ for filename in fileList:
             n_batches,
             frac_shared,
             rep_id,
-            mod,
+            score,
+            value,
         ]
     )
 
@@ -44,7 +45,8 @@ columns = [
     "n_batches",
     "frac_shared",
     "rep_id",
-    "mod",
+    "score",
+    "value",
 ]
 
 import pandas as pd
@@ -57,8 +59,8 @@ scores = pd.melt(
         "n_batches",
         "frac_shared",
         "rep_id",
+        "score",
     ],
-    value_vars="mod",
-    var_name="score",
+    value_vars="value",
 )
 scores.to_csv(outFileName, index=False)
