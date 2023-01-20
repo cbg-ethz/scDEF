@@ -84,8 +84,7 @@ class scDEF(object):
             self.X = np.array(self.adata.raw.X.toarray())
         else:
             self.X = np.array(self.adata.raw.X)
-        self.n_batches = 1
-        self.batch_indices_onehot = np.ones((self.adata.shape[0], self.n_batches))
+        self.batch_indices_onehot = np.zeros((self.adata.shape[0], 1))
         self.batch_lib_sizes = np.sum(self.X, axis=1)
         self.batch_lib_ratio = np.ones((self.X.shape[0],1)) * np.mean(self.batch_lib_sizes)/np.var(self.batch_lib_sizes)
         if batch_key in self.adata.obs.columns:
@@ -522,23 +521,15 @@ class scDEF(object):
             return top_terms, top_scores
         return top_terms
 
-    def get_graph(self, annotations=None, enrichments=None, top=[10, 5], hfactor_list=None, factor_list=None, ard_filter=[0.3, 0.], gene_rankings=None, reindex=True, batch_counts=True, gene_budgets_correct=True, **fontsize_kwargs):
+    def get_graph(self, annotations=None, enrichments=None, top=[10, 5], hfactor_list=None, factor_list=None, ard_filter=[0., 0.], gene_rankings=None, reindex=True, batch_counts=True, gene_budgets_correct=True, **fontsize_kwargs):
         if hfactor_list is None:
-            hfactor_list = np.arange(self.n_hfactors)
-            if ard_filter:
-                hfactor_list = self.filter_factors(ard=ard_filter, annotate=False)[1]
+            hfactor_list = self.filter_factors(ard=ard_filter, annotate=False)[1]
         if factor_list is None:
-            factor_list = np.arange(self.n_factors)
-            if ard_filter:
-                factor_list = self.filter_factors(ard=ard_filter, annotate=False)[0]
+            factor_list = self.filter_factors(ard=ard_filter, annotate=False)[0]
 
         self.hpal = sns.color_palette('husl', len(hfactor_list))
 
         normalized_htopic_weights = self.pmeans['hW'][:,factor_list]/np.sum(self.pmeans['hW'], axis=1).reshape(-1,1)
-        # ??
-        normalized_hfactor_scales = self.pmeans['hfactor_scale']/np.sum(self.pmeans['hfactor_scale'][hfactor_list])
-        # ??
-        normalized_factor_scales = self.pmeans['factor_scale']/np.sum(self.pmeans['factor_scale'][factor_list])
 
         # Assign factors to hierarchical factors to set the plotting order
         assignments = []
