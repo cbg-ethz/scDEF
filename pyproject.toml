@@ -17,6 +17,7 @@ scanpy = "^1.9.3"
 anndata = "^0.9.1"
 click = "^8.0.1"
 tqdm = "^4.64.0"
+gseapy = "^1.0.4"
 
 [tool.poetry.dev-dependencies]
 bump2version = "^1.0.1"
