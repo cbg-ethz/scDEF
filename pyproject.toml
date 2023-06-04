@@ -8,15 +8,15 @@ readme = "README.md"
 repository = "https://github.com/cbg-ethz/scdef"
 
 [tool.poetry.dependencies]
-python = ">=3.7.1,<3.10"
-pandas = "^1.3.2"
-numpy = "^1.21.2"
+python = ">=3.7.1,<=3.10"
+pandas = "^1.5.1"
+numpy = "^1.23.4"
 jax = "^0.3.20"
 jaxlib = "^0.3.20"
-scanpy = "^1.8.2"
-anndata = "^0.7.8"
+scanpy = "^1.9.3"
+anndata = "^0.9.1"
 click = "^8.0.1"
-tqdm = "^4.57.0"
+tqdm = "^4.64.0"
 
 [tool.poetry.dev-dependencies]
 bump2version = "^1.0.1"

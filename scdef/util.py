@@ -13,7 +13,7 @@ def gaussian_logpdf(x, mean, log_scale):
 
 def gamma_sample(rng, shape, rate):
     scale = 1./rate
-    return jnp.clip(scale * random.gamma(rng, shape), a_min=1e-10, a_max=1e30)
+    return jnp.clip(scale * random.gamma(rng, shape), a_min=1e-15, a_max=1e15)
 
 def gamma_logpdf(x, shape, rate):
     scale = 1./rate

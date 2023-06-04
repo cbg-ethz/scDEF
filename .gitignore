@@ -1,3 +1,6 @@
 __pycache__/
 misc/
 default.profraw
+results/
+figures/
+.snakemake/
