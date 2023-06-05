@@ -48,10 +48,13 @@ def test_scdef():
     assert hasattr(scd, "adata")
 
     scd.learn(n_epoch=3)
+
     assert len(scd.elbos) == 1
     assert "factor" in scd.adata.obs.columns
     assert "hfactor" in scd.adata.obs.columns
     assert "hhfactor" in scd.adata.obs.columns
+
+    scd.plot_multilevel_paga()
 
 
 #
