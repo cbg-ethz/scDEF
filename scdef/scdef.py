@@ -28,6 +28,7 @@ class scDEF(object):
     def __init__(
         self,
         adata,
+        counts_layer=None,
         layer_sizes=[60, 30, 15],
         batch_key="batch",
         seed=42,
@@ -106,7 +107,7 @@ class scDEF(object):
             for idx, size in enumerate(layer_sizes)
         ]
 
-        self.load_adata(adata, batch_key=batch_key)
+        self.load_adata(adata, layer=counts_layer, batch_key=batch_key)
         self.batch_key = batch_key
         self.n_cells, self.n_genes = adata.shape
 
