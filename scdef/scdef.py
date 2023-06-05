@@ -20,6 +20,7 @@ import scipy
 import numpy as np
 import pandas as pd
 from anndata import AnnData
+import scanpy as sc
 
 from scdef.util import *
 
@@ -77,6 +78,8 @@ class scDEF(object):
 
         if layer_cpal is None:
             layer_cpal = ["Set1"] * self.n_layers
+            if self.n_layers <= 3:
+                layer_cpal = [f"Set{i}" for i in range(1, self.n_layers+1)]
         elif isinstance(layer_cpal, str):
             layer_cpal = [layer_cpal] * self.n_layers
         elif len(layer_cpal) != self.n_layers:
@@ -178,7 +181,7 @@ class scDEF(object):
             + ", ".join([str(rate) for rate in self.factor_rates])
         )
         out += (
-            "\n\t" + "Lowe layer factor relevance prior concentration: " + str(self.brd)
+            "\n\t" + "BRD prior parameter: " + str(self.brd)
         )
         out += "\n\t" + "Number of batches: " + str(self.n_batches)
         out += "\n" + "Contains " + self.adata.__str__()
