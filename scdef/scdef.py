@@ -79,7 +79,7 @@ class scDEF(object):
         if layer_cpal is None:
             layer_cpal = ["Set1"] * self.n_layers
             if self.n_layers <= 3:
-                layer_cpal = [f"Set{i}" for i in range(1, self.n_layers+1)]
+                layer_cpal = [f"Set{i}" for i in range(1, self.n_layers + 1)]
         elif isinstance(layer_cpal, str):
             layer_cpal = [layer_cpal] * self.n_layers
         elif len(layer_cpal) != self.n_layers:
@@ -180,9 +180,7 @@ class scDEF(object):
             + "Layer factor rate parameters: "
             + ", ".join([str(rate) for rate in self.factor_rates])
         )
-        out += (
-            "\n\t" + "BRD prior parameter: " + str(self.brd)
-        )
+        out += "\n\t" + "BRD prior parameter: " + str(self.brd)
         out += "\n\t" + "Number of batches: " + str(self.n_batches)
         out += "\n" + "Contains " + self.adata.__str__()
         return out
