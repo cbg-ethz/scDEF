@@ -916,7 +916,7 @@ class scDEF(object):
         elif filled == "factor":
             style = "filled"
         else:
-            if filled not in scd.adata.obs:
+            if filled not in self.adata.obs:
                 raise ValueError("filled must be factor or any `obs` in self.adata")
             else:
                 style = "filled"
@@ -925,7 +925,7 @@ class scDEF(object):
             if wedged is None:
                 style = None
             else:
-                if wedged not in scd.adata.obs:
+                if wedged not in self.adata.obs:
                     raise ValueError("wedged must be any `obs` in self.adata")
                 else:
                     style = "wedged"
@@ -1000,7 +1000,7 @@ class scDEF(object):
                             # cells in this factor that belong to each obs
                             prevs = [
                                 np.count_nonzero(self.adata.obs[filled][cells] == b)
-                                for b in scd.adata.obs[filled].unique()
+                                for b in self.adata.obs[filled].unique()
                             ]
                             obs_idx = np.argmax(prevs)  # obs attachment
                             alpha = prevs[obs_idx] / np.sum(
@@ -1021,7 +1021,7 @@ class scDEF(object):
                         # cells in this factor that belong to each obs
                         prevs = [
                             np.count_nonzero(self.adata.obs[wedged][cells] == b)
-                            for b in scd.adata.obs[wedged].unique()
+                            for b in self.adata.obs[wedged].unique()
                         ]
                         fracs = prevs / np.sum(prevs)
                         # make color string for pie chart
