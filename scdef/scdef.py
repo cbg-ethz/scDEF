@@ -195,7 +195,7 @@ class scDEF(object):
             X = self.adata.layers[layer]
 
         if isinstance(X, scipy.sparse.csr_matrix):
-            self.X = np.array(self.adata.raw.X.toarray())
+            self.X = np.array(X.toarray())
         else:
             self.X = np.array(X)
 
