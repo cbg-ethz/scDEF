@@ -30,12 +30,14 @@ class scDEF(object):
         self,
         adata,
         counts_layer=None,
-        layer_sizes=[60, 30, 15],
+        layer_sizes=[100, 30, 10],
         batch_key="batch",
         seed=42,
         logginglevel=logging.INFO,
         layer_shapes=None,
         brd=1e3,
+        cell_scale_shape=1.0,
+        gene_scale_shape=1.0,
         factor_shapes=None,
         factor_rates=None,
         layer_diagonals=None,
@@ -49,7 +51,7 @@ class scDEF(object):
             raise ValueError("scDEF requires at least 2 layers")
 
         if layer_shapes is None:
-            layer_shapes = [1.0] * self.n_layers
+            layer_shapes = [0.3] * self.n_layers
         elif isinstance(layer_shapes, float) or isinstance(layer_shapes, int):
             layer_shapes = [float(layer_shapes)] * self.n_layers
         elif len(layer_shapes) != self.n_layers:
@@ -63,7 +65,7 @@ class scDEF(object):
             raise ValueError("factor_shapes list must be of size scDEF.n_layers")
 
         if factor_rates is None:
-            factor_rates = [0.1] + [1.0] * (self.n_layers - 1)
+            factor_rates = [10.0] + [1.0] * (self.n_layers - 1)
         elif isinstance(factor_rates, float) or isinstance(factor_rates, int):
             factor_rates = [float(factor_rates)] * self.n_layers
         elif len(factor_rates) != self.n_layers:
@@ -94,6 +96,8 @@ class scDEF(object):
         self.factor_rates = factor_rates
 
         self.brd = brd
+        self.cell_scale_shape = cell_scale_shape
+        self.gene_scale_shape = gene_scale_shape
 
         self.logger = logging.getLogger("scDEF")
         self.logger.setLevel(logginglevel)
@@ -448,11 +452,19 @@ class scDEF(object):
         # w will be sampled in a loop below because it cannot be vectorized
 
         # Compute ELBO
-        global_pl = gamma_logpdf(gene_budget_sample, 1.0, self.gene_ratio)
+        global_pl = gamma_logpdf(
+            gene_budget_sample,
+            self.gene_scale_shape,
+            self.gene_scale_shape * self.gene_ratio,
+        )
         global_en = -gamma_logpdf(
             gene_budget_sample, gene_budget_shape, gene_budget_rate
         )
-        local_pl = gamma_logpdf(cell_budget_sample, 1.0, self.batch_lib_ratio[indices])
+        local_pl = gamma_logpdf(
+            cell_budget_sample,
+            self.cell_scale_shape,
+            self.cell_scale_shape * self.batch_lib_ratio[indices],
+        )
         local_en = -gamma_logpdf(
             cell_budget_sample, cell_budget_shape, cell_budget_rate
         )
