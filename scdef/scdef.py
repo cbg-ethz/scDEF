@@ -252,7 +252,7 @@ class scDEF(object):
         self.X = jnp.array(self.X)
 
     def init_var_params(self, minval=0.5, maxval=1.5):
-        rngs = random.split(random.PRNGKey(self.seed), 4 + 2 * 3 * self.n_layers)
+        rngs = random.split(random.PRNGKey(self.seed), 6 + 2 * 2 * self.n_layers)
 
         self.var_params = [
             jnp.array(
@@ -261,14 +261,14 @@ class scDEF(object):
                         random.uniform(
                             rngs[0], minval=0.5, maxval=1.5, shape=[self.n_cells, 1]
                         )
-                        * 10
+                        * 10.0
                     ),  # cell_scales
                     jnp.log(
                         random.uniform(
                             rngs[1], minval=0.5, maxval=1.5, shape=[self.n_cells, 1]
                         )
                     )
-                    * jnp.clip(10 * self.batch_lib_ratio, 1e-6, 1e2),
+                    * jnp.clip(10.0 * self.batch_lib_ratio, 1e-6, 1e2),
                 )
             ),
             jnp.array(
@@ -280,7 +280,7 @@ class scDEF(object):
                             maxval=1.5,
                             shape=[self.n_batches, self.n_genes],
                         )
-                        * 10
+                        * 10.0
                     ),  # gene_scales
                     jnp.log(
                         random.uniform(
@@ -289,62 +289,41 @@ class scDEF(object):
                             maxval=1.5,
                             shape=[self.n_batches, self.n_genes],
                         )
-                        * jnp.clip(10 * self.gene_ratio, 1e-6, 1e2)
+                        * jnp.clip(10.0 * self.gene_ratio, 1e-6, 1e2)
                     ),
                 )
             ),
         ]
 
-        fscale_shapes = []
-        fscale_rates = []
+        self.var_params.append(
+            jnp.array(
+                (
+                    jnp.log(
+                        random.uniform(
+                            rngs[4],
+                            minval=1.0,
+                            maxval=1.0,
+                            shape=[self.layer_sizes[0], 1],
+                        )
+                    ),  # BRD
+                    jnp.log(
+                        random.uniform(
+                            rngs[5],
+                            minval=1.0,
+                            maxval=1.0,
+                            shape=[self.layer_sizes[0], 1],
+                        )
+                    ),
+                )
+            )
+        )
+
         z_shapes = []
         z_rates = []
-        rng_cnt = 0
+        rng_cnt = 6
         for layer_idx in range(
             self.n_layers
         ):  # we go from layer 0 (bottom) to layer L (top)
-            # Init scales
-            if layer_idx == 0:
-                fscale_shape = jnp.log(
-                    random.uniform(
-                        rngs[rng_cnt],
-                        minval=minval,
-                        maxval=maxval,
-                        shape=[self.layer_sizes[layer_idx], 1],
-                    )
-                )
-            else:
-                fscale_shape = jnp.log(
-                    random.uniform(
-                        rngs[rng_cnt],
-                        minval=minval,
-                        maxval=maxval,
-                        shape=[self.layer_sizes[layer_idx], 1],
-                    )
-                )
-            fscale_shapes.append(fscale_shape)
-            rng_cnt += 1
-            if layer_idx == 0:
-                fscale_rate = jnp.log(
-                    random.uniform(
-                        rngs[rng_cnt],
-                        minval=minval,
-                        maxval=maxval,
-                        shape=[self.layer_sizes[layer_idx], 1],
-                    )
-                )
-            else:
-                fscale_rate = jnp.log(
-                    random.uniform(
-                        rngs[rng_cnt],
-                        minval=minval,
-                        maxval=maxval,
-                        shape=[self.layer_sizes[layer_idx], 1],
-                    )
-                )
-            fscale_rates.append(fscale_rate)
-            rng_cnt += 1
-
             # Init z
             z_shape = jnp.log(
                 random.uniform(
@@ -353,6 +332,7 @@ class scDEF(object):
                     maxval=maxval,
                     shape=[self.n_cells, self.layer_sizes[layer_idx]],
                 )
+                * self.layer_shapes[layer_idx]
             )
             z_shapes.append(z_shape)
             rng_cnt += 1
@@ -363,13 +343,11 @@ class scDEF(object):
                     maxval=maxval,
                     shape=[self.n_cells, self.layer_sizes[layer_idx]],
                 )
+                * self.layer_shapes[layer_idx]
             )
             z_rates.append(z_rate)
             rng_cnt += 1
 
-        self.var_params.append(
-            jnp.array((jnp.vstack(fscale_shapes), jnp.vstack(fscale_rates)))
-        )
         self.var_params.append(jnp.array((jnp.hstack(z_shapes), jnp.hstack(z_rates))))
 
         for layer_idx in range(
@@ -447,7 +425,7 @@ class scDEF(object):
         # Sample from variational distribution
         cell_budget_sample = gamma_sample(rng, cell_budget_shape, cell_budget_rate)
         gene_budget_sample = gamma_sample(rng, gene_budget_shape, gene_budget_rate)
-        fscale_samples = gamma_sample(rng, fscale_shapes, fscale_rates)  # vectorized
+        fscale_samples = gamma_sample(rng, fscale_shapes, fscale_rates)
         z_samples = gamma_sample(rng, z_shapes, z_rates)  # vectorized
         # w will be sampled in a loop below because it cannot be vectorized
 
@@ -469,16 +447,16 @@ class scDEF(object):
             cell_budget_sample, cell_budget_shape, cell_budget_rate
         )
 
+        # scale
+        global_pl += gamma_logpdf(
+            fscale_samples, self.brd, self.brd * self.factor_rates[0]
+        )
+        global_en += -gamma_logpdf(fscale_samples, fscale_shapes, fscale_rates)
+
         # Top layer
         idx = self.n_layers - 1
         start = np.sum(self.layer_sizes[:idx])
         end = start + self.layer_sizes[idx]
-        # scale
-        _fscale_sample = fscale_samples[start:end]
-        _fscale_shape = fscale_shapes[start:end]
-        _fscale_rate = fscale_rates[start:end]
-        global_pl += gamma_logpdf(_fscale_sample, 1e0, 1e0)
-        global_en += -gamma_logpdf(_fscale_sample, _fscale_shape, _fscale_rate)
         # w
         _w_shape = jnp.maximum(jnp.exp(var_params[4 + idx][0]), min_shape)
         _w_rate = jnp.minimum(
@@ -486,7 +464,7 @@ class scDEF(object):
         )
         _w_sample = gamma_sample(rng, _w_shape, _w_rate)
         global_pl += gamma_logpdf(
-            _w_sample, self.w_priors[idx][0], self.w_priors[idx][1] / _fscale_sample
+            _w_sample, self.w_priors[idx][0], self.w_priors[idx][1]
         )
         global_en += -gamma_logpdf(_w_sample, _w_shape, _w_rate)
         # z
@@ -498,21 +476,12 @@ class scDEF(object):
         )
         local_en += -gamma_logpdf(_z_sample, _z_shape, _z_rate)
 
-        fscale_mean = _w_sample.T.dot(_fscale_sample)
         z_mean = jnp.einsum("nk,kp->np", _z_sample, _w_sample)
 
         for idx in list(np.arange(0, self.n_layers - 1)[::-1]):
             start = np.sum(self.layer_sizes[:idx]).astype(int)
             end = start + self.layer_sizes[idx]
-            # scale
-            _fscale_sample = fscale_samples[start:end]
-            _fscale_shape = fscale_shapes[start:end]
-            _fscale_rate = fscale_rates[start:end]
-            if idx == 0:
-                global_pl += gamma_logpdf(_fscale_sample, self.brd, self.brd)
-            else:
-                global_pl += gamma_logpdf(_fscale_sample, 1e0, 1e0)
-            global_en += -gamma_logpdf(_fscale_sample, _fscale_shape, _fscale_rate)
+
             # w
             _w_shape = jnp.maximum(jnp.exp(var_params[4 + idx][0]), min_shape)
             _w_rate = jnp.minimum(
@@ -522,14 +491,14 @@ class scDEF(object):
             if idx == 0:
                 global_pl += gamma_logpdf(
                     _w_sample,
-                    self.w_priors[idx][0] / _fscale_sample,
-                    self.w_priors[idx][1] / _fscale_sample,
+                    self.w_priors[idx][0] / fscale_samples,
+                    self.w_priors[idx][1] / fscale_samples,
                 )
             else:
                 global_pl += gamma_logpdf(
                     _w_sample,
                     self.w_priors[idx][0],
-                    self.w_priors[idx][1] / _fscale_sample,
+                    self.w_priors[idx][1],
                 )
             global_en += -gamma_logpdf(_w_sample, _w_shape, _w_rate)
             # z
@@ -541,7 +510,6 @@ class scDEF(object):
             )
             local_en += -gamma_logpdf(_z_sample, _z_shape, _z_rate)
 
-            fscale_mean = _w_sample.T.dot(_fscale_sample)
             z_mean = jnp.einsum("nk,kp->np", _z_sample, _w_sample)
 
         # Compute log likelihood
@@ -704,15 +672,12 @@ class scDEF(object):
             "gene_scale": np.array(
                 np.exp(gene_budget_params[0]) / np.exp(gene_budget_params[1])
             ),
+            "brd": np.array(np.exp(fscale_params[0]) / np.exp(fscale_params[1])),
         }
 
         for idx in range(self.n_layers):
             start = sum(self.layer_sizes[:idx])
             end = start + self.layer_sizes[idx]
-            self.pmeans[f"{self.layer_names[idx]}fscale"] = np.array(
-                np.exp(fscale_params[0][start:end])
-                / np.exp(fscale_params[1][start:end])
-            )
             self.pmeans[f"{self.layer_names[idx]}z"] = np.array(
                 np.exp(z_params[0][:, start:end]) / np.exp(z_params[1][:, start:end])
             )
@@ -722,17 +687,58 @@ class scDEF(object):
                 np.exp(_w_shape) / np.exp(_w_rate)
             )
 
-    def filter_factors(self, ard=0.5):
-        if isinstance(ard, float):
-            ard = [ard] * self.n_layers
-        elif len(ard) != self.n_layers:
-            raise IndexError("ard list must be of size scDEF.n_layers")
+    def filter_factors(self, thres=None, iqr_mult=3.0, min_cells=0):
+        """
+        Remove factors based on the ARD posteriors. By default, keeps only factors
+        for which the relevance is at least 3 times the difference between the third
+        quartile and the median relevances.
+        """
+        ard = []
+        if thres is not None:
+            ard = thres
+        else:
+            ard = iqr_mult
+
         self.factor_lists = []
         for i, layer_name in enumerate(self.layer_names):
-            thres = np.quantile(self.pmeans[f"{layer_name}fscale"], q=ard[i])
-            self.factor_lists.append(
-                np.where(self.pmeans[f"{layer_name}fscale"] >= thres)[0]
-            )
+            if i == 0:
+                assignments = np.argmax(self.pmeans[f"{layer_name}z"], axis=1)
+                counts = np.array(
+                    [
+                        np.count_nonzero(assignments == a)
+                        for a in range(self.layer_sizes[i])
+                    ]
+                )
+                keep = np.array(range(self.layer_sizes[i]))[
+                    np.where(counts >= min_cells)[0]
+                ]
+                rels = self.pmeans[f"brd"].ravel()
+                rels = rels - np.min(rels)
+                rels = rels / np.max(rels)
+                if thres is None:
+                    median = np.median(rels)
+                    q3 = np.percentile(rels, 75)
+                    cutoff = ard * (q3 - median)
+                else:
+                    cutoff = ard
+                keep = np.unique(
+                    list(set(np.where(rels >= cutoff)[0]).intersection(keep))
+                )
+            else:
+                mat = self.pmeans[f"{layer_name}W"]
+                assignments = []
+                for factor in self.factor_lists[i - 1]:
+                    assignments.append(np.argmax(mat[:, factor]))
+                keep = np.unique(assignments)
+
+            if len(keep) == 0:
+                self.logger.info(
+                    f"No factors in layer {i} satisfy the filtering criterion. Please adjust the filtering parameters. \
+                                Keeping all factors for layer {i} for now."
+                )
+                keep = np.arange(self.layer_sizes[i])
+            self.factor_lists.append(keep)
+
         self.annotate_adata()
         self.make_graph()
 
@@ -1101,46 +1107,49 @@ class scDEF(object):
 
         self.logger.info(f"Updated scDEF graph")
 
-    def plot_ard(
-        self, layer_idx=None, ard=0.5, show_yticks=False, scale="linear", **kwargs
+    def plot_brd(
+        self,
+        thres=None,
+        iqr_mult=3.0,
+        show_yticks=False,
+        scale="linear",
+        normalize=True,
+        **kwargs,
     ):
-        def _plot_ard(layer_idx, ard):
-            scales = self.pmeans[f"{self.layer_names[layer_idx]}fscale"].ravel()
-            layer_size = self.layer_sizes[layer_idx]
-            thres = np.quantile(scales, q=ard)
-            plt.axhline(thres, color="red", ls="--")
-            above = np.where(scales >= thres)[0]
-            below = np.where(scales < thres)[0]
-            plt.bar(np.arange(layer_size)[above], scales[above])
-            plt.bar(
-                np.arange(layer_size)[below], scales[below], alpha=0.6, color="gray"
-            )
-            if len(scales) > 15:
-                plt.xticks(np.arange(0, layer_size, 2))
-            else:
-                plt.xticks(np.arange(layer_size))
-            if not show_yticks:
-                plt.yticks([])
-            plt.title(f"Layer {layer_idx}")
-            plt.xlabel("Factor")
-            plt.yscale(scale)
-
-        if layer_idx is None:
-            layer_idx = range(self.n_layers)
-        elif isinstance(layer_idx, int):
-            layer_idx = [layer_idx]
-
-        fig, axes = plt.subplots(1, len(layer_idx), **kwargs)
-        if len(layer_idx) > 1:
-            for i, layer in enumerate(layer_idx):
-                plt.sca(axes[i])
-                _plot_ard(layer, ard)
-            plt.sca(axes[0])
+        ard = []
+        if thres is not None:
+            ard = thres
         else:
-            _plot_ard(layer_idx[0], ard)
+            ard = iqr_mult
 
-        plt.ylabel("Sparsity")
+        layer_size = self.layer_sizes[0]
+        scales = self.pmeans[f"brd"].ravel()
+        if normalize:
+            scales = scales - np.min(scales)
+            scales = scales / np.max(scales)
+        if thres is None:
+            median = np.median(scales)
+            q3 = np.percentile(scales, 75)
+            cutoff = ard * (q3 - median)
+        else:
+            cutoff = ard
 
+        fig = plt.figure(**kwargs)
+        plt.axhline(cutoff, color="red", ls="--")
+        above = np.where(scales >= cutoff)[0]
+        below = np.where(scales < cutoff)[0]
+        plt.bar(np.arange(layer_size)[above], scales[above])
+        plt.bar(np.arange(layer_size)[below], scales[below], alpha=0.6, color="gray")
+        if len(scales) > 15:
+            plt.xticks(np.arange(0, layer_size, 2))
+        else:
+            plt.xticks(np.arange(layer_size))
+        if not show_yticks:
+            plt.yticks([])
+        plt.title(f"Biological relevance determination")
+        plt.xlabel("Factor")
+        plt.yscale(scale)
+        plt.ylabel("Relevance")
         plt.show()
 
     def plot_obs_factor_dotplot(
