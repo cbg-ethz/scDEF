@@ -586,7 +586,12 @@ class scDEF(object):
         return losses, opt_state
 
     def learn(
-        self, n_epoch=1000, lr=0.2, annealing=1.0, num_samples=5, batch_size=None
+        self,
+        n_epoch=[1000, 1000],
+        lr=0.1,
+        annealing=1.0,
+        num_samples=5,
+        batch_size=None,
     ):
         n_steps = 1
 
