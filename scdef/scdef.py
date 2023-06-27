@@ -249,8 +249,6 @@ class scDEF(object):
         self.batch_lib_ratio = jnp.array(self.batch_lib_ratio)
         self.gene_ratio = jnp.array(self.gene_ratio)
 
-        self.X = jnp.array(self.X)
-
     def init_var_params(self, minval=0.5, maxval=1.5):
         rngs = random.split(random.PRNGKey(self.seed), 6 + 2 * 2 * self.n_layers)
 
@@ -385,6 +383,7 @@ class scDEF(object):
     def elbo(
         self,
         rng,
+        batch,
         indices,
         var_params,
         annealing_parameter,
@@ -516,7 +515,7 @@ class scDEF(object):
         mean_bottom = jnp.einsum(
             "nk,kg->ng", _z_sample / cell_budget_sample, _w_sample
         ) / (batch_indices_onehot.dot(gene_budget_sample))
-        ll = jnp.sum(vmap(poisson.logpmf)(self.X[indices], mean_bottom))
+        ll = jnp.sum(vmap(poisson.logpmf)(jnp.array(batch), mean_bottom))
 
         # Anneal the entropy
         global_en *= annealing_parameter
@@ -528,11 +527,13 @@ class scDEF(object):
             + (indices.shape[0] / self.X.shape[0]) * (global_pl + global_en)
         )
 
-    def batch_elbo(self, rng, indices, var_params, num_samples, annealing_parameter):
+    def batch_elbo(self, rng, X, indices, var_params, num_samples, annealing_parameter):
         # Average over a batch of random samples.
         rngs = random.split(rng, num_samples)
-        vectorized_elbo = vmap(self.elbo, in_axes=(0, None, None, None))
-        return jnp.mean(vectorized_elbo(rngs, indices, var_params, annealing_parameter))
+        vectorized_elbo = vmap(self.elbo, in_axes=(0, None, None, None, None))
+        return jnp.mean(
+            vectorized_elbo(rngs, X, indices, var_params, annealing_parameter)
+        )
 
     def _optimize(
         self,
@@ -559,7 +560,7 @@ class scDEF(object):
                 perm = rng.permutation(self.n_cells)
                 for i in range(num_batches):
                     batch_idx = perm[i * batch_size : (i + 1) * batch_size]
-                    yield jnp.array(batch_idx)
+                    yield jnp.array(self.X[batch_idx]), jnp.array(batch_idx)
 
         batches = data_stream()
 
@@ -574,8 +575,9 @@ class scDEF(object):
             start_time = time.time()
             for it in range(num_batches):
                 rng, rng_input = random.split(rng)
+                X, indices = next(batches)
                 loss, opt_state = update_func(
-                    next(batches), t, rng_input, opt_state, annealing_parameter
+                    X, indices, t, rng_input, opt_state, annealing_parameter
                 )
                 epoch_losses.append(loss)
                 t += 1
@@ -625,12 +627,12 @@ class scDEF(object):
         # Set up jitted functions
         init_params = self.var_params
 
-        def objective(indices, var_params, key, annealing_parameter):
+        def objective(X, indices, var_params, key, annealing_parameter):
             return -self.batch_elbo(
-                key, indices, var_params, num_samples, annealing_parameter
+                key, X, indices, var_params, num_samples, annealing_parameter
             )  # minimize -ELBO
 
-        loss_grad = jit(value_and_grad(objective, argnums=1))
+        loss_grad = jit(value_and_grad(objective, argnums=2))
 
         for i in range(len(lr_schedule)):
             step_size = lr_schedule[i]
@@ -640,9 +642,11 @@ class scDEF(object):
             )
             opt_init, opt_update, get_params = optimizers.adam(step_size=step_size)
 
-            def update(indices, i, key, opt_state, annealing_parameter):
+            def update(X, indices, i, key, opt_state, annealing_parameter):
                 params = get_params(opt_state)
-                value, gradient = loss_grad(indices, params, key, annealing_parameter)
+                value, gradient = loss_grad(
+                    X, indices, params, key, annealing_parameter
+                )
                 return value, opt_update(i, gradient, opt_state)
 
             opt_state = opt_init(self.var_params)
