@@ -913,6 +913,7 @@ class scDEF(object):
 
     def make_graph(
         self,
+        top_factor=None,
         show_signatures=True,
         enrichments=None,
         top_genes=None,
@@ -974,7 +975,10 @@ class scDEF(object):
                 factor_order = np.concatenate(factor_order).astype(int)
                 layer_factor_orders.append(factor_order)
             else:
-                layer_factor_orders.append(np.arange(n_factors))
+                if top_factor is not None:
+                    layer_factor_orders.append([top_factor])
+                else:
+                    layer_factor_orders.append(np.arange(n_factors))
         layer_factor_orders = layer_factor_orders[::-1]
 
         def map_scores_to_fontsizes(scores, max_fontsize=11, min_fontsize=5):
@@ -1018,7 +1022,8 @@ class scDEF(object):
                             # cells in this factor that belong to each obs
                             prevs = [
                                 np.count_nonzero(self.adata.obs[filled][cells] == b)
-                                for b in self.adata.obs[filled].unique()
+                                / len(np.where(self.adata.obs[filled] == b)[0])
+                                for b in self.adata.obs[filled].cat.categories
                             ]
                             obs_idx = np.argmax(prevs)  # obs attachment
                             alpha = prevs[obs_idx] / np.sum(
@@ -1037,9 +1042,11 @@ class scDEF(object):
                     )[0]
                     if len(cells) > 0:
                         # cells in this factor that belong to each obs
+                        # normalized by total num of cells in each obs
                         prevs = [
                             np.count_nonzero(self.adata.obs[wedged][cells] == b)
-                            for b in self.adata.obs[wedged].unique()
+                            / len(np.where(self.adata.obs[wedged] == b)[0])
+                            for b in self.adata.obs[wedged].cat.categories
                         ]
                         fracs = prevs / np.sum(prevs)
                         # make color string for pie chart
@@ -1157,7 +1164,7 @@ class scDEF(object):
         obs_key,
         layer_idx,
         figsize=(8, 2),
-        s_min=10,
+        s_min=100,
         s_max=500,
         titlesize=12,
         labelsize=12,
