@@ -1056,6 +1056,7 @@ class scDEF(object):
                                 for b in self.adata.obs[filled].cat.categories
                             ]
                             obs_idx = np.argmax(prevs)  # obs attachment
+                            label = f"{label}<br/>{self.adata.obs[filled].cat.categories[obs_idx]}"
                             alpha = prevs[obs_idx] / np.sum(
                                 prevs
                             )  # confidence on obs_idx attachment -- should I account for the number of cells in each batch in total?
@@ -1109,6 +1110,8 @@ class scDEF(object):
                             f'<FONT POINT-SIZE="{fontsizes[j]}">{gene}</FONT>'
                         )
                     label += "<br/><br/>" + "<br/>".join(gene_labels)
+                elif filled is not None and filled != 'factor':
+                    label += "<br/><br/>" + ""
 
                 label = "<" + label + ">"
                 g.node(
