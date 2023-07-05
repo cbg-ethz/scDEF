@@ -2,7 +2,7 @@ from .scdef import scDEF
 
 import jax.numpy as jnp
 import numpy as np
-import loggings
+import logging
 
 
 class iscDEF(scDEF):
