@@ -6,7 +6,7 @@
 [![pypi](https://img.shields.io/pypi/v/scdef.svg?style=flat)](https://pypi.python.org/pypi/scdef)
 [![build](https://github.com/cbg-ethz/scDEF/actions/workflows/main.yaml/badge.svg)](https://github.com/cbg-ethz/scDEF/actions/workflows/main.yaml)
 
-Deep exponential families for single-cell data. scDEF learns *de novo* gene signatures from scRNA-seq data at multiple levels of resolution.
+Deep exponential families for single-cell data. scDEF learns hierarchies of cell states and their gene signatures from scRNA-seq data. The method can be used for dimensionality reduction, visualization, gene signature identification, clustering at multiple levels of resolution, and batch integration. The informed version (iscDEF) can additionally take known gene lists to jointly assign cells to types and type-specific clustering.
 
 ## Installation
 ```
