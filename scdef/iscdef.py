@@ -19,11 +19,6 @@ class iscDEF(scDEF):
         gene_set_strength=1000.0,
         **kwargs,
     ):
-        """
-        markers_matrix is a dataframe where the indices are gene symbols, columns are cell groups,
-        and each entry is either 0 or 1
-        """
-
         self.markers_dict = markers_dict
         self.add_other = add_other
         self.markers_layer = markers_layer
