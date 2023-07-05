@@ -751,6 +751,9 @@ class scDEF(object):
         self.annotate_adata()
         self.make_graph()
 
+    def set_factor_names(self):
+        self.factor_names = [[f"{self.layer_names[idx]}{str(i)}" for i in range(len(self.factor_lists[idx]))] for idx in range(self.n_layers)]
+
     def annotate_adata(self):
         self.adata.obs["cell_scale"] = 1 / self.pmeans["cell_scale"]
         if self.n_batches == 1:
@@ -762,39 +765,42 @@ class scDEF(object):
                 self.adata.var[name] = 1 / self.pmeans["gene_scale"][batch_idx]
                 self.logger.info(f"Updated adata.var: `{name}` for batch {batch_idx}.")
 
+        self.set_factor_names()
+
         for idx in range(self.n_layers):
             layer_name = self.layer_names[idx]
             self.adata.obsm[f"X_{layer_name}factors"] = self.pmeans[f"{layer_name}z"][
                 :, self.factor_lists[idx]
             ]
-            self.adata.obs[f"{layer_name}factor"] = np.argmax(
+            assignments = np.argmax(
                 self.adata.obsm[f"X_{layer_name}factors"], axis=1
-            ).astype(str)
+            )
+            self.adata.obs[f"{layer_name}factor"] = [self.factor_names[idx][a] for a in assignments]
             self.adata.uns[f"{layer_name}factor_colors"] = [
                 matplotlib.colors.to_hex(self.layer_colorpalettes[idx][i])
                 for i in range(len(self.factor_lists[idx]))
             ]
+
+            scores_names = [f + '_score' for f in self.factor_names[idx]]
             df = pd.DataFrame(
                 self.adata.obsm[f"X_{layer_name}factors"],
                 index=self.adata.obs.index,
-                columns=[
-                    f"{layer_name}z_{i}" for i in range(len(self.factor_lists[idx]))
-                ],
+                columns=scores_names,
             )
-            if f"{layer_name}z_0" not in self.adata.obs.columns:
+            if scores_names[0] not in self.adata.obs.columns:
                 self.adata.obs = pd.concat([self.adata.obs, df], axis=1)
             else:
                 self.adata.obs = self.adata.obs.drop(
                     columns=[
                         col
                         for col in self.adata.obs.columns
-                        if f"{layer_name}z_" in col
+                        if "score" in col
                     ]
                 )
                 self.adata.obs[df.columns] = df
 
             self.logger.info(
-                f"Updated adata.obs with layer {idx}: `{layer_name}factor` and `{layer_name}z_<factor_idx>` for all factors in layer {idx}"
+                f"Updated adata.obs with layer {idx}: `{layer_name}factor` and `{layer_name}_score` for all factors in layer {idx}"
             )
             self.logger.info(
                 f"Updated adata.obsm with layer {idx}: `X_{layer_name}factors`"
@@ -831,7 +837,7 @@ class scDEF(object):
 
     def get_rankings(self, layer_idx=0, q=0.1, genes=True, return_scores=False):
         term_names = np.array(self.adata.var_names)
-        term_scores = self.pmeans["W"][self.factor_lists[0]]
+        term_scores = self.pmeans[f"{self.layer_names[0]}W"][self.factor_lists[0]]
         n_factors = len(self.factor_lists[layer_idx])
 
         if layer_idx > 0:
@@ -1015,6 +1021,8 @@ class scDEF(object):
                 factor_idx = int(factor_idx)
                 alpha = "FF"
                 color = None
+                factor_name = f"{self.factor_names[layer_idx][int(factor_idx)]}"
+                label = factor_name
                 if color_edges:
                     color = matplotlib.colors.to_hex(layer_colors[factor_idx])
                 fillcolor = "#FFFFFF"
@@ -1025,7 +1033,7 @@ class scDEF(object):
                         # cells attached to this factor
                         original_factor_index = self.factor_lists[layer_idx][factor_idx]
                         cells = np.where(
-                            self.adata.obs[f"{layer_name}factor"] == str(factor_idx)
+                            self.adata.obs[f"{layer_name}factor"] == factor_name
                         )[0]
                         if len(cells) > 0:
                             # cells in this factor that belong to each obs
@@ -1047,7 +1055,7 @@ class scDEF(object):
                     # cells attached to this factor
                     original_factor_index = self.factor_lists[layer_idx][factor_idx]
                     cells = np.where(
-                        self.adata.obs[f"{layer_name}factor"] == str(factor_idx)
+                        self.adata.obs[f"{layer_name}factor"] == factor_name
                     )[0]
                     if len(cells) > 0:
                         # cells in this factor that belong to each obs
@@ -1065,8 +1073,6 @@ class scDEF(object):
                                 for obs_idx, frac in enumerate(fracs)
                             ]
                         )
-
-                label = f"{int(factor_idx)}"
 
                 if enrichments is not None:
                     label += "<br/><br/>" + "<br/>".join(
@@ -1199,11 +1205,11 @@ class scDEF(object):
             ]
             n_cells_obs = len(cells_from_obs)
             for factor in range(n_factors):
-                factor_name = f"{layer_name}z_{factor}"
+                factor_name = self.factor_names[layer_idx][factor]
                 cells_attached = self.adata.obs.index[
                     np.where(
                         self.adata.obs.loc[cells_from_obs][f"{layer_name}factor"]
-                        == str(factor)
+                        == factor_name
                     )[0]
                 ]
                 if len(cells_attached) == 0:
@@ -1211,14 +1217,14 @@ class scDEF(object):
                     fraction_attached = 0  # np.nan
                 else:
                     average_weight = np.mean(
-                        self.adata.obs.loc[cells_from_obs][factor_name]
+                        self.adata.obs.loc[cells_from_obs][f"{factor_name}_score"]
                     )
                     fraction_attached = len(cells_attached) / n_cells_obs
                 c[i, factor] = average_weight
                 s[i, factor] = fraction_attached
 
         ylabels = obs
-        xlabels = [str(i) for i in range(n_factors)]
+        xlabels = self.factor_names[layer_idx]
 
         x, y = np.meshgrid(np.arange(len(xlabels)), np.arange(len(ylabels)))
 
