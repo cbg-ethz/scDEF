@@ -719,7 +719,7 @@ class scDEF(object):
             ard = iqr_mult
 
         if not self.use_brd:
-            ard = 0.
+            ard = 0.0
 
         self.factor_lists = []
         for i, layer_name in enumerate(self.layer_names):
@@ -765,7 +765,13 @@ class scDEF(object):
         self.make_graph()
 
     def set_factor_names(self):
-        self.factor_names = [[f"{self.layer_names[idx]}{str(i)}" for i in range(len(self.factor_lists[idx]))] for idx in range(self.n_layers)]
+        self.factor_names = [
+            [
+                f"{self.layer_names[idx]}{str(i)}"
+                for i in range(len(self.factor_lists[idx]))
+            ]
+            for idx in range(self.n_layers)
+        ]
 
     def annotate_adata(self):
         self.adata.obs["cell_scale"] = 1 / self.pmeans["cell_scale"]
@@ -785,16 +791,16 @@ class scDEF(object):
             self.adata.obsm[f"X_{layer_name}factors"] = self.pmeans[f"{layer_name}z"][
                 :, self.factor_lists[idx]
             ]
-            assignments = np.argmax(
-                self.adata.obsm[f"X_{layer_name}factors"], axis=1
-            )
-            self.adata.obs[f"{layer_name}factor"] = [self.factor_names[idx][a] for a in assignments]
+            assignments = np.argmax(self.adata.obsm[f"X_{layer_name}factors"], axis=1)
+            self.adata.obs[f"{layer_name}factor"] = [
+                self.factor_names[idx][a] for a in assignments
+            ]
             self.adata.uns[f"{layer_name}factor_colors"] = [
                 matplotlib.colors.to_hex(self.layer_colorpalettes[idx][i])
                 for i in range(len(self.factor_lists[idx]))
             ]
 
-            scores_names = [f + '_score' for f in self.factor_names[idx]]
+            scores_names = [f + "_score" for f in self.factor_names[idx]]
             df = pd.DataFrame(
                 self.adata.obsm[f"X_{layer_name}factors"],
                 index=self.adata.obs.index,
@@ -804,11 +810,7 @@ class scDEF(object):
                 self.adata.obs = pd.concat([self.adata.obs, df], axis=1)
             else:
                 self.adata.obs = self.adata.obs.drop(
-                    columns=[
-                        col
-                        for col in self.adata.obs.columns
-                        if "score" in col
-                    ]
+                    columns=[col for col in self.adata.obs.columns if "score" in col]
                 )
                 self.adata.obs[df.columns] = df
 
@@ -1110,7 +1112,7 @@ class scDEF(object):
                             f'<FONT POINT-SIZE="{fontsizes[j]}">{gene}</FONT>'
                         )
                     label += "<br/><br/>" + "<br/>".join(gene_labels)
-                elif filled is not None and filled != 'factor':
+                elif filled is not None and filled != "factor":
                     label += "<br/><br/>" + ""
 
                 label = "<" + label + ">"
@@ -1152,9 +1154,9 @@ class scDEF(object):
             for factor_idx in range(len(self.factor_lists[layer])):
                 factor_name = f"{self.factor_names[layer_idx][int(factor_idx)]}"
                 # cells attached to this factor
-                cells = np.where(
-                    self.adata.obs[f"{layer_name}factor"] == factor_name
-                )[0]
+                cells = np.where(self.adata.obs[f"{layer_name}factor"] == factor_name)[
+                    0
+                ]
                 if len(cells) > 0:
                     # cells in this factor that belong to each obs
                     prevs = [
@@ -1163,7 +1165,9 @@ class scDEF(object):
                         for b in self.adata.obs[obs_key].cat.categories
                     ]
                     obs_idx = np.argmax(prevs)  # obs attachment
-                    layer_attachments.append(self.adata.obs[obs_key].cat.categories[obs_idx])
+                    layer_attachments.append(
+                        self.adata.obs[obs_key].cat.categories[obs_idx]
+                    )
             attachments.append(layer_attachments)
         return attachments
 
