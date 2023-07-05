@@ -36,6 +36,7 @@ class scDEF(object):
         logginglevel=logging.INFO,
         layer_shapes=None,
         brd=1e3,
+        use_brd=True,
         cell_scale_shape=1.0,
         gene_scale_shape=1.0,
         factor_shapes=None,
@@ -96,6 +97,7 @@ class scDEF(object):
         self.factor_rates = factor_rates
 
         self.brd = brd
+        self.use_brd = use_brd
         self.cell_scale_shape = cell_scale_shape
         self.gene_scale_shape = gene_scale_shape
 
@@ -424,7 +426,8 @@ class scDEF(object):
         # Sample from variational distribution
         cell_budget_sample = gamma_sample(rng, cell_budget_shape, cell_budget_rate)
         gene_budget_sample = gamma_sample(rng, gene_budget_shape, gene_budget_rate)
-        fscale_samples = gamma_sample(rng, fscale_shapes, fscale_rates)
+        if self.use_brd:
+            fscale_samples = gamma_sample(rng, fscale_shapes, fscale_rates)
         z_samples = gamma_sample(rng, z_shapes, z_rates)  # vectorized
         # w will be sampled in a loop below because it cannot be vectorized
 
@@ -447,10 +450,11 @@ class scDEF(object):
         )
 
         # scale
-        global_pl += gamma_logpdf(
-            fscale_samples, self.brd, self.brd * self.factor_rates[0]
-        )
-        global_en += -gamma_logpdf(fscale_samples, fscale_shapes, fscale_rates)
+        if self.use_brd:
+            global_pl += gamma_logpdf(
+                fscale_samples, self.brd, self.brd * self.factor_rates[0]
+            )
+            global_en += -gamma_logpdf(fscale_samples, fscale_shapes, fscale_rates)
 
         # Top layer
         idx = self.n_layers - 1
@@ -487,7 +491,7 @@ class scDEF(object):
                 jnp.maximum(jnp.exp(var_params[4 + idx][1]), min_rate), max_rate
             )
             _w_sample = gamma_sample(rng, _w_shape, _w_rate)
-            if idx == 0:
+            if idx == 0 and self.use_brd:
                 global_pl += gamma_logpdf(
                     _w_sample,
                     self.w_priors[idx][0] / fscale_samples,
@@ -698,15 +702,19 @@ class scDEF(object):
 
     def filter_factors(self, thres=None, iqr_mult=3.0, min_cells=0):
         """
-        Remove factors based on the ARD posteriors. By default, keeps only factors
+        The model tends to remove unused factors by itself, but we can remove further
+        noisy factors based low BRD posterior means. By default, keeps only factors
         for which the relevance is at least 3 times the difference between the third
-        quartile and the median relevances.
+        quartile and the median relevances, and to which at least 10 cells attach.
         """
         ard = []
         if thres is not None:
             ard = thres
         else:
             ard = iqr_mult
+
+        if not self.use_brd:
+            ard = 0.
 
         self.factor_lists = []
         for i, layer_name in enumerate(self.layer_names):
