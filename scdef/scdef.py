@@ -1145,6 +1145,28 @@ class scDEF(object):
 
         self.logger.info(f"Updated scDEF graph")
 
+    def attach_factors_to_obs(self, obs_key):
+        attachments = []
+        for layer, layer_name in enumerate(self.layer_names):
+            layer_attachments = []
+            for factor_idx in range(len(self.factor_lists[layer])):
+                factor_name = f"{self.factor_names[layer_idx][int(factor_idx)]}"
+                # cells attached to this factor
+                cells = np.where(
+                    self.adata.obs[f"{layer_name}factor"] == factor_name
+                )[0]
+                if len(cells) > 0:
+                    # cells in this factor that belong to each obs
+                    prevs = [
+                        np.count_nonzero(self.adata.obs[obs_key][cells] == b)
+                        / len(np.where(self.adata.obs[obs_key] == b)[0])
+                        for b in self.adata.obs[obs_key].cat.categories
+                    ]
+                    obs_idx = np.argmax(prevs)  # obs attachment
+                    layer_attachments.append(self.adata.obs[obs_key].cat.categories[obs_idx])
+            attachments.append(layer_attachments)
+        return attachments
+
     def plot_brd(
         self,
         thres=None,
