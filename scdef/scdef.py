@@ -337,7 +337,7 @@ class scDEF(object):
                     maxval=maxval,
                     shape=[self.n_cells, self.layer_sizes[layer_idx]],
                 )
-                * self.layer_shapes[layer_idx]
+
             )
             z_shapes.append(z_shape)
             rng_cnt += 1
@@ -348,7 +348,7 @@ class scDEF(object):
                     maxval=maxval,
                     shape=[self.n_cells, self.layer_sizes[layer_idx]],
                 )
-                * self.layer_shapes[layer_idx]
+
             )
             z_rates.append(z_rate)
             rng_cnt += 1
@@ -501,6 +501,12 @@ class scDEF(object):
                     _w_sample,
                     self.w_priors[idx][0] / fscale_samples,
                     self.w_priors[idx][1] / fscale_samples,
+                )
+            elif idx == 1 and self.use_brd:
+                global_pl += gamma_logpdf(
+                    _w_sample,
+                    self.w_priors[idx][0],
+                    self.w_priors[idx][1] / fscale_samples.T,
                 )
             else:
                 global_pl += gamma_logpdf(
