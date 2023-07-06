@@ -52,12 +52,7 @@ class scDEF(object):
             raise ValueError("scDEF requires at least 2 layers")
 
         if layer_shapes is None:
-            if self.n_layers > 2:
-                layer_shapes = [0.3] * (self.n_layers - 2)
-                layer_shapes.append(0.5)
-                layer_shapes.append(0.1)
-            else:
-                layer_shapes = [0.3, 0.1]
+            layer_shapes = [0.3] * self.n_layers
         elif isinstance(layer_shapes, float) or isinstance(layer_shapes, int):
             layer_shapes = [float(layer_shapes)] * self.n_layers
         elif len(layer_shapes) != self.n_layers:
