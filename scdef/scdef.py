@@ -332,7 +332,6 @@ class scDEF(object):
                     maxval=maxval,
                     shape=[self.n_cells, self.layer_sizes[layer_idx]],
                 )
-
             )
             z_shapes.append(z_shape)
             rng_cnt += 1
@@ -343,7 +342,6 @@ class scDEF(object):
                     maxval=maxval,
                     shape=[self.n_cells, self.layer_sizes[layer_idx]],
                 )
-
             )
             z_rates.append(z_rate)
             rng_cnt += 1
