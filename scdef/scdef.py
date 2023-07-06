@@ -891,6 +891,83 @@ class scDEF(object):
             return top_terms, top_scores
         return top_terms
 
+    def get_signature_sample(
+        self, rng, factor_idx, layer_idx, top_genes=50, return_scores=False
+    ):
+        term_names = np.array(self.adata.var_names)
+
+        term_scores_shape = np.exp(self.var_params[4 + 0][0][self.factor_lists[0]])
+        term_scores_rate = np.exp(self.var_params[4 + 0][1][self.factor_lists[0]])
+        term_scores_sample = gamma_sample(rng, term_scores_shape, term_scores_rate)
+
+        if layer_idx > 0:
+            term_scores_shape = np.exp(
+                self.var_params[4 + layer_idx][0][self.factor_lists[layer_idx]][
+                    :, self.factor_lists[layer_idx - 1]
+                ]
+            )
+            term_scores_rate = np.exp(
+                self.var_params[4 + layer_idx][1][self.factor_lists[layer_idx]][
+                    :, self.factor_lists[layer_idx - 1]
+                ]
+            )
+            term_scores_sample = gamma_sample(rng, term_scores_shape, term_scores_rate)
+
+            for layer in range(layer_idx - 1, 0, -1):
+                lower_mat_shape = np.exp(
+                    self.var_params[4 + layer][0][self.factor_lists[layer]][
+                        :, self.factor_lists[layer - 1]
+                    ]
+                )
+                lower_mat_rate = np.exp(
+                    self.var_params[4 + layer][1][self.factor_lists[layer]][
+                        :, self.factor_lists[layer - 1]
+                    ]
+                )
+                lower_mat_sample = gamma_sample(rng, lower_mat_shape, lower_mat_rate)
+                term_scores_sample = term_scores_sample.dot(lower_mat_sample)
+
+            lower_term_scores_shape = np.exp(
+                self.var_params[4 + 0][0][self.factor_lists[0]]
+            )
+            lower_term_scores_rate = np.exp(
+                self.var_params[4 + 0][1][self.factor_lists[0]]
+            )
+            lower_term_scores_sample = gamma_sample(
+                rng, lower_term_scores_shape, lower_term_scores_rate
+            )
+
+            term_scores_sample = term_scores_sample.dot(lower_term_scores_sample)
+
+        top_terms_idx = (term_scores_sample[factor_idx, :]).argsort()[::-1][:top_genes]
+        top_terms = term_names[top_terms_idx].tolist()
+        top_scores = term_scores_sample[factor_idx, :].tolist()
+
+        if return_scores:
+            return top_terms, top_scores
+        return top_terms
+
+    def get_signature_confidence(
+        self, factor_idx, layer_idx, mc_samples=100, top_genes=50
+    ):
+        signatures = []
+        for i in range(mc_samples):
+            rng = random.PRNGKey(i)
+            signature_sample = self.get_signature_sample(
+                rng,
+                factor_idx=factor_idx,
+                layer_idx=layer_idx,
+                top_genes=top_genes,
+            )
+            signatures.append(signature_sample)
+
+        jaccs = np.zeros((mc_samples, mc_samples))
+        for i in range(mc_samples):
+            for j in range(mc_samples):
+                jaccs[i, j] = jaccard_similarity(signatures[i], signatures[j])
+
+        return np.mean(jaccs)
+
     def get_summary(self, top_genes=10, reindex=True):
         tokeep = self.factor_lists[0]
         n_factors_eff = len(tokeep)
@@ -951,6 +1028,8 @@ class scDEF(object):
         filled=None,
         wedged=None,
         color_edges=True,
+        show_confidences=False,
+        mc_samples=100,
         **fontsize_kwargs,
     ):
         if top_genes is None:
@@ -1112,6 +1191,16 @@ class scDEF(object):
                             f'<FONT POINT-SIZE="{fontsizes[j]}">{gene}</FONT>'
                         )
                     label += "<br/><br/>" + "<br/>".join(gene_labels)
+
+                    if show_confidences:
+                        confidence_score = self.get_signature_confidence(
+                            factor_idx,
+                            layer_idx,
+                            top_genes=top_genes[layer_idx],
+                            mc_samples=mc_samples,
+                        )
+                        label += f"<br/><br/>({confidence_score:.3f})"
+
                 elif filled is not None and filled != "factor":
                     label += "<br/><br/>" + ""
 

@@ -110,3 +110,9 @@ def coherence_score(marker_gene_sets, heldout_counts_adata):
     for marker_genes in marker_gene_sets:
         chs.append(compute_geneset_coherence(marker_genes, heldout_counts_adata))
     return np.mean(chs)
+
+
+def jaccard_similarity(list1, list2):
+    s1 = set(list1)
+    s2 = set(list2)
+    return float(len(s1.intersection(s2)) / float(len(s1.union(s2))))
