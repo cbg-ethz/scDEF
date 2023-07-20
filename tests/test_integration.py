@@ -104,9 +104,9 @@ def test_scdef():
     assert "hfactor" in scd.adata.obs.columns
     assert "hhfactor" in scd.adata.obs.columns
 
-    # scd.plot_multilevel_paga(figsize=(16, 4), reuse_pos=True, frameon=False)
-    obs_keys = ["celltypes", "celltypes_coarse"]
+    scd.plot_multilevel_paga(figsize=(16, 4), reuse_pos=True, frameon=False)
 
+    obs_keys = ["celltypes", "celltypes_coarse"]
     scdef.eval_utils.evaluate_scdef_hierarchy(scd, obs_keys, true_hierarchy)
 
     scdef.eval_utils.evaluate_scdef_signatures(scd, "celltypes", markers)
