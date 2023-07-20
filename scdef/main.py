@@ -1,7 +1,7 @@
 """
 Extract hierarchical signatures of cell state from single-cell data.
 """
-from .scdef import scDEF
+from .models import scDEF
 
 import numpy as np
 import pandas as pd

@@ -22,7 +22,8 @@ import pandas as pd
 from anndata import AnnData
 import scanpy as sc
 
-from scdef.util import *
+from ..utils import score_utils, hierarchy_utils
+from ..utils.jax_utils import *
 
 
 class scDEF(object):
@@ -30,7 +31,7 @@ class scDEF(object):
         self,
         adata,
         counts_layer=None,
-        layer_sizes=[100, 30, 10],
+        layer_sizes=[100, 30, 10, 3],
         batch_key="batch",
         seed=42,
         logginglevel=logging.INFO,
@@ -52,21 +53,21 @@ class scDEF(object):
             raise ValueError("scDEF requires at least 2 layers")
 
         if layer_shapes is None:
-            layer_shapes = [0.3] * self.n_layers
+            layer_shapes = [1.0] * self.n_layers
         elif isinstance(layer_shapes, float) or isinstance(layer_shapes, int):
             layer_shapes = [float(layer_shapes)] * self.n_layers
         elif len(layer_shapes) != self.n_layers:
             raise ValueError("layer_shapes list must be of size scDEF.n_layers")
 
         if factor_shapes is None:
-            factor_shapes = [1.0] + [0.3] * (self.n_layers - 1)
+            factor_shapes = [1.0] + [0.1] * (self.n_layers - 1)
         elif isinstance(factor_shapes, float) or isinstance(factor_shapes, int):
             factor_shapes = [float(factor_shapes)] * self.n_layers
         elif len(factor_shapes) != self.n_layers:
             raise ValueError("factor_shapes list must be of size scDEF.n_layers")
 
         if factor_rates is None:
-            factor_rates = [10.0] + [1.0] * (self.n_layers - 1)
+            factor_rates = [10.0] + [0.3] * (self.n_layers - 1)
         elif isinstance(factor_rates, float) or isinstance(factor_rates, int):
             factor_rates = [float(factor_rates)] * self.n_layers
         elif len(factor_rates) != self.n_layers:
@@ -332,6 +333,7 @@ class scDEF(object):
                     maxval=maxval,
                     shape=[self.n_cells, self.layer_sizes[layer_idx]],
                 )
+                * self.layer_shapes[layer_idx]
             )
             z_shapes.append(z_shape)
             rng_cnt += 1
@@ -342,6 +344,7 @@ class scDEF(object):
                     maxval=maxval,
                     shape=[self.n_cells, self.layer_sizes[layer_idx]],
                 )
+                * self.layer_shapes[layer_idx]
             )
             z_rates.append(z_rate)
             rng_cnt += 1
@@ -967,6 +970,14 @@ class scDEF(object):
 
         return np.mean(jaccs)
 
+    def get_signatures_dict(self, top_genes=50):
+        signatures_dict = {}
+        for layer_idx in range(self.n_layers):
+            layer_signatures = self.get_rankings(layer_idx=layer_idx)
+            for factor_idx, factor_name in enumerate(self.factor_names[layer_idx]):
+                signatures_dict[factor_name] = layer_signatures[factor_idx]
+        return signatures_dict
+
     def get_summary(self, top_genes=10, reindex=True):
         tokeep = self.factor_lists[0]
         n_factors_eff = len(tokeep)
@@ -1019,6 +1030,8 @@ class scDEF(object):
 
     def make_graph(
         self,
+        hierarchy=None,
+        factor_annotations=None,
         top_factor=None,
         show_signatures=True,
         enrichments=None,
@@ -1059,6 +1072,10 @@ class scDEF(object):
         else:
             if wedged is not None:
                 self.logger.info("Filled style takes precedence over wedged")
+
+        hierarchy_nodes = None
+        if hierarchy is not None:
+            hierarchy_nodes = get_nodes_from_hierarchy(hierarchy)
 
         layer_factor_orders = []
         for layer_idx in np.arange(0, self.n_layers)[::-1]:  # Go top down
@@ -1115,7 +1132,15 @@ class scDEF(object):
                 alpha = "FF"
                 color = None
                 factor_name = f"{self.factor_names[layer_idx][int(factor_idx)]}"
+
+                if hierarchy is not None and factor_name not in hierarchy_nodes:
+                    continue
+
                 label = factor_name
+                if factor_annotations is not None:
+                    if factor_name in factor_annotations:
+                        label = factor_annotations[factor_name]
+
                 if color_edges:
                     color = matplotlib.colors.to_hex(layer_colors[factor_idx])
                 fillcolor = "#FFFFFF"
@@ -1205,7 +1230,7 @@ class scDEF(object):
 
                 label = "<" + label + ">"
                 g.node(
-                    f"{layer_name}f" + str(factor_idx),
+                    factor_name,
                     label=label,
                     fillcolor=fillcolor,
                     color=color,
@@ -1214,22 +1239,48 @@ class scDEF(object):
                 )
 
                 if layer_idx > 0:
-                    mat = self.pmeans[f"{self.layer_names[layer_idx]}W"][
-                        self.factor_lists[layer_idx]
-                    ][:, self.factor_lists[layer_idx - 1]]
-                    normalized_factor_weights = mat / np.sum(mat, axis=1).reshape(-1, 1)
-                    for lower_factor_idx in layer_factor_orders[layer_idx - 1]:
-                        g.edge(
-                            f"{layer_name}f" + str(factor_idx),
-                            f"{self.layer_names[layer_idx-1]}f" + str(lower_factor_idx),
-                            penwidth=str(
-                                4
-                                * normalized_factor_weights[
-                                    factor_idx, lower_factor_idx
+                    if hierarchy is not None:
+                        if factor_name in hierarchy:
+                            lower_factor_names = hierarchy[factor_name]
+                            mat = np.array(
+                                [
+                                    self.compute_weight(factor_name, lower_factor_name)
+                                    for lower_factor_name in lower_factor_names
                                 ]
-                            ),
-                            color=color,
+                            )
+                            normalized_factor_weights = mat / np.sum(mat)
+                            for lower_factor_idx, lower_factor_name in enumerate(
+                                lower_factor_names
+                            ):
+                                normalized_weight = normalized_factor_weights[
+                                    lower_factor_idx
+                                ]
+                                g.edge(
+                                    factor_name,
+                                    lower_factor_name,
+                                    penwidth=str(4 * normalized_weight),
+                                    color=color,
+                                )
+                    else:
+                        mat = self.pmeans[f"{self.layer_names[layer_idx]}W"][
+                            self.factor_lists[layer_idx]
+                        ][:, self.factor_lists[layer_idx - 1]]
+                        normalized_factor_weights = mat / np.sum(mat, axis=1).reshape(
+                            -1, 1
                         )
+                        for lower_factor_idx in layer_factor_orders[layer_idx - 1]:
+                            lower_factor_name = self.factor_names[layer_idx - 1][
+                                lower_factor_idx
+                            ]
+                            normalized_weight = normalized_factor_weights[
+                                factor_idx, lower_factor_idx
+                            ]
+                            g.edge(
+                                factor_name,
+                                lower_factor_name,
+                                penwidth=str(4 * normalized_weight),
+                                color=color,
+                            )
 
         self.graph = g
 
@@ -1475,3 +1526,180 @@ class scDEF(object):
 
             old_layer_name = new_layer_name
         plt.show()
+
+    def compute_weight(self, upper_factor_name, lower_factor_name):
+        # Computes the weight between two factors across any number of layers
+        upper_factor_idx = -1
+        upper_factor_layer_idx = -1
+        for layer_idx in range(self.n_layers):
+            layer_factor_names = np.array(self.factor_names[layer_idx])
+            if upper_factor_name in layer_factor_names:
+                upper_factor_idx = np.where(upper_factor_name == layer_factor_names)[0][
+                    0
+                ]
+                upper_factor_layer_idx = layer_idx
+                break
+
+        assert upper_factor_idx != -1
+
+        lower_factor_idx = -1
+        lower_factor_layer_idx = -1
+        for layer_idx in range(self.n_layers):
+            layer_factor_names = np.array(self.factor_names[layer_idx])
+            if lower_factor_name in layer_factor_names:
+                lower_factor_idx = np.where(lower_factor_name == layer_factor_names)[0][
+                    0
+                ]
+                lower_factor_layer_idx = layer_idx
+                break
+
+        assert lower_factor_idx != -1
+
+        upper_layer_name = self.layer_names[upper_factor_layer_idx]
+        mat = self.pmeans[f"{upper_layer_name}W"][
+            self.factor_lists[upper_factor_layer_idx]
+        ][:, self.factor_lists[upper_factor_layer_idx - 1]]
+        for layer_idx in range(upper_factor_layer_idx - 1, lower_factor_layer_idx, -1):
+            layer_name = self.layer_names[layer_idx]
+            lower_mat = self.pmeans[f"{layer_name}W"][self.factor_lists[layer_idx]][
+                :, self.factor_lists[layer_idx - 1]
+            ]
+            mat = mat.dot(lower_mat)
+
+        return mat[upper_factor_idx][lower_factor_idx]
+
+    def get_hierarchy(self):
+        hierarchy = dict()
+        for layer_idx in range(0, self.n_layers - 1):
+            factors = self.factor_lists[layer_idx]
+            n_factors = len(factors)
+            if layer_idx < self.n_layers - 1:
+                # Assign factors to upper factors to set the plotting order
+                mat = self.pmeans[f"{self.layer_names[layer_idx+1]}W"][
+                    self.factor_lists[layer_idx + 1]
+                ][:, self.factor_lists[layer_idx]]
+                normalized_factor_weights = mat / np.sum(mat, axis=1).reshape(-1, 1)
+                assignments = []
+                for factor_idx in range(n_factors):
+                    assignments.append(
+                        np.argmax(normalized_factor_weights[:, factor_idx])
+                    )
+                assignments = np.array(assignments)
+
+                for upper_layer_factor in range(len(self.factor_lists[layer_idx + 1])):
+                    upper_layer_factor_name = self.factor_names[layer_idx + 1][
+                        upper_layer_factor
+                    ]
+                    assigned_lower = np.array(self.factor_names[layer_idx])[
+                        np.where(assignments == upper_layer_factor)[0]
+                    ].tolist()
+                    hierarchy[upper_layer_factor_name] = assigned_lower
+        return hierarchy
+
+    def simplify_hierarchy(self, hierarchy):
+        layer_sizes = [len(self.factor_names[idx]) for idx in range(self.n_layers)]
+        return hierarchy_utils.simplify_hierarchy(
+            hierarchy, self.layer_names, layer_sizes
+        )
+
+    def compute_factor_obs_association_score(
+        self, layer_idx, factor_name, obs_key, obs_val
+    ):
+        layer_name = self.layer_names[layer_idx]
+
+        # Cells attached to factor
+        adata_cells_in_factor = self.adata[
+            np.where(self.adata.obs[f"{layer_name}factor"] == factor_name)[0]
+        ]
+
+        # Cells from obs_val
+        adata_cells_from_obs = self.adata[
+            np.where(self.adata.obs[obs_key] == obs_val)[0]
+        ]
+
+        cells_from_obs = float(adata_cells_from_obs.shape[0])
+
+        # Number of cells from obs_val that are not in factor
+        cells_not_in_factor_from_obs = float(
+            np.count_nonzero(
+                adata_cells_from_obs.obs[f"{layer_name}factor"] != factor_name
+            )
+        )
+
+        # Number of cells in factor that are obs_val
+        cells_in_factor_from_obs = float(
+            np.count_nonzero(adata_cells_in_factor.obs[obs_key] == obs_val)
+        )
+
+        # Number of cells in factor that are not obs_val
+        cells_in_factor_not_from_obs = float(
+            np.count_nonzero(adata_cells_in_factor.obs[obs_key] != obs_val)
+        )
+
+        return score_utils.compute_fscore(
+            cells_in_factor_from_obs,
+            cells_in_factor_not_from_obs,
+            cells_not_in_factor_from_obs,
+        )
+
+    def get_factor_obs_association_scores(self, obs_key, obs_val):
+        scores = []
+        factors = []
+        layers = []
+        for layer_idx in range(self.n_layers):
+            n_factors = len(self.factor_lists[layer_idx])
+            for factor in range(n_factors):
+                factor_name = self.factor_names[layer_idx][factor]
+                score = self.compute_factor_obs_association_score(
+                    layer_idx, factor_name, obs_key, obs_val
+                )
+                scores.append(score)
+                factors.append(factor_name)
+                layers.append(layer_idx)
+        return scores, factors, layers
+
+    def assign_obs_to_factors(self, obs_keys, factor_names=None):
+        if not isinstance(obs_keys, list):
+            obs_keys = [obs_keys]
+
+        obs_to_factor_assignments = []
+        obs_to_factor_matches = []
+        for obs_key in obs_keys:
+            obskey_to_factor_assignments = dict()
+            obskey_to_factor_matches = dict()
+            for obs in self.adata.obs[obs_key].unique():
+                scores, factors, layers = self.get_factor_obs_association_scores(
+                    obs_key, obs
+                )
+                if factor_names is not None:
+                    # Subset to factor_names
+                    idx = np.array(
+                        [
+                            i
+                            for i, factor in enumerate(factors)
+                            if factor in factor_names
+                        ]
+                    )
+                    scores = np.array(scores)[idx]
+                    factors = np.array(factors)[idx]
+                    layers = np.array(layers)[idx]
+                obskey_to_factor_assignments[obs] = factors[np.argmax(scores)]
+                obskey_to_factor_matches[factors[np.argmax(scores)]] = obs
+            obs_to_factor_assignments.append(obskey_to_factor_assignments)
+            obs_to_factor_matches.append(obskey_to_factor_matches)
+
+        # Join them all up
+        from collections import ChainMap
+
+        factor_annotation_assignments = ChainMap(*obs_to_factor_assignments)
+        factor_annotation_matches = ChainMap(*obs_to_factor_matches)
+
+        return dict(factor_annotation_assignments), dict(factor_annotation_matches)
+
+    def complete_hierarchy(self, hierarchy, obs_keys):
+        obs_vals = [
+            self.adata.obs[obs_key].astype("category").cat.categories
+            for obs_key in obs_keys
+        ]
+        obs_vals = list(set([item for sublist in obs_vals for item in sublist]))
+        return hierarchy_utils.complete_hierarchy(hierarchy, obs_vals)

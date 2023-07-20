@@ -1,33 +1,4 @@
 import numpy as np
-import jax.numpy as jnp
-from jax import vmap, random
-from jax.scipy.stats import norm, gamma, poisson
-
-
-def gaussian_sample(rng, mean, log_scale):
-    scale = jnp.exp(log_scale)
-    return mean + scale * random.normal(rng, mean.shape)
-
-
-def gaussian_logpdf(x, mean, log_scale):
-    scale = jnp.exp(log_scale)
-    return jnp.sum(
-        vmap(norm.logpdf)(x, mean * jnp.ones(x.shape), scale * jnp.ones(x.shape))
-    )
-
-
-def gamma_sample(rng, shape, rate):
-    scale = 1.0 / rate
-    return jnp.clip(scale * random.gamma(rng, shape), a_min=1e-15, a_max=1e15)
-
-
-def gamma_logpdf(x, shape, rate):
-    scale = 1.0 / rate
-    return jnp.sum(
-        vmap(gamma.logpdf)(
-            x, shape * jnp.ones(x.shape), scale=scale * jnp.ones(x.shape)
-        )
-    )
 
 
 def get_mean_cellscore_per_group(cell_scores, cell_groups):
@@ -116,3 +87,56 @@ def jaccard_similarity(list1, list2):
     s1 = set(list1)
     s2 = set(list2)
     return float(len(s1.intersection(s2)) / float(len(s1.union(s2))))
+
+
+def compute_fscore(tp, fp, fn):
+    return 2 * tp / (2 * tp + fp + fn)
+
+
+def score_signature(inf_signature, markers_list, nonmarkers_list):
+    # true positive: marker for this type is in signature
+    # true negative: marker for another type is not in signature
+    tp = sum([1 for gene in inf_signature if gene in markers_list])
+    fp = sum([1 for gene in inf_signature if gene in nonmarkers_list])
+    fn = sum([1 for gene in markers_list if gene not in inf_signature])
+    return compute_fscore(tp, fp, fn)
+
+
+def compute_cluster_obs_association_score(
+    adata, cluster_assignments, cluster_name, obs_key, obs_val
+):
+    # Cells attached to factor
+    cells_in_factor = np.where(np.array(cluster_assignments) == cluster_name)[0]
+    adata_cells_in_factor = adata[cells_in_factor]
+
+    # Cells from obs_val
+    adata_cells_from_obs = adata[np.where(adata.obs[obs_key] == obs_val)[0]]
+
+    cells_from_obs = float(adata_cells_from_obs.shape[0])
+
+    # Number of cells from obs_val that are not in factor
+    cells_not_in_factor_from_obs = float(
+        np.count_nonzero(
+            list(
+                set(adata_cells_from_obs.obs.index).difference(
+                    set(adata_cells_in_factor.obs.index)
+                )
+            )
+        )
+    )
+
+    # Number of cells in factor that are obs_val
+    cells_in_factor_from_obs = float(
+        np.count_nonzero(adata_cells_in_factor.obs[obs_key] == obs_val)
+    )
+
+    # Number of cells in factor that are not obs_val
+    cells_in_factor_not_from_obs = float(
+        np.count_nonzero(adata_cells_in_factor.obs[obs_key] != obs_val)
+    )
+
+    return compute_fscore(
+        cells_in_factor_from_obs,
+        cells_in_factor_not_from_obs,
+        cells_not_in_factor_from_obs,
+    )

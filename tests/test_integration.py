@@ -1,18 +1,68 @@
 import pytest
-from click.testing import CliRunner
 import os
 
 import scanpy as sc
 import numpy as np
+import pandas as pd
 
-from scdef import main, scDEF
+import scdef
+
+from pathlib import Path
 
 
 def test_scdef():
     n_epochs = 10
 
+    # Ground truth
+    true_hierarchy = {
+        "T": ["CD8 T", "Memory CD4 T", "Naive CD4 T"],
+        "Mono": ["FCGR3A+ Mono", "CD14+ Mono", "DC"],
+        "Platelet": [],
+        "B": [],
+        "CD8 T": [],
+        "Memory CD4 T": [],
+        "Naive CD4 T": [],
+        "NK": [],
+        "FCGR3A+ Mono": [],
+        "CD14+ Mono": [],
+        "DC": [],
+    }
+
+    markers = {
+        "Naive CD4 T": ["IL7R"],
+        "Memory CD4 T": ["IL7R"],
+        "CD14+ Mono": ["CD14", "LYZ"],
+        "B": ["MS4A1"],
+        "CD8 T": ["CD8A", "CD2"],
+        "NK": ["GNLY", "NKG7"],
+        "FCGR3A+ Mono": ["FCGR3A", "MS4A7"],
+        "DC": ["FCER1A", "CST3"],
+        "Platelet": ["PPBP"],
+    }
+
     # Download data
     adata = sc.datasets.pbmc3k()
+
+    # Add random annotations
+    n_cells = adata.shape[0]
+    ctypes = np.random.choice(list(markers.keys()), size=n_cells)
+    annotations = pd.DataFrame(index=adata.obs.index)
+    annotations["ctypes"] = ctypes
+
+    map_coarse = {}
+    for c in annotations["ctypes"].astype("category").cat.categories:
+        if c.endswith(" T"):
+            map_coarse[c] = "T"
+        elif c.endswith("Mono") or c == "DC":
+            map_coarse[c] = "Mono"
+        else:
+            map_coarse[c] = c
+
+    adata.obs["celltypes"] = annotations["ctypes"]
+
+    adata.obs["celltypes_coarse"] = (
+        adata.obs["celltypes"].map(map_coarse).astype("category")
+    )
 
     # Filter data
     sc.pp.filter_cells(adata, min_genes=200)
@@ -38,7 +88,7 @@ def test_scdef():
     raw_adata = raw_adata[:, adata.var.highly_variable]
     adata = adata[:, adata.var.highly_variable]
 
-    scd = scDEF(
+    scd = scdef.scDEF(
         raw_adata,
         layer_sizes=[60, 30, 15],
         layer_shapes=1.0,
@@ -54,20 +104,9 @@ def test_scdef():
     assert "hfactor" in scd.adata.obs.columns
     assert "hhfactor" in scd.adata.obs.columns
 
-    scd.plot_multilevel_paga(figsize=(16, 4), reuse_pos=True, frameon=False)
+    # scd.plot_multilevel_paga(figsize=(16, 4), reuse_pos=True, frameon=False)
+    obs_keys = ["celltypes", "celltypes_coarse"]
 
+    scdef.eval_utils.evaluate_scdef_hierarchy(scd, obs_keys, true_hierarchy)
 
-#
-#
-# def test_cli():
-#     runner = CliRunner()
-#
-#     # run program
-#     with runner.isolated_filesystem():
-#         result = runner.invoke(main, ["-o", "./outs"])
-#
-#         # test output
-#         assert result.exit_code == 0
-#         assert os.path.isfile("./outs/scdef.pkl")
-#         assert os.path.isfile("./outs/scdef_adata.h5ad")
-#         assert os.path.isfile("./outs/graph.pdf")
+    scdef.eval_utils.evaluate_scdef_signatures(scd, "celltypes", markers)

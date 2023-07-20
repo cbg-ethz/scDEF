@@ -1,4 +1,4 @@
-from .scdef import scDEF
+from ._scdef import scDEF
 
 import jax.numpy as jnp
 import numpy as np
