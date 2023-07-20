@@ -110,3 +110,17 @@ def test_scdef():
     scdef.eval_utils.evaluate_scdef_hierarchy(scd, obs_keys, true_hierarchy)
 
     scdef.eval_utils.evaluate_scdef_signatures(scd, "celltypes", markers)
+
+    hierarchy = scd.get_hierarchy()
+    simplified = scd.simplify_hierarchy(hierarchy)
+    scd.make_graph(hierarchy=simplified)
+
+    assignments, matches = scd.assign_obs_to_factors(
+        obs_keys,
+        factor_names=scdef.utils.hierarchy_utils.get_nodes_from_hierarchy(simplified),
+    )
+    scd.make_graph(hierarchy=simplified, factor_annotations=matches)
+
+    scd.make_graph(
+        hierarchy=simplified, top_factor=assignments["Mono"], factor_annotations=matches
+    )
