@@ -966,7 +966,9 @@ class scDEF(object):
         jaccs = np.zeros((mc_samples, mc_samples))
         for i in range(mc_samples):
             for j in range(mc_samples):
-                jaccs[i, j] = jaccard_similarity(signatures[i], signatures[j])
+                jaccs[i, j] = score_utils.jaccard_similarity(
+                    signatures[i], signatures[j]
+                )
 
         return np.mean(jaccs)
 
@@ -1075,7 +1077,7 @@ class scDEF(object):
 
         hierarchy_nodes = None
         if hierarchy is not None:
-            hierarchy_nodes = get_nodes_from_hierarchy(hierarchy)
+            hierarchy_nodes = hierarchy_utils.get_nodes_from_hierarchy(hierarchy)
 
         layer_factor_orders = []
         for layer_idx in np.arange(0, self.n_layers)[::-1]:  # Go top down
