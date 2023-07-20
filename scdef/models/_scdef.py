@@ -1077,7 +1077,11 @@ class scDEF(object):
 
         hierarchy_nodes = None
         if hierarchy is not None:
-            hierarchy_nodes = hierarchy_utils.get_nodes_from_hierarchy(hierarchy)
+            if top_factor is None:
+                hierarchy_nodes = hierarchy_utils.get_nodes_from_hierarchy(hierarchy)
+            else:
+                hierarchy = hierarchy_utils.flatten_hierarchy(hierarchy)
+                hierarchy_nodes = hierarchy[top_factor] + [top_factor]
 
         layer_factor_orders = []
         for layer_idx in np.arange(0, self.n_layers)[::-1]:  # Go top down
@@ -1102,10 +1106,7 @@ class scDEF(object):
                 factor_order = np.concatenate(factor_order).astype(int)
                 layer_factor_orders.append(factor_order)
             else:
-                if top_factor is not None:
-                    layer_factor_orders.append([top_factor])
-                else:
-                    layer_factor_orders.append(np.arange(n_factors))
+                layer_factor_orders.append(np.arange(n_factors))
         layer_factor_orders = layer_factor_orders[::-1]
 
         def map_scores_to_fontsizes(scores, max_fontsize=11, min_fontsize=5):
