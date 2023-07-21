@@ -35,9 +35,9 @@ def evaluate_hierarchy_from_cluster_levels(
     assignments, matches = hierarchy_utils.assign_obs_to_clusters(
         adata,
         clusters_levels,
-        hierarchy_utils.get_nodes_from_hierarchy(simplified),
         layer_names,
         obs_keys,
+        hierarchy_utils.get_nodes_from_hierarchy(simplified),
     )
     annotated = hierarchy_utils.annotate_hierarchy(simplified, matches)
 
