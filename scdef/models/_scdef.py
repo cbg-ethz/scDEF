@@ -1738,9 +1738,14 @@ class scDEF(object):
     def _get_assignment_scores(self, obs_key, obs_vals):
         signatures_dict = self.get_signatures_dict()
         n_obs = len(obs_vals)
-        mats = [np.zeros((n_obs, len(self.factor_names[idx]))) for idx in range(self.n_layers)]
+        mats = [
+            np.zeros((n_obs, len(self.factor_names[idx])))
+            for idx in range(self.n_layers)
+        ]
         for i, obs in enumerate(obs_vals):
-            scores, factors, layers = self.get_factor_obs_association_scores(obs_key, obs)
+            scores, factors, layers = self.get_factor_obs_association_scores(
+                obs_key, obs
+            )
             for j in range(self.n_layers):
                 indices = np.where(np.array(layers) == j)[0]
                 mats[j][i] = np.array(scores)[indices]
@@ -1749,14 +1754,19 @@ class scDEF(object):
     def _get_signature_scores(self, obs_key, obs_vals, top_genes=10):
         signatures_dict = self.get_signatures_dict()
         n_obs = len(obs_vals)
-        mats = [np.zeros((n_obs, len(self.factor_names[idx]))) for idx in range(self.n_layers)]
+        mats = [
+            np.zeros((n_obs, len(self.factor_names[idx])))
+            for idx in range(self.n_layers)
+        ]
         for i, obs in enumerate(obs_vals):
             markers_type = markers[obs]
             nonmarkers_type = [m for m in markers if m not in markers_type]
             for layer_idx in range(self.n_layers):
                 for j, factor_name in enumerate(self.factor_names[layer_idx]):
                     signature = signatures_dict[factor_name][:top_genes]
-                    mats[layer_idx][i,j] = score_utils.score_signature(signature, markers_type, nonmarkers_type)
+                    mats[layer_idx][i, j] = score_utils.score_signature(
+                        signature, markers_type, nonmarkers_type
+                    )
         return mats
 
     def _prepare_obs_factor_scores(self, obs_keys, get_scores_func, **kwargs):
@@ -1788,41 +1798,60 @@ class scDEF(object):
             obs_clusters[obs_key] = hclust_index
         return obs_mats, obs_clusters, obs_vals_dict
 
-    def plot_layers_obs(self, obs_keys, obs_mats, obs_clusters, obs_vals_dict, sort_layer_factors=True, vmax=1., vmin=0., cb_title='', cb_title_fontsize=10, pad=.1, shrink=.7):
+    def plot_layers_obs(
+        self,
+        obs_keys,
+        obs_mats,
+        obs_clusters,
+        obs_vals_dict,
+        sort_layer_factors=True,
+        vmax=1.0,
+        vmin=0.0,
+        cb_title="",
+        cb_title_fontsize=10,
+        pad=0.1,
+        shrink=0.7,
+    ):
         layer_factor_orders = get_layer_factor_orders(self)
 
         n_factors = [len(self.factor_lists[idx]) for idx in range(self.n_layers)]
         n_obs = [len(obs_clusters[obs_key]) for obs_key in obs_keys]
-        fig, axs = plt.subplots(len(obs_keys), self.n_layers, figsize=(10,4), gridspec_kw={'width_ratios': n_factors,
-                                                                                           'height_ratios': n_obs })
+        fig, axs = plt.subplots(
+            len(obs_keys),
+            self.n_layers,
+            figsize=(10, 4),
+            gridspec_kw={"width_ratios": n_factors, "height_ratios": n_obs},
+        )
         axs = axs.reshape((len(obs_keys), self.n_layers))
         for i in range(self.n_layers):
             axs[0][i].set_title(f"Layer {i}")
             for j, obs_key in enumerate(obs_keys):
                 ax = axs[j][i]
                 mat = obs_mats[obs_key][i]
-                mat = mat[obs_clusters[obs_key]][:,layer_factor_orders[i]]
+                mat = mat[obs_clusters[obs_key]][:, layer_factor_orders[i]]
                 axplt = ax.pcolormesh(mat, vmax=vmax, vmin=vmin)
 
                 if j == len(obs_keys) - 1:
                     xlabels = self.factor_names[i]
                     xlabels = np.array(xlabels)[layer_factor_orders[i]]
                     ax.set(
-                        xticks=np.arange(len(xlabels))+0.5,
+                        xticks=np.arange(len(xlabels)) + 0.5,
                         xticklabels=xlabels,
-                        )
+                    )
                 else:
                     ax.set(xticks=[])
 
                 if i == 0:
-                    ylabels = np.array(obs_vals_dict[obs_keys[j]])[obs_clusters[obs_keys[j]]]
-                    ax.set(yticks=np.arange(len(ylabels))+0.5, yticklabels=ylabels)
+                    ylabels = np.array(obs_vals_dict[obs_keys[j]])[
+                        obs_clusters[obs_keys[j]]
+                    ]
+                    ax.set(yticks=np.arange(len(ylabels)) + 0.5, yticklabels=ylabels)
                 else:
                     ax.set(yticks=[])
 
-                if i == self.n_layers-1:
+                if i == self.n_layers - 1:
                     ax.yaxis.set_label_position("right")
-                    ax.set_ylabel(obs_key, rotation=270, labelpad=20.)
+                    ax.set_ylabel(obs_key, rotation=270, labelpad=20.0)
 
         plt.subplots_adjust(wspace=0.05)
         plt.subplots_adjust(hspace=0.05)
