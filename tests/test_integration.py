@@ -121,6 +121,7 @@ def test_scdef():
     )
     scd.make_graph(hierarchy=simplified, factor_annotations=matches)
 
+    k = list(simplified.keys())[0]
     scd.make_graph(
-        hierarchy=simplified, top_factor=assignments["Mono"], factor_annotations=matches
+        hierarchy=simplified, top_factor=k, factor_annotations=matches
     )
