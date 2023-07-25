@@ -9,14 +9,19 @@ from sklearn.decomposition import NMF
 def run_multiple_resolutions(method, ad, resolution_sweep, layer_prefix="h", **kwargs):
     # Only for methods that use Leiden clustering
     # method is a function
-    results = []
+    assignments_results = []
+    signatures_dict = dict()
     for i, res in enumerate(resolution_sweep):
         outs = method(ad, resolution=res, **kwargs)
         assignments = outs[-1]
+        signatures = outs[-2]
         prefix = layer_prefix * i
         assignments = [f"{prefix}{a}" for a in assignments]
-        results.append(assignments)
-    return results
+        assignments_results.append(assignments)
+        for k in range(len(signatures)):
+            name = f"{prefix}{k}"
+            signatures_dict[name] = signatures[k].tolist()
+    return signatures_dict, assignments_results
 
 
 def run_unintegrated(
@@ -44,7 +49,7 @@ def run_unintegrated(
     if return_signatures:
         signatures = []
         for k in range(len(gene_scores)):
-            signatures.append(ad.var_names[np.argsort(gene_scores[k])])
+            signatures.append(ad.var_names[np.argsort(gene_scores[k])[::-1]])
         outs.append(signatures)
     if return_cluster_assignments:
         cluster_assignments = ad.obs["leiden"].values.tolist()
@@ -85,7 +90,7 @@ def run_harmony(
     if return_signatures:
         signatures = []
         for k in range(len(gene_scores)):
-            signatures.append(ad.var_names[np.argsort(gene_scores[k])])
+            signatures.append(ad.var_names[np.argsort(gene_scores[k])[::-1]])
         outs.append(signatures)
     if return_cluster_assignments:
         cluster_assignments = ad.obs["leiden"].values.tolist()
@@ -196,7 +201,7 @@ def run_scanorama(
     if return_signatures:
         signatures = []
         for k in range(len(gene_scores)):
-            signatures.append(ad.var_names[np.argsort(gene_scores[k])])
+            signatures.append(ad.var_names[np.argsort(gene_scores[k])[::-1]])
         outs.append(signatures)
     if return_cluster_assignments:
         cluster_assignments = ad.obs["leiden"].values.tolist()
@@ -224,7 +229,7 @@ def run_schpf(ad, k_range, return_signatures=True, return_cluster_assignments=Tr
     if return_signatures:
         signatures = []
         for k in range(len(gene_scores)):
-            signatures.append(ad.var_names[np.argsort(gene_scores[k])])
+            signatures.append(ad.var_names[np.argsort(gene_scores[k])[::-1]])
         outs.append(signatures)
     if return_cluster_assignments:
         cluster_assignments = np.argmax(cscores, axis=1).astype(str)
@@ -269,7 +274,7 @@ def run_scvi(
     if return_signatures:
         signatures = []
         for k in range(len(gene_scores)):
-            signatures.append(ad.var_names[np.argsort(gene_scores[k])])
+            signatures.append(ad.var_names[np.argsort(gene_scores[k])[::-1]])
         outs.append(signatures)
     if return_cluster_assignments:
         cluster_assignments = ad.obs["leiden"].values.tolist()
