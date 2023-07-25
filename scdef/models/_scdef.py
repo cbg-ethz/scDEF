@@ -1786,7 +1786,7 @@ class scDEF(object):
             obs_vals_dict[obs_key] = obs_vals
             n_obs = len(obs_vals)
 
-            mats = self.get_scores_func(obs_key, obs_vals, **kwargs)
+            mats = get_scores_func(obs_key, obs_vals, **kwargs)
 
             # Cluster rows across columns in all mats
             joined_mats = np.hstack(mats)
