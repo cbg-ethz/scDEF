@@ -108,7 +108,9 @@ def test_scdef():
 
     scd.plot_signatures_scores("celltypes", markers, top_genes=10, show=False)
 
-    scd.plot_obs_scores(["celltypes", "celltypes_coarse"], hierarchy=true_hierarchy, show=False)
+    scd.plot_obs_scores(
+        ["celltypes", "celltypes_coarse"], hierarchy=true_hierarchy, show=False
+    )
 
     scdef.eval_utils.evaluate_scdef_hierarchy(
         scd, ["celltypes", "celltypes_coarse"], true_hierarchy
