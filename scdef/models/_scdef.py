@@ -855,7 +855,12 @@ class scDEF(object):
             annotations.append(ann)
         return annotations
 
-    def get_rankings(self, layer_idx=0, q=0.1, genes=True, return_scores=False):
+    def get_rankings(
+        self, layer_idx=0, top_genes=None, genes=True, return_scores=False
+    ):
+        if top_genes is None:
+            top_genes = len(self.adata.var_names)
+
         term_names = np.array(self.adata.var_names)
         term_scores = self.pmeans[f"{self.layer_names[0]}W"][self.factor_lists[0]]
         n_factors = len(self.factor_lists[layer_idx])
@@ -885,8 +890,7 @@ class scDEF(object):
         for k in range(n_factors):
             top_terms_idx = (term_scores[k, :]).argsort()[::-1]
             sorted_term_scores_k = term_scores[k, :][top_terms_idx]
-            thres = np.quantile(sorted_term_scores_k, q=q)
-            top_terms_idx = top_terms_idx[np.where(sorted_term_scores_k > thres)[0]]
+            top_terms_idx = top_terms_idx[:top_genes]
             top_terms_list = term_names[top_terms_idx].tolist()
             top_scores_list = sorted_term_scores_k.tolist()
             top_terms.append(top_terms_list)
