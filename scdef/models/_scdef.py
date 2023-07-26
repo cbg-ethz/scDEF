@@ -1782,7 +1782,9 @@ class scDEF(object):
                     )
         return mats
 
-    def _prepare_obs_factor_scores(self, obs_keys, get_scores_func, **kwargs):
+    def _prepare_obs_factor_scores(
+        self, obs_keys, get_scores_func, hierarchy=None, **kwargs
+    ):
         if not isinstance(obs_keys, list):
             obs_keys = [obs_keys]
 
@@ -1796,6 +1798,11 @@ class scDEF(object):
         obs_vals_dict = dict()
         for idx, obs_key in enumerate(obs_keys):
             obs_vals = self.adata.obs[obs_key].unique().tolist()
+
+            # Don't keep non-hierarchical levels
+            if idx > 0 and hierarchy is not None:
+                obs_vals = [val for val in obs_vals if len(hierarchy[val]) > 0]
+
             obs_vals_dict[obs_key] = obs_vals
             n_obs = len(obs_vals)
 
@@ -1883,14 +1890,22 @@ class scDEF(object):
         if show:
             plt.show()
 
-    def plot_signatures_scores(self, obs_keys, markers, top_genes=10, **kwargs):
+    def plot_signatures_scores(
+        self, obs_keys, markers, top_genes=10, hierarchy=None, **kwargs
+    ):
         obs_mats, obs_clusters, obs_vals_dict = self._prepare_obs_factor_scores(
-            obs_keys, self._get_signature_scores, markers=markers, top_genes=top_genes
+            obs_keys,
+            self._get_signature_scores,
+            markers=markers,
+            top_genes=top_genes,
+            hierarchy=hierarchy,
         )
         self.plot_layers_obs(obs_keys, obs_mats, obs_clusters, obs_vals_dict, **kwargs)
 
-    def plot_obs_scores(self, obs_keys, **kwargs):
+    def plot_obs_scores(self, obs_keys, hierarchy=None, **kwargs):
         obs_mats, obs_clusters, obs_vals_dict = self._prepare_obs_factor_scores(
-            obs_keys, self._get_assignment_scores
+            obs_keys,
+            self._get_assignment_scores,
+            hierarchy=hierarchy,
         )
         self.plot_layers_obs(obs_keys, obs_mats, obs_clusters, obs_vals_dict, **kwargs)
