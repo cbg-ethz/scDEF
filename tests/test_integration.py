@@ -104,10 +104,15 @@ def test_scdef():
     assert "hfactor" in scd.adata.obs.columns
     assert "hhfactor" in scd.adata.obs.columns
 
-    scd.plot_multilevel_paga(figsize=(16, 4), reuse_pos=True, frameon=False)
+    scd.plot_multilevel_paga(figsize=(16, 4), reuse_pos=True, frameon=False, show=False)
 
-    obs_keys = ["celltypes", "celltypes_coarse"]
-    scdef.eval_utils.evaluate_scdef_hierarchy(scd, obs_keys, true_hierarchy)
+    scd.plot_signatures_scores("celltypes", markers, top_genes=10, show=False)
+
+    scd.plot_obs_scores(["celltypes", "celltypes_coarse"], show=False)
+
+    scdef.eval_utils.evaluate_scdef_hierarchy(
+        scd, ["celltypes", "celltypes_coarse"], true_hierarchy
+    )
 
     scdef.eval_utils.evaluate_scdef_signatures(scd, "celltypes", markers)
 
@@ -116,7 +121,7 @@ def test_scdef():
     scd.make_graph(hierarchy=simplified)
 
     assignments, matches = scd.assign_obs_to_factors(
-        obs_keys,
+        ["celltypes", "celltypes_coarse"],
         factor_names=scdef.utils.hierarchy_utils.get_nodes_from_hierarchy(simplified),
     )
     scd.make_graph(hierarchy=simplified, factor_annotations=matches)

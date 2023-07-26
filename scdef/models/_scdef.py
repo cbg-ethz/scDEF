@@ -22,6 +22,9 @@ import pandas as pd
 from anndata import AnnData
 import scanpy as sc
 
+from scipy.cluster.hierarchy import ward, leaves_list
+from scipy.spatial.distance import pdist
+
 from ..utils import score_utils, hierarchy_utils
 from ..utils.jax_utils import *
 
@@ -1348,6 +1351,7 @@ class scDEF(object):
         show_yticks=False,
         scale="linear",
         normalize=True,
+        show=True,
         **kwargs,
     ):
         ard = []
@@ -1384,7 +1388,8 @@ class scDEF(object):
         plt.xlabel("Factor")
         plt.yscale(scale)
         plt.ylabel("Relevance")
-        plt.show()
+        if show:
+            plt.show()
 
     def plot_obs_factor_dotplot(
         self,
@@ -1399,6 +1404,7 @@ class scDEF(object):
         legend_titlesize=12,
         cmap="viridis",
         logged=False,
+        show=True,
     ):
         # For each obs, compute the average cell score on each factor among the cells that attach to that obs, use as color
         # And compute the fraction of cells in the obs that attach to each factor, use as circle size
@@ -1510,10 +1516,16 @@ class scDEF(object):
         cb.ax.set_title("Average\ncell score", fontsize=legend_titlesize)
         cb.ax.tick_params(labelsize=legend_fontsize)
         plt.grid("off")
-        plt.show()
+        if show:
+            plt.show()
 
     def plot_multilevel_paga(
-        self, neighbors_rep="X_factors", figsize=(16, 4), reuse_pos=True, **paga_kwargs
+        self,
+        neighbors_rep="X_factors",
+        figsize=(16, 4),
+        reuse_pos=True,
+        show=True,
+        **paga_kwargs,
     ):
         "Plot PAGA graphs at all scDEF levels"
 
@@ -1556,7 +1568,8 @@ class scDEF(object):
             )
 
             old_layer_name = new_layer_name
-        plt.show()
+        if show:
+            plt.show()
 
     def compute_weight(self, upper_factor_name, lower_factor_name):
         # Computes the weight between two factors across any number of layers
@@ -1751,7 +1764,7 @@ class scDEF(object):
                 mats[j][i] = np.array(scores)[indices]
         return mats
 
-    def _get_signature_scores(self, obs_key, obs_vals, top_genes=10):
+    def _get_signature_scores(self, obs_key, obs_vals, markers, top_genes=10):
         signatures_dict = self.get_signatures_dict()
         n_obs = len(obs_vals)
         mats = [
@@ -1770,6 +1783,9 @@ class scDEF(object):
         return mats
 
     def _prepare_obs_factor_scores(self, obs_keys, get_scores_func, **kwargs):
+        if not isinstance(obs_keys, list):
+            obs_keys = [obs_keys]
+
         factors = [self.factor_names[idx] for idx in range(self.n_layers)]
         flat_list = [item for sublist in factors for item in sublist]
         n_factors = len(flat_list)
@@ -1780,9 +1796,6 @@ class scDEF(object):
         obs_vals_dict = dict()
         for idx, obs_key in enumerate(obs_keys):
             obs_vals = self.adata.obs[obs_key].unique().tolist()
-            # Don't keep non-hierarchical levels
-            if idx > 0:
-                obs_vals = [val for val in obs_vals if len(true_hierarchy[val]) > 0]
             obs_vals_dict[obs_key] = obs_vals
             n_obs = len(obs_vals)
 
@@ -1811,8 +1824,17 @@ class scDEF(object):
         cb_title_fontsize=10,
         pad=0.1,
         shrink=0.7,
+        show=True,
     ):
-        layer_factor_orders = get_layer_factor_orders(self)
+        if not isinstance(obs_keys, list):
+            obs_keys = [obs_keys]
+
+        if sort_layer_factors:
+            layer_factor_orders = self.get_layer_factor_orders()
+        else:
+            layer_factor_orders = [
+                np.arange(len(self.factor_lists[i])) for i in range(self.n_layers)
+            ]
 
         n_factors = [len(self.factor_lists[idx]) for idx in range(self.n_layers)]
         n_obs = [len(obs_clusters[obs_key]) for obs_key in obs_keys]
@@ -1858,4 +1880,17 @@ class scDEF(object):
 
         cb = fig.colorbar(axplt, ax=axs.ravel().tolist(), pad=pad, shrink=shrink)
         cb.ax.set_title(cb_title, fontsize=cb_title_fontsize)
-        plt.show()
+        if show:
+            plt.show()
+
+    def plot_signatures_scores(self, obs_keys, markers, top_genes=10, **kwargs):
+        obs_mats, obs_clusters, obs_vals_dict = self._prepare_obs_factor_scores(
+            obs_keys, self._get_signature_scores, markers=markers, top_genes=top_genes
+        )
+        self.plot_layers_obs(obs_keys, obs_mats, obs_clusters, obs_vals_dict, **kwargs)
+
+    def plot_obs_scores(self, obs_keys, **kwargs):
+        obs_mats, obs_clusters, obs_vals_dict = self._prepare_obs_factor_scores(
+            obs_keys, self._get_assignment_scores
+        )
+        self.plot_layers_obs(obs_keys, obs_mats, obs_clusters, obs_vals_dict, **kwargs)
