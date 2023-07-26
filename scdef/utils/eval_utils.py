@@ -93,3 +93,20 @@ def evaluate_scdef_signatures(scd, obs_keys, markers):
             score_utils.score_signature(signature, markers_type, nonmarkers_type)
         )
     return signature_scores
+
+
+def get_signature_consistency(hierarchy, signatures, top_genes=10):
+    # Check the consistency of gene signatures in the hierarchy
+    overlap = []
+    for parent in hierarchy:
+        pri
+        parent_child_overlaps = []
+        children = hierarchy[parent]
+        for child in children:
+            ov = scdef.score_utils.jaccard_similarity(
+                signatures[child][:top_genes], signatures[parent][:top_genes]
+            )
+            parent_child_overlaps.append(ov)
+        if len(parent_child_overlaps) > 0:
+            overlap.append(np.mean(parent_child_overlaps))
+    return np.mean(overlap)
