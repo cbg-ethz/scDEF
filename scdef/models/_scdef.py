@@ -48,6 +48,7 @@ class scDEF(object):
         layer_diagonals=None,
         batch_cpal="Dark2",
         layer_cpal=None,
+        lightness_mult=0.1,
     ):
         self.layer_sizes = [int(x) for x in layer_sizes]
         self.n_layers = len(self.layer_sizes)
@@ -119,6 +120,15 @@ class scDEF(object):
             sns.color_palette(layer_cpal[idx], n_colors=size)
             for idx, size in enumerate(layer_sizes)
         ]
+
+        if len(np.unique(layer_cpal)) == 1:
+            # Make the layers have different lightness
+            for layer_idx, size in enumerate(self.layer_sizes):
+                for factor_idx in range(size):
+                    col = self.layer_colorpalettes[layer_idx][factor_idx]
+                    self.layer_colorpalettes[layer_idx][factor_idx] = adjust_lightness(
+                        col, amount=1.0 + lightness_mult * layer_idx
+                    )
 
         self.load_adata(adata, layer=counts_layer, batch_key=batch_key)
         self.batch_key = batch_key
