@@ -95,7 +95,7 @@ def evaluate_scdef_signatures(scd, obs_keys, markers):
     return signature_scores
 
 
-def get_hierarchical_signatures_consistency(
+def evaluate_hierarchical_signatures_consistency(
     var_names, hierarchy, signatures, scores, sizes, top_genes=10
 ):
     # sizes is a dict with the population sizes

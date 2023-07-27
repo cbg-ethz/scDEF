@@ -133,6 +133,6 @@ def test_scdef():
 
     signatures, scores = scd.get_signatures_dict(scores=True, sorted_scores=False)
     sizes = scd.get_sizes_dict()
-    scdef.eval_utils.get_hierarchical_signatures_consistency(
+    scdef.eval_utils.evaluate_hierarchical_signatures_consistency(
         scd.adata.var_names, simplified, signatures, scores, sizes, top_genes=10
     )
