@@ -89,6 +89,14 @@ def jaccard_similarity(list1, list2):
     return float(len(s1.intersection(s2)) / float(len(s1.union(s2))))
 
 
+def overlap_index(list1, list2):
+    s1 = set(list1)
+    s2 = set(list2)
+    size1 = len(s1)
+    size2 = len(s2)
+    return float(len(s1.intersection(s2)) / float(min(size1, size2)))
+
+
 def compute_fscore(tp, fp, fn):
     return 2 * tp / (2 * tp + fp + fn)
 
