@@ -25,7 +25,7 @@ import scanpy as sc
 from scipy.cluster.hierarchy import ward, leaves_list
 from scipy.spatial.distance import pdist
 
-from ..utils import score_utils, hierarchy_utils
+from ..utils import score_utils, hierarchy_utils, color_utils
 from ..utils.jax_utils import *
 
 
@@ -128,7 +128,7 @@ class scDEF(object):
                     col = self.layer_colorpalettes[layer_idx][factor_idx]
                     self.layer_colorpalettes[layer_idx][
                         factor_idx
-                    ] = scdef.color_utils.adjust_lightness(
+                    ] = color_utils.adjust_lightness(
                         col, amount=1.0 + lightness_mult * layer_idx
                     )
 
