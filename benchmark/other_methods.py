@@ -7,25 +7,42 @@ from sklearn.decomposition import NMF
 
 
 def run_multiple_resolutions(method, ad, resolution_sweep, layer_prefix="h", **kwargs):
-    # Only for methods that use Leiden clustering
     # method is a function
     assignments_results = []
     signatures_dict = dict()
+    scores_dict = dict()
+    sizes_dict = dict()
     for i, res in enumerate(resolution_sweep):
         outs = method(ad, resolution=res, **kwargs)
+        scores = outs[1]
         assignments = outs[-1]
         signatures = outs[-2]
         prefix = layer_prefix * i
         assignments = [f"{prefix}{a}" for a in assignments]
         assignments_results.append(assignments)
+        uq, cts = np.unique(assignments, return_counts=True)
+        sizes = dict(zip(uq, cts))
         for k in range(len(signatures)):
             name = f"{prefix}{k}"
             signatures_dict[name] = signatures[k].tolist()
-    return signatures_dict, assignments_results
+            scores_dict[name] = scores[k].tolist()
+            sizes_dict[name] = sizes[name]
+
+    outs = {
+        "signatures": signatures_dict,
+        "assignments": assignments_results,
+        "scores": scores_dict,
+        "sizes": sizes_dict,
+    }
+    return outs
 
 
 def run_unintegrated(
-    ad, resolution=1.0, return_signatures=True, return_cluster_assignments=True
+    ad,
+    resolution=1.0,
+    sorted_scores=False,
+    return_signatures=True,
+    return_cluster_assignments=True,
 ):
     # PCA
     sc.tl.pca(ad)
@@ -37,12 +54,15 @@ def run_unintegrated(
     sc.tl.rank_genes_groups(ad, "leiden", method="wilcoxon")
     gene_scores = []
     for leiden in range(np.max(ad.obs["leiden"].unique().astype(int)) + 1):
-        gene_scores.append(
+        scores = (
             sc.get.rank_genes_groups_df(ad, str(leiden))
             .set_index("names")
             .loc[ad.var_names]["scores"]
             .values
         )
+        if sorted_scores:
+            scores = np.sort(scores)[::-1]
+        gene_scores.append(scores)
     gene_scores = np.array(gene_scores)
 
     outs = [latent, gene_scores, ad]
@@ -99,7 +119,7 @@ def run_harmony(
     return outs
 
 
-def run_ldvae(ad, k_range, batch_key="Batch"):
+def run_ldvae(ad, k_range, resolution=1.0, batch_key="Batch"):
     ad = ad.copy()
     scvi.model.LinearSCVI.setup_anndata(
         ad,
@@ -109,6 +129,7 @@ def run_ldvae(ad, k_range, batch_key="Batch"):
     # Run for range of K and choose best one
     models = []
     losses = []
+    k_range = (np.array(k_range) * resolution).astype(int)
     for k in k_range:
         model = scvi.model.LinearSCVI(ad, n_latent=k)
         model.train()
@@ -120,11 +141,14 @@ def run_ldvae(ad, k_range, batch_key="Batch"):
     return latent, loadings, ad
 
 
-def run_nmf(ad, k_range, return_signatures=True, return_cluster_assignments=True):
+def run_nmf(
+    ad, k_range, resolution=1.0, return_signatures=True, return_cluster_assignments=True
+):
     ad = ad.copy()
     X = ad.X
     nmfs = []
     n_modules = []
+    k_range = (np.array(k_range) * resolution).astype(int)
     for k in k_range:
         # Run NMF
         nmf = NMF(n_components=k, max_iter=5000)
@@ -160,7 +184,7 @@ def run_nmf(ad, k_range, return_signatures=True, return_cluster_assignments=True
     if return_signatures:
         signatures = []
         for k in range(len(gene_scores)):
-            signatures.append(ad.var_names[np.argsort(V[k])])
+            signatures.append(ad.var_names[np.argsort(V[k])[::-1]])
         outs.append(signatures)
     if return_cluster_assignments:
         cluster_assignments = np.argmax(W, axis=1).astype(str)
@@ -210,11 +234,14 @@ def run_scanorama(
     return outs
 
 
-def run_schpf(ad, k_range, return_signatures=True, return_cluster_assignments=True):
+def run_schpf(
+    ad, k_range, resolution=1.0, return_signatures=True, return_cluster_assignments=True
+):
     ad = ad.copy()
     X = scipy.sparse.coo_matrix(ad.X)
     models = []
     losses = []
+    k_range = (np.array(k_range) * resolution).astype(int)
     for k in k_range:
         sch = schpf.scHPF(k)
         sch.fit(X)

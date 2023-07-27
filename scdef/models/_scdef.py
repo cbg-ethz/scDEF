@@ -856,7 +856,12 @@ class scDEF(object):
         return annotations
 
     def get_rankings(
-        self, layer_idx=0, top_genes=None, genes=True, return_scores=False
+        self,
+        layer_idx=0,
+        top_genes=None,
+        genes=True,
+        return_scores=False,
+        sorted_scores=True,
     ):
         if top_genes is None:
             top_genes = len(self.adata.var_names)
@@ -889,11 +894,14 @@ class scDEF(object):
         top_scores = []
         for k in range(n_factors):
             top_terms_idx = (term_scores[k, :]).argsort()[::-1]
-            sorted_term_scores_k = term_scores[k, :][top_terms_idx]
             top_terms_idx = top_terms_idx[:top_genes]
             top_terms_list = term_names[top_terms_idx].tolist()
-            top_scores_list = sorted_term_scores_k.tolist()
             top_terms.append(top_terms_list)
+            if sorted_scores:
+                sorted_term_scores_k = term_scores[k, :][top_terms_idx]
+                top_scores_list = sorted_term_scores_k.tolist()
+            else:
+                top_scores_list = term_scores[k, :].tolist()
             top_scores.append(top_scores_list)
 
         if return_scores:
@@ -901,7 +909,7 @@ class scDEF(object):
         return top_terms
 
     def get_signature_sample(
-        self, rng, factor_idx, layer_idx, top_genes=50, return_scores=False
+        self, rng, factor_idx, layer_idx, top_genes=10, return_scores=False
     ):
         term_names = np.array(self.adata.var_names)
 
@@ -957,7 +965,7 @@ class scDEF(object):
         return top_terms
 
     def get_signature_confidence(
-        self, factor_idx, layer_idx, mc_samples=100, top_genes=50
+        self, factor_idx, layer_idx, mc_samples=100, top_genes=10
     ):
         signatures = []
         for i in range(mc_samples):
@@ -979,12 +987,32 @@ class scDEF(object):
 
         return np.mean(jaccs)
 
-    def get_signatures_dict(self, top_genes=50):
-        signatures_dict = {}
+    def get_sizes_dict(self):
+        sizes_dict = {}
         for layer_idx in range(self.n_layers):
-            layer_signatures = self.get_rankings(layer_idx=layer_idx)
+            layer_sizes = self.adata.obs[
+                f"{self.layer_names[layer_idx]}factor"
+            ].value_counts()
+            for factor_idx, factor_name in enumerate(self.factor_names[layer_idx]):
+                sizes_dict[factor_name] = layer_sizes[factor_name]
+        return sizes_dict
+
+    def get_signatures_dict(self, top_genes=None, scores=False, sorted_scores=False):
+        signatures_dict = {}
+        scores_dict = {}
+        for layer_idx in range(self.n_layers):
+            layer_signatures, layer_scores = self.get_rankings(
+                layer_idx=layer_idx,
+                top_genes=top_genes,
+                return_scores=True,
+                sorted_scores=sorted_scores,
+            )
             for factor_idx, factor_name in enumerate(self.factor_names[layer_idx]):
                 signatures_dict[factor_name] = layer_signatures[factor_idx]
+                scores_dict[factor_name] = layer_scores[factor_idx]
+
+        if scores:
+            return signatures_dict, scores_dict
         return signatures_dict
 
     def get_summary(self, top_genes=10, reindex=True):

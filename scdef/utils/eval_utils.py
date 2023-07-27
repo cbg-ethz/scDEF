@@ -95,18 +95,29 @@ def evaluate_scdef_signatures(scd, obs_keys, markers):
     return signature_scores
 
 
-def get_signature_consistency(hierarchy, signatures, top_genes=10):
-    # Check the consistency of gene signatures in the hierarchy
-    overlap = []
+def get_hierarchical_signatures_consistency(
+    var_names, hierarchy, signatures, scores, sizes, top_genes=10
+):
+    # sizes is a dict with the population sizes
+    def get_consensus_signature(var_names, gene_scores_array, sizes_array):
+        sizes_array = sizes_array / np.sum(sizes_array)
+        avg_ranks = np.sum(sizes_array[:, None] * gene_scores_array, axis=0)
+        consensus = var_names[np.argsort(avg_ranks)[::-1]].tolist()
+        return consensus
+
+    overlaps = []
     for parent in hierarchy:
-        pri
-        parent_child_overlaps = []
         children = hierarchy[parent]
-        for child in children:
-            ov = scdef.score_utils.jaccard_similarity(
-                signatures[child][:top_genes], signatures[parent][:top_genes]
+        if len(children) > 0:
+            gene_scores = np.array(
+                [scores[child] / np.max(scores[child]) for child in children]
+            )  # ranking method-agnostic
+            children_sizes = np.array([sizes[child] for child in children])
+            consensus_signature = get_consensus_signature(
+                var_names, gene_scores, children_sizes
             )
-            parent_child_overlaps.append(ov)
-        if len(parent_child_overlaps) > 0:
-            overlap.append(np.mean(parent_child_overlaps))
-    return np.mean(overlap)
+            overlap = score_utils.jaccard_similarity(
+                signatures[parent][:top_genes], consensus_signature[:top_genes]
+            )
+            overlaps.append(overlap)
+    return np.mean(overlaps)
