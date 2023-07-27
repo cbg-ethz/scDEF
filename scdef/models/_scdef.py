@@ -126,7 +126,9 @@ class scDEF(object):
             for layer_idx, size in enumerate(self.layer_sizes):
                 for factor_idx in range(size):
                     col = self.layer_colorpalettes[layer_idx][factor_idx]
-                    self.layer_colorpalettes[layer_idx][factor_idx] = adjust_lightness(
+                    self.layer_colorpalettes[layer_idx][
+                        factor_idx
+                    ] = scdef.color_utils.adjust_lightness(
                         col, amount=1.0 + lightness_mult * layer_idx
                     )
 
