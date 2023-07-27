@@ -73,7 +73,7 @@ def evaluate_cluster_signatures(
         markers_type = markers[celltype]
         nonmarkers_type = [m for m in markers if m not in markers_type]
         signature_scores.append(
-            score_utils.core_signature(signature, markers_type, nonmarkers_type)
+            score_utils.score_signature(signature, markers_type, nonmarkers_type)
         )
     return signature_scores
 
