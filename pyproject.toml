@@ -21,6 +21,15 @@ gseapy = "^1.0.4"
 graphviz = "^0.14.2"
 igraph = "^0.10.4"
 
+[tool.poetry.group.extras]
+optional = true
+
+[tool.poetry.group.extras.dependencies]
+leiden = '*'
+harmonypy = '*'
+scanorama = '*'
+scikit-learn = '*'
+
 [tool.poetry.dev-dependencies]
 bump2version = "^1.0.1"
 black = "^23.3.0"
