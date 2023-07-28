@@ -44,7 +44,9 @@ def run_unintegrated(
     try:
         import leidenalg
     except ImportError:
-        raise ImportError("Please install leidenalg: `pip instal leidenalg`. Or install scdef with extras: `pip install scdef[extras]`.")
+        raise ImportError(
+            "Please install leidenalg: `pip instal leidenalg`. Or install scdef with extras: `pip install scdef[extras]`."
+        )
     # PCA
     sc.tl.pca(ad)
     latent = ad.obsm["X_pca"]
@@ -89,7 +91,9 @@ def run_harmony(
     try:
         import harmonypy
     except ImportError:
-        raise ImportError("Please install harmonypy: `pip instal harmonypy`. Or install scdef with extras: `pip install scdef[extras]`.")
+        raise ImportError(
+            "Please install harmonypy: `pip instal harmonypy`. Or install scdef with extras: `pip install scdef[extras]`."
+        )
     ad = ad.copy()
     # PCA
     sc.tl.pca(ad)
@@ -130,7 +134,9 @@ def run_nmf(
     try:
         from sklearn.decomposition import NMF
     except ImportError:
-        raise ImportError("Please install scikit-learn: `pip instal scikit-learn`. Or install scdef with extras: `pip install scdef[extras]`.")
+        raise ImportError(
+            "Please install scikit-learn: `pip instal scikit-learn`. Or install scdef with extras: `pip install scdef[extras]`."
+        )
     ad = ad.copy()
     X = ad.X
     nmfs = []
@@ -190,7 +196,9 @@ def run_scanorama(
     try:
         import scanorama
     except ImportError:
-        raise ImportError("Please install scanorama: `pip instal scanorama`. Or install scdef with extras: `pip install scdef[extras]`.")
+        raise ImportError(
+            "Please install scanorama: `pip instal scanorama`. Or install scdef with extras: `pip install scdef[extras]`."
+        )
     ad = ad.copy()
     # PCA
     sc.tl.pca(ad)
