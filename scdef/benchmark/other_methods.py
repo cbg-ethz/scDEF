@@ -2,6 +2,7 @@ import numpy as np
 import anndata
 import scanpy as sc
 
+
 def run_multiple_resolutions(method, ad, resolution_sweep, layer_prefix="h", **kwargs):
     # method is a function
     assignments_results = []
@@ -122,7 +123,7 @@ def run_nmf(
         from sklearn.decomposition import NMF
     except ImportError:
         raise ImportError(
-            'Please install scikit-learn: `pip instal scikit-learn`. Or re-install scdef with `pip install scdef[extras]`.'
+            "Please install scikit-learn: `pip instal scikit-learn`. Or re-install scdef with `pip install scdef[extras]`."
         )
     ad = ad.copy()
     X = ad.X
@@ -221,7 +222,7 @@ def run_schpf(
         import schpf
     except ImportError:
         raise ImportError(
-            'Please install schpf by following the instructions in https://github.com/simslab/scHPF.'
+            "Please install schpf by following the instructions in https://github.com/simslab/scHPF."
         )
     ad = ad.copy()
     X = scipy.sparse.coo_matrix(ad.X)
@@ -262,7 +263,7 @@ def run_scvi(
         import scvi
     except ImportError:
         raise ImportError(
-            'Please install scvi-tools: `pip instal scvi-tools`. Or re-install scdef with `pip install scdef[extras]`.'
+            "Please install scvi-tools: `pip instal scvi-tools`. Or re-install scdef with `pip install scdef[extras]`."
         )
     ad = ad.copy()
     scvi.model.SCVI.setup_anndata(
@@ -307,7 +308,7 @@ def run_ldvae(ad, k_range, resolution=1.0, batch_key="Batch"):
         import scvi
     except ImportError:
         raise ImportError(
-            'Please install scvi-tools: `pip instal scvi-tools`. Or re-install scdef with `pip install scdef[extras]`.'
+            "Please install scvi-tools: `pip instal scvi-tools`. Or re-install scdef with `pip install scdef[extras]`."
         )
     ad = ad.copy()
     scvi.model.LinearSCVI.setup_anndata(
