@@ -7,8 +7,6 @@ import pandas as pd
 
 import scdef
 
-from pathlib import Path
-
 
 def test_scdef():
     n_epochs = 10
