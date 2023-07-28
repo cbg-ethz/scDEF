@@ -1,10 +1,6 @@
 import numpy as np
 import anndata
 import scanpy as sc
-import scvi
-import schpf
-from sklearn.decomposition import NMF
-
 
 def run_multiple_resolutions(method, ad, resolution_sweep, layer_prefix="h", **kwargs):
     # method is a function
@@ -119,31 +115,15 @@ def run_harmony(
     return outs
 
 
-def run_ldvae(ad, k_range, resolution=1.0, batch_key="Batch"):
-    ad = ad.copy()
-    scvi.model.LinearSCVI.setup_anndata(
-        ad,
-        batch_key=batch_key,
-        layer="counts",
-    )
-    # Run for range of K and choose best one
-    models = []
-    losses = []
-    k_range = (np.array(k_range) * resolution).astype(int)
-    for k in k_range:
-        model = scvi.model.LinearSCVI(ad, n_latent=k)
-        model.train()
-        models.append(model)
-        losses.append(model.history["elbo_train"].values[-1][0])
-    best = models[np.argmin(losses)]
-    latent = best.get_latent_representation()
-    loadings = best.get_loadings().values.T  # factor by gene
-    return latent, loadings, ad
-
-
 def run_nmf(
     ad, k_range, resolution=1.0, return_signatures=True, return_cluster_assignments=True
 ):
+    try:
+        from sklearn.decomposition import NMF
+    except ImportError:
+        raise ImportError(
+            'Please install scikit-learn: `pip instal scikit-learn`. Or re-install scdef with `pip install scdef[extras]`.'
+        )
     ad = ad.copy()
     X = ad.X
     nmfs = []
@@ -237,6 +217,12 @@ def run_scanorama(
 def run_schpf(
     ad, k_range, resolution=1.0, return_signatures=True, return_cluster_assignments=True
 ):
+    try:
+        import schpf
+    except ImportError:
+        raise ImportError(
+            'Please install schpf by following the instructions in https://github.com/simslab/scHPF.'
+        )
     ad = ad.copy()
     X = scipy.sparse.coo_matrix(ad.X)
     models = []
@@ -272,6 +258,12 @@ def run_scvi(
     return_signatures=True,
     return_cluster_assignments=True,
 ):
+    try:
+        import scvi
+    except ImportError:
+        raise ImportError(
+            'Please install scvi-tools: `pip instal scvi-tools`. Or re-install scdef with `pip install scdef[extras]`.'
+        )
     ad = ad.copy()
     scvi.model.SCVI.setup_anndata(
         ad,
@@ -308,3 +300,31 @@ def run_scvi(
         outs.append(cluster_assignments)
 
     return outs
+
+
+def run_ldvae(ad, k_range, resolution=1.0, batch_key="Batch"):
+    try:
+        import scvi
+    except ImportError:
+        raise ImportError(
+            'Please install scvi-tools: `pip instal scvi-tools`. Or re-install scdef with `pip install scdef[extras]`.'
+        )
+    ad = ad.copy()
+    scvi.model.LinearSCVI.setup_anndata(
+        ad,
+        batch_key=batch_key,
+        layer="counts",
+    )
+    # Run for range of K and choose best one
+    models = []
+    losses = []
+    k_range = (np.array(k_range) * resolution).astype(int)
+    for k in k_range:
+        model = scvi.model.LinearSCVI(ad, n_latent=k)
+        model.train()
+        models.append(model)
+        losses.append(model.history["elbo_train"].values[-1][0])
+    best = models[np.argmin(losses)]
+    latent = best.get_latent_representation()
+    loadings = best.get_loadings().values.T  # factor by gene
+    return latent, loadings, ad

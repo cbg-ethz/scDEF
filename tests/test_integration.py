@@ -112,11 +112,11 @@ def test_scdef():
         ["celltypes", "celltypes_coarse"], hierarchy=true_hierarchy, show=False
     )
 
-    scdef.eval_utils.evaluate_scdef_hierarchy(
+    scdef.benchmark.evaluate_scdef_hierarchy(
         scd, ["celltypes", "celltypes_coarse"], true_hierarchy
     )
 
-    scdef.eval_utils.evaluate_scdef_signatures(scd, "celltypes", markers)
+    scdef.benchmark.evaluate_scdef_signatures(scd, "celltypes", markers)
 
     hierarchy = scd.get_hierarchy()
     simplified = scd.simplify_hierarchy(hierarchy)
@@ -133,6 +133,16 @@ def test_scdef():
 
     signatures, scores = scd.get_signatures_dict(scores=True, sorted_scores=False)
     sizes = scd.get_sizes_dict()
-    scdef.eval_utils.evaluate_hierarchical_signatures_consistency(
+    scdef.benchmark.evaluate_hierarchical_signatures_consistency(
         scd.adata.var_names, simplified, signatures, scores, sizes, top_genes=10
+    )
+
+    leiden_outs = scdef.other_methods.run_multiple_resolutions(
+        scdef.other_methods.run_unintegrated, adata, [1.0, 0.5]
+    )
+    scdef.evaluate.evaluate_hierarchy_from_cluster_levels(
+        adata,
+        ["celltypes", "celltypes_coarse"],
+        leiden_outs["assignments"],
+        true_hierarchy,
     )
