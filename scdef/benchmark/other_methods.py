@@ -41,6 +41,10 @@ def run_unintegrated(
     return_signatures=True,
     return_cluster_assignments=True,
 ):
+    try:
+        import leidenalg
+    except ImportError:
+        raise ImportError("Please install leidenalg: `pip instal leidenalg`. Or install scdef with extras: `pip install scdef[extras]`.")
     # PCA
     sc.tl.pca(ad)
     latent = ad.obsm["X_pca"]
