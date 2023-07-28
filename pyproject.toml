@@ -28,7 +28,6 @@ optional = true
 harmonypy = '*'
 scanorama = '*'
 scvi-tools = '*'
-schpf = '*'
 scikit-learn = '*'
 
 [tool.poetry.dev-dependencies]
