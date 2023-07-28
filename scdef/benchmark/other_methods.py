@@ -86,6 +86,10 @@ def run_harmony(
     return_signatures=True,
     return_cluster_assignments=True,
 ):
+    try:
+        import harmonypy
+    except ImportError:
+        raise ImportError("Please install harmonypy: `pip instal harmonypy`. Or install scdef with extras: `pip install scdef[extras]`.")
     ad = ad.copy()
     # PCA
     sc.tl.pca(ad)
@@ -126,7 +130,7 @@ def run_nmf(
     try:
         from sklearn.decomposition import NMF
     except ImportError:
-        raise ImportError("Please install scikit-learn: `pip instal scikit-learn`.")
+        raise ImportError("Please install scikit-learn: `pip instal scikit-learn`. Or install scdef with extras: `pip install scdef[extras]`.")
     ad = ad.copy()
     X = ad.X
     nmfs = []
@@ -183,6 +187,10 @@ def run_scanorama(
     return_signatures=True,
     return_cluster_assignments=True,
 ):
+    try:
+        import scanorama
+    except ImportError:
+        raise ImportError("Please install scanorama: `pip instal scanorama`. Or install scdef with extras: `pip install scdef[extras]`.")
     ad = ad.copy()
     # PCA
     sc.tl.pca(ad)
