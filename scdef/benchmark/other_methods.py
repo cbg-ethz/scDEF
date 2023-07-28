@@ -1,6 +1,9 @@
 import numpy as np
 import anndata
 import scanpy as sc
+import logging
+from ..utils import hierarchy_utils
+from .constants import *
 
 
 def run_multiple_resolutions(method, ad, resolution_sweep, layer_prefix="h", **kwargs):
@@ -9,8 +12,11 @@ def run_multiple_resolutions(method, ad, resolution_sweep, layer_prefix="h", **k
     signatures_dict = dict()
     scores_dict = dict()
     sizes_dict = dict()
+    latents_results = []
     for i, res in enumerate(resolution_sweep):
         outs = method(ad, resolution=res, **kwargs)
+        latents = outs[0]
+        latents_results.append(latents)
         scores = outs[1]
         assignments = outs[-1]
         signatures = outs[-2]
@@ -25,11 +31,18 @@ def run_multiple_resolutions(method, ad, resolution_sweep, layer_prefix="h", **k
             scores_dict[name] = scores[k].tolist()
             sizes_dict[name] = sizes[name]
 
+    hierarchy = hierarchy_utils.get_hierarchy_from_clusters(assignments_results)
+    layer_names = [layer_prefix * level for level in range(len(assignments_results))]
+    layer_sizes = [len(np.unique(cluster)) for cluster in assignments_results]
+    simplified = hierarchy_utils.simplify_hierarchy(hierarchy, layer_names, layer_sizes)
+
     outs = {
+        "latents": latents_results,
         "signatures": signatures_dict,
         "assignments": assignments_results,
         "scores": scores_dict,
         "sizes": sizes_dict,
+        "simplified_hierarchy": simplified,
     }
     return outs
 
@@ -129,7 +142,11 @@ def run_harmony(
 
 
 def run_nmf(
-    ad, k_range, resolution=1.0, return_signatures=True, return_cluster_assignments=True
+    ad,
+    k_range=[5, 15],
+    resolution=1.0,
+    return_signatures=True,
+    return_cluster_assignments=True,
 ):
     try:
         from sklearn.decomposition import NMF
@@ -234,7 +251,11 @@ def run_scanorama(
 
 
 def run_schpf(
-    ad, k_range, resolution=1.0, return_signatures=True, return_cluster_assignments=True
+    ad,
+    k_range=[5, 15],
+    resolution=1.0,
+    return_signatures=True,
+    return_cluster_assignments=True,
 ):
     try:
         import schpf
@@ -319,7 +340,7 @@ def run_scvi(
     return outs
 
 
-def run_ldvae(ad, k_range, resolution=1.0, batch_key="Batch"):
+def run_ldvae(ad, k_range=[5, 15], resolution=1.0, batch_key="Batch"):
     try:
         import scvi
     except ImportError:
@@ -343,3 +364,36 @@ def run_ldvae(ad, k_range, resolution=1.0, batch_key="Batch"):
     latent = best.get_latent_representation()
     loadings = best.get_loadings().values.T  # factor by gene
     return latent, loadings, ad
+
+
+OTHERS_FUNCS = dict(
+    zip(
+        OTHERS_LABELS,
+        [
+            run_unintegrated,
+            run_scvi,
+            run_harmony,
+            run_scanorama,
+            run_ldvae,
+            run_nmf,
+            run_schpf,
+        ],
+    )
+)
+
+
+def run_methods(adata, methods_list, res_sweeps=None):
+    methods_outs = dict()
+    for method in methods_list:
+        logging.info(f"Running {method}...")
+
+        # Run method
+        func = OTHERS_FUNCS[method]
+        res_sweep = OTHERS_RES_SWEEPS[method]
+        if res_sweeps is not None:
+            res_sweep = res_sweeps[method]
+        method_outs = run_multiple_resolutions(func, adata, res_sweep)
+
+        methods_outs[method] = method_outs
+
+    return methods_outs

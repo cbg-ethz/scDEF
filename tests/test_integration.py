@@ -135,12 +135,39 @@ def test_scdef():
         scd.adata.var_names, simplified, signatures, scores, sizes, top_genes=10
     )
 
-    leiden_outs = scdef.other_methods.run_multiple_resolutions(
-        scdef.other_methods.run_unintegrated, adata, [1.0, 0.5]
+    # Evaluate methods
+    methods_list = ["Leiden+Wilcoxon"]
+    metrics_list = [
+        "Cell type ARI",
+        "Hierarchical signature consistency",
+        "Hierarchy accuracy",
+        "Signature sparsity",
+        "Signature accuracy",
+    ]
+    res_sweeps = dict(
+        zip(
+            scdef.benchmark.OTHERS_LABELS,
+            [
+                [1.0, 0.6],
+                [1.0, 0.6],
+                [1.0, 0.6],
+                [1.0, 0.6],
+                [30, 1],
+                [30, 1],
+                [30, 1],
+            ],
+        )
     )
-    scdef.evaluate.evaluate_hierarchy_from_cluster_levels(
+    methods_results = scdef.benchmark.other_methods.run_methods(
+        adata, methods_list, res_sweeps=res_sweeps
+    )
+    methods_results["scDEF"] = scd
+    df = scdef.benchmark.evaluate.evaluate_methods(
         adata,
-        ["celltypes", "celltypes_coarse"],
-        leiden_outs["assignments"],
         true_hierarchy,
+        ["celltypes", "celltypes_coarse"],
+        markers,
+        metrics_list,
+        methods_results,
+        celltype_obs_key="celltypes",
     )

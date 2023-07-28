@@ -1,10 +1,161 @@
+import pandas as pd
 import numpy as np
+import logging
+from sklearn.metrics import adjusted_rand_score, silhouette_score
 from ..utils import score_utils, hierarchy_utils
+
+
+def evaluate_methods(
+    adata,
+    true_hierarchy,
+    hierarchy_obs_keys,
+    markers,
+    metrics_list,
+    methods_results,
+    celltype_obs_key="celltype",
+    batch_obs_key="batch",
+):
+    methods_list = list(methods_results.keys())
+
+    df = pd.DataFrame(index=metrics_list, columns=methods_list)
+
+    for method in methods_results:
+        logging.info(f"Evaluating {method}...")
+        method_outs = methods_results[method]
+
+        # Hierarchy
+        if "Hierarchy accuracy" in metrics_list:
+            if method == "scDEF":
+                score = evaluate_scdef_hierarchy(
+                    method_outs,
+                    hierarchy_obs_keys,
+                    true_hierarchy,
+                )
+            else:
+                score = evaluate_hierarchy_from_cluster_levels(
+                    adata,
+                    hierarchy_obs_keys,
+                    method_outs["assignments"],
+                    true_hierarchy,
+                )
+            df.loc["Hierarchy accuracy"][method] = score
+
+        if "Hierarchical signature consistency" in metrics_list:
+            if method == "scDEF":
+                method_simplified_hierarchy = method_outs.simplify_hierarchy(
+                    method_outs.get_hierarchy()
+                )
+                scdef_signatures, scdef_scores = method_outs.get_signatures_dict(
+                    scores=True
+                )
+                scdef_sizes = method_outs.get_sizes_dict()
+                score = evaluate_hierarchical_signatures_consistency(
+                    adata.var_names,
+                    method_simplified_hierarchy,
+                    scdef_signatures,
+                    scdef_scores,
+                    scdef_sizes,
+                    top_genes=10,
+                )
+            else:
+                score = evaluate_hierarchical_signatures_consistency(
+                    adata.var_names,
+                    method_outs["simplified_hierarchy"],
+                    method_outs["signatures"],
+                    method_outs["scores"],
+                    method_outs["sizes"],
+                    top_genes=10,
+                )
+            df.loc["Hierarchical signature consistency"][method] = score
+
+        # Signatures
+        if "Signature accuracy" in metrics_list:
+            if method == "scDEF":
+                score = evaluate_scdef_signatures(
+                    method_outs, hierarchy_obs_keys, markers
+                )
+            else:
+                score = evaluate_cluster_signatures(
+                    adata,
+                    method_outs["assignments"],
+                    method_outs["signatures"],
+                    hierarchy_obs_keys,
+                    markers,
+                )
+            df.loc["Signature accuracy"][method] = score
+
+        if "Signature sparsity" in metrics_list:
+            ginis = []
+            if method == "scDEF":
+                _, signature_scores = method_outs.get_signatures_dict(scores=True)
+                for node in signature_scores:
+                    ginis.append(score_utils.gini(signature_scores[node]))
+            else:
+                for node in method_outs["scores"]:
+                    ginis.append(
+                        score_utils.gini(
+                            method_outs["scores"][node]
+                            - np.min(method_outs["scores"][node])
+                        )
+                    )
+            sparsity = np.mean(ginis)
+            df.loc["Signature sparsity"][method] = sparsity
+
+        # Cell type clustering
+        if "Cell Type ARI" in metrics_list:
+            if method == "scDEF":
+                score = adjusted_rand_score(
+                    method_outs.adata.obs[celltype_obs_key],
+                    method_outs.adata.obs["factor"],
+                )
+            else:
+                score = adjusted_rand_score(
+                    adata.obs[celltype_obs_key], method_outs["assignments"][0]
+                )
+            df.loc["Cell Type ARI"][method] = score
+
+        if "Cell Type ASW" in metrics_list:
+            if method == "scDEF":
+                score = silhouette_score(
+                    method_outs.adata.obs[celltype_obs_key],
+                    method_outs.uns["X_factor_log"],
+                )
+            else:
+                score = silhouette_score(
+                    adata.obs[celltype_obs_key], method_outs["latents"][0]
+                )
+            df.loc["Cell Type ASW"][method] = score
+
+        # Batch clustering
+        if "Batch ARI" in metrics_list:
+            if method == "scDEF":
+                score = adjusted_rand_score(
+                    method_outs.adata.obs[batch_obs_key],
+                    method_outs.adata.obs["factor"],
+                )
+            else:
+                score = adjusted_rand_score(
+                    adata.obs[batch_obs_key], method_outs["assignments"][0]
+                )
+            df.loc["Batch ARI"][method] = score
+
+        if "Batch ASW" in metrics_list:
+            if method == "scDEF":
+                score = silhouette_score(
+                    method_outs.adata.obs[batch_obs_key],
+                    method_outs.uns["X_factor_log"],
+                )
+            else:
+                score = silhouette_score(
+                    adata.obs[batch_obs_key], method_outs["latents"][0]
+                )
+            df.loc["Batch ASW"][method] = score
+
+    return df
 
 
 def evaluate_scdef_hierarchy(scd, obs_keys, true_hierarchy):
     hierarchy = scd.get_hierarchy()
-    layer_sizes = [len(scd.factor_lists[i]) for i in range(scd.n_layers)]
     simplified = scd.simplify_hierarchy(hierarchy)
     assignments, matches = scd.assign_obs_to_factors(
         obs_keys, hierarchy_utils.get_nodes_from_hierarchy(simplified)
