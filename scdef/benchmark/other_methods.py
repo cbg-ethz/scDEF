@@ -122,9 +122,7 @@ def run_nmf(
     try:
         from sklearn.decomposition import NMF
     except ImportError:
-        raise ImportError(
-            "Please install scikit-learn: `pip instal scikit-learn`. Or re-install scdef with `pip install scdef[extras]`."
-        )
+        raise ImportError("Please install scikit-learn: `pip instal scikit-learn`.")
     ad = ad.copy()
     X = ad.X
     nmfs = []
@@ -262,9 +260,7 @@ def run_scvi(
     try:
         import scvi
     except ImportError:
-        raise ImportError(
-            "Please install scvi-tools: `pip instal scvi-tools`. Or re-install scdef with `pip install scdef[extras]`."
-        )
+        raise ImportError("Please install scvi-tools: `pip instal scvi-tools`.")
     ad = ad.copy()
     scvi.model.SCVI.setup_anndata(
         ad,
@@ -307,9 +303,7 @@ def run_ldvae(ad, k_range, resolution=1.0, batch_key="Batch"):
     try:
         import scvi
     except ImportError:
-        raise ImportError(
-            "Please install scvi-tools: `pip instal scvi-tools`. Or re-install scdef with `pip install scdef[extras]`."
-        )
+        raise ImportError("Please install scvi-tools: `pip instal scvi-tools`.")
     ad = ad.copy()
     scvi.model.LinearSCVI.setup_anndata(
         ad,

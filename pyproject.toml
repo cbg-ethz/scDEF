@@ -11,8 +11,8 @@ repository = "https://github.com/cbg-ethz/scdef"
 python = ">=3.8"
 pandas = "^1.5.1"
 numpy = "^1.23.4"
-jax = ">=0.4.4"
-jaxlib = ">=0.4.3"
+jax = "^0.3.25"
+jaxlib = "^0.3.25"
 scanpy = "^1.9.3"
 anndata = "^0.9.1"
 click = "^8.0.1"
@@ -20,16 +20,6 @@ tqdm = "^4.64.0"
 gseapy = "^1.0.4"
 graphviz = "^0.14.2"
 igraph = "^0.10.4"
-
-[tool.poetry.group.extras]
-optional = true
-
-[tool.poetry.group.extras.dependencies]
-harmonypy = '*'
-scanorama = '*'
-torch = "1.11.0+cpu"
-scvi-tools = '*'
-scikit-learn = '*'
 
 [tool.poetry.dev-dependencies]
 bump2version = "^1.0.1"
