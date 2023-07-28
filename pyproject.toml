@@ -27,6 +27,7 @@ optional = true
 [tool.poetry.group.extras.dependencies]
 harmonypy = '*'
 scanorama = '*'
+torch = "1.11.0+cpu"
 scvi-tools = '*'
 scikit-learn = '*'
 
