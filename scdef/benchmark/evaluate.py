@@ -117,12 +117,13 @@ def evaluate_methods(
         if "Cell Type ASW" in metrics_list:
             if method == "scDEF":
                 score = silhouette_score(
+                    method_outs.obsm["X_factor_log"],
                     method_outs.adata.obs[celltype_obs_key],
-                    method_outs.uns["X_factor_log"],
                 )
             else:
                 score = silhouette_score(
-                    adata.obs[celltype_obs_key], method_outs["latents"][0]
+                    method_outs["latents"][0],
+                    adata.obs[celltype_obs_key],
                 )
             df.loc["Cell Type ASW"][method] = score
 
@@ -142,12 +143,12 @@ def evaluate_methods(
         if "Batch ASW" in metrics_list:
             if method == "scDEF":
                 score = silhouette_score(
+                    method_outs.obsm["X_factor_log"],
                     method_outs.adata.obs[batch_obs_key],
-                    method_outs.uns["X_factor_log"],
                 )
             else:
                 score = silhouette_score(
-                    adata.obs[batch_obs_key], method_outs["latents"][0]
+                    method_outs["latents"][0], adata.obs[batch_obs_key]
                 )
             df.loc["Batch ASW"][method] = score
 
