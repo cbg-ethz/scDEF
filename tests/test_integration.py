@@ -78,6 +78,8 @@ def test_scdef():
     raw_adata = adata.raw
     raw_adata = raw_adata.to_adata()
     raw_adata.X = raw_adata.X.toarray()
+    adata.layers["counts"] = adata.X.toarray()  # Keep the counts
+
     sc.pp.normalize_total(adata, target_sum=1e4)
     sc.pp.log1p(adata)
     sc.pp.highly_variable_genes(
@@ -136,9 +138,10 @@ def test_scdef():
     )
 
     # Evaluate methods
-    methods_list = ["Leiden+Wilcoxon"]
+    methods_list = ["Leiden+Wilcoxon", "NMF"]
     metrics_list = [
-        "Cell type ARI",
+        "Cell Type ARI",
+        "Cell Type ASW",
         "Hierarchical signature consistency",
         "Hierarchy accuracy",
         "Signature sparsity",
@@ -152,9 +155,9 @@ def test_scdef():
                 [1.0, 0.6],
                 [1.0, 0.6],
                 [1.0, 0.6],
-                [30, 1],
-                [30, 1],
-                [30, 1],
+                [10, 1],
+                [10, 1],
+                [10, 1],
             ],
         )
     )
@@ -171,3 +174,5 @@ def test_scdef():
         methods_results,
         celltype_obs_key="celltypes",
     )
+
+    assert ~df.isnull().values.any()

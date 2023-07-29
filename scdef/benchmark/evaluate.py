@@ -117,7 +117,7 @@ def evaluate_methods(
         if "Cell Type ASW" in metrics_list:
             if method == "scDEF":
                 score = silhouette_score(
-                    method_outs.obsm["X_factor_log"],
+                    method_outs.adata.obsm["X_factors"],
                     method_outs.adata.obs[celltype_obs_key],
                 )
             else:
@@ -143,7 +143,7 @@ def evaluate_methods(
         if "Batch ASW" in metrics_list:
             if method == "scDEF":
                 score = silhouette_score(
-                    method_outs.obsm["X_factor_log"],
+                    method_outs.adata.obsm["X_factors"],
                     method_outs.adata.obs[batch_obs_key],
                 )
             else:
