@@ -61,7 +61,7 @@ def run_unintegrated(
         import leidenalg
     except ImportError:
         raise ImportError(
-            "Please install leidenalg: `pip instal leidenalg`. Or install scdef with extras: `pip install scdef[extras]`."
+            "Please install leidenalg: `pip install leidenalg`. Or install scdef with extras: `pip install scdef[extras]`."
         )
     # PCA
     sc.tl.pca(ad)
@@ -109,7 +109,7 @@ def run_nmf(
         from sklearn.decomposition import NMF
     except ImportError:
         raise ImportError(
-            "Please install scikit-learn: `pip instal scikit-learn`. Or install scdef with extras: `pip install scdef[extras]`."
+            "Please install scikit-learn: `pip install scikit-learn`. Or install scdef with extras: `pip install scdef[extras]`."
         )
     ad = ad.copy()
     X = ad.layers[layer]
@@ -214,7 +214,7 @@ def run_harmony(
         import harmonypy
     except ImportError:
         raise ImportError(
-            "Please install harmonypy: `pip instal harmonypy`. Or install scdef with extras: `pip install scdef[extras]`."
+            "Please install harmonypy: `pip install harmonypy`. Or install scdef with extras: `pip install scdef[extras]`."
         )
     ad = ad.copy()
     # PCA
@@ -261,7 +261,7 @@ def run_scanorama(
         import scanorama
     except ImportError:
         raise ImportError(
-            "Please install scanorama: `pip instal scanorama`. Or install scdef with extras: `pip install scdef[extras]`."
+            "Please install scanorama: `pip install scanorama`. Or install scdef with extras: `pip install scdef[extras]`."
         )
     ad = ad.copy()
     # PCA
@@ -308,7 +308,7 @@ def run_scvi(
     try:
         import scvi
     except ImportError:
-        raise ImportError("Please install scvi-tools: `pip instal scvi-tools`.")
+        raise ImportError("Please install scvi-tools: `pip install scvi-tools`.")
     ad = ad.copy()
     scvi.model.SCVI.setup_anndata(
         ad,
@@ -351,7 +351,7 @@ def run_ldvae(ad, k_range=[5, 15], resolution=1.0, batch_key="Batch", layer="cou
     try:
         import scvi
     except ImportError:
-        raise ImportError("Please install scvi-tools: `pip instal scvi-tools`.")
+        raise ImportError("Please install scvi-tools: `pip install scvi-tools`.")
     ad = ad.copy()
     scvi.model.LinearSCVI.setup_anndata(
         ad,
