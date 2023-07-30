@@ -309,6 +309,10 @@ def run_scvi(
         import scvi
     except ImportError:
         raise ImportError("Please install scvi-tools: `pip install scvi-tools`.")
+
+    if batch_key not in ad.obs.columns.tolist():
+        batch_key = None
+
     ad = ad.copy()
     scvi.model.SCVI.setup_anndata(
         ad,
@@ -352,6 +356,10 @@ def run_ldvae(ad, k_range=[5, 15], resolution=1.0, batch_key="Batch", layer="cou
         import scvi
     except ImportError:
         raise ImportError("Please install scvi-tools: `pip install scvi-tools`.")
+
+    if batch_key not in ad.obs.columns.tolist():
+        batch_key = None
+
     ad = ad.copy()
     scvi.model.LinearSCVI.setup_anndata(
         ad,
