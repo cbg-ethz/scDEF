@@ -122,7 +122,7 @@ def simplify_hierarchy(hierarchy, layer_names, layer_sizes):
             if factor_name in simplified:
                 if len(hierarchy[factor_name]) == 1:
                     if hierarchy[factor_name][0] in hierarchy:
-                        down_hrc = hierarchy[hierarchy[factor_name][0]]
+                        down_hrc = simplified[hierarchy[factor_name][0]]
                         if len(down_hrc) > 1:
                             simplified[factor_name] = down_hrc
                             del simplified[hierarchy[factor_name][0]]
