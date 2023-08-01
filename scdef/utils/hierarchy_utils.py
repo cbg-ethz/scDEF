@@ -120,12 +120,13 @@ def simplify_hierarchy(hierarchy, layer_names, layer_sizes):
         for factor_idx in range(layer_sizes[layer_idx]):
             factor_name = f"{layer_name}{factor_idx}"
             if factor_name in simplified:
-                if len(hierarchy[factor_name]) == 1:
-                    if hierarchy[factor_name][0] in hierarchy:
-                        down_hrc = simplified[hierarchy[factor_name][0]]
+                if len(simplified[factor_name]) == 1:
+                    if simplified[factor_name][0] in simplified:
+                        down_hrc = simplified[simplified[factor_name][0]]
+                        old_hrc = simplified[factor_name][0]
                         if len(down_hrc) > 1:
                             simplified[factor_name] = down_hrc
-                            del simplified[hierarchy[factor_name][0]]
+                            del simplified[old_hrc]
                         else:
                             if layer_idx < n_layers - 1:
                                 del simplified[factor_name]
