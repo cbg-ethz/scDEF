@@ -802,6 +802,9 @@ class scDEF(object):
                 self.logger.info(f"Updated adata.var: `{name}` for batch {batch_idx}.")
 
         self.set_factor_names()
+        ranked_genes, ranked_scores = self.get_signatures_dict(
+            scores=True, sorted_scores=True
+        )
 
         for idx in range(self.n_layers):
             layer_name = self.layer_names[idx]
@@ -836,6 +839,69 @@ class scDEF(object):
             )
             self.logger.info(
                 f"Updated adata.obsm with layer {idx}: `X_{layer_name}factors`"
+            )
+
+            factor_names = self.factor_names[idx]
+            names = np.array(
+                [
+                    tuple(
+                        [ranked_genes[factor_name][i] for factor_name in factor_names]
+                    )
+                    for i in range(self.n_genes)
+                ],
+                dtype=[(factor_name, "O") for factor_name in factor_names],
+            ).view(np.recarray)
+
+            scores = np.array(
+                [
+                    tuple(
+                        [ranked_scores[factor_name][i] for factor_name in factor_names]
+                    )
+                    for i in range(self.n_genes)
+                ],
+                dtype=[(factor_name, "<f4") for factor_name in factor_names],
+            ).view(np.recarray)
+
+            pvals = np.array(
+                [
+                    tuple([1.0 for factor_name in factor_names])
+                    for i in range(self.n_genes)
+                ],
+                dtype=[(factor_name, "<f4") for factor_name in factor_names],
+            ).view(np.recarray)
+
+            pvals_adj = np.array(
+                [
+                    tuple([1.0 for factor_name in factor_names])
+                    for i in range(self.n_genes)
+                ],
+                dtype=[(factor_name, "<f4") for factor_name in factor_names],
+            ).view(np.recarray)
+
+            logfoldchanges = np.array(
+                [
+                    tuple([0.0 for factor_name in factor_names])
+                    for i in range(self.n_genes)
+                ],
+                dtype=[(factor_name, "<f4") for factor_name in factor_names],
+            ).view(np.recarray)
+
+            self.adata.uns[f"{layer_name}factor_signatures"] = {
+                "params": {
+                    "reference": "rest",
+                    "method": "scDEF",
+                    "groupby": f"{layer_name}factor",
+                },
+                "names": names,
+                "scores": scores,
+                "pvals": pvals,
+                "pvals_adj": pvals_adj,
+                "logfoldchanges": logfoldchanges,
+            }
+
+            self.logger.info(
+                f"Updated adata.uns with layer {idx} signatures: `{layer_name}factor_signatures`.\
+                Includes dummy values for pvals, pvals_adj, and logfoldchanges for compatibility with scanpy plotting functions."
             )
 
     def get_annotations(self, marker_reference, gene_rankings=None):
