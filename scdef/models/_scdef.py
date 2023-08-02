@@ -48,7 +48,7 @@ class scDEF(object):
         layer_diagonals=None,
         batch_cpal="Dark2",
         layer_cpal=None,
-        lightness_mult=0.1,
+        lightness_mult=0.15,
     ):
         self.layer_sizes = [int(x) for x in layer_sizes]
         self.n_layers = len(self.layer_sizes)
