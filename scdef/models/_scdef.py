@@ -117,8 +117,6 @@ class scDEF(object):
 
         if layer_cpal is None:
             layer_cpal = ["Set1"] * self.n_layers
-            if self.n_layers <= 3:
-                layer_cpal = [f"Set{i}" for i in range(1, self.n_layers + 1)]
         elif isinstance(layer_cpal, str):
             layer_cpal = [layer_cpal] * self.n_layers
         elif len(layer_cpal) != self.n_layers:
