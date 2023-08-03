@@ -1,8 +1,9 @@
+from ..utils import score_utils, hierarchy_utils
+
 import pandas as pd
 import numpy as np
 import logging
 from sklearn.metrics import adjusted_rand_score, silhouette_score
-from ..utils import score_utils, hierarchy_utils
 
 
 def evaluate_methods(

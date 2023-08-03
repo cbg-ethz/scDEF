@@ -1,12 +1,33 @@
-import numpy as np
-import anndata
-import scanpy as sc
-import logging
 from ..utils import hierarchy_utils
 from .constants import *
 
+import numpy as np
+from anndata import AnnData
+import scanpy as sc
+import logging
 
-def run_multiple_resolutions(method, ad, resolution_sweep, layer_prefix="h", **kwargs):
+from typing import Optional, Sequence, Mapping, Callable
+
+
+def run_multiple_resolutions(
+    method: Callable,
+    ad: AnnData,
+    resolution_sweep: Sequence[float],
+    layer_prefix: Optional[str] = "h",
+    **kwargs,
+) -> Mapping:
+    """Run a clustering and gene signature learning method at multiple resolutions.
+
+    Args:
+        method: the function that runs the method. Must take a resolution parameter as argument and
+            return a list containing at least an AnnData object, a matrix containing the latent space,
+            and a list of genes per cluster.
+        ad: the data to run the method on.
+        resolution_sweep: list of resolution parameters to use.
+
+    Returns:
+        outs: dictionary containing all the outputs from the method across all resolutions. Keys: ["latents", "signatures", "assignments", "scores", "sizes", "simplify_hierarchy"]
+    """
     # method is a function
     assignments_results = []
     signatures_dict = dict()

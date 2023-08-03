@@ -1,22 +1,49 @@
 from ._scdef import scDEF
 
+from anndata import AnnData
 import jax.numpy as jnp
 import numpy as np
 import logging
 
+from typing import Optional, Sequence, Mapping
+
 
 class iscDEF(scDEF):
+    """Informed scDEF model.
+
+    This model extends the basic scDEF by using gene sets to guide the factors.
+    iscDEF can either set the given sets as top layer factors and learn higher-resolution
+    structure, or use them as the lowest resolution and learn a hierarchy that relates them.
+
+    Args:
+        adata: AnnData object containing the gene expression data. scDEF learns a model from
+            counts, so they must be present in either adata.X or in adata.layers.
+        markers_dict: dictionary containing named gene lists.
+        add_other: whether to add factors for cells which don't express any of the sets in markers_dict.
+        markers_layer: scDEF layer at which the gene sets are defined. If > 0, this defines the number of layers.
+        n_factors_per_set: number of lower level factors per gene set.
+        n_layers: default number of scDEF layers.
+        gs_big_scale: prior confidence parameter on each gene from each set being expressed.
+        cn_big_scale: prior connectivity strength between gene sets and their lower level factors.
+        gene_set_strength: prior strength of gene sets.
+        **kwargs: keyword arguments for base scDEF.
+    """
+
     def __init__(
         self,
-        adata,
-        markers_dict,
-        add_other=True,  # whether to add factors for cells which don't express any of the sets in markers_matrix
-        markers_layer=0,  # by default, use lower layer and learn a hierarchy
-        n_factors_per_set=2,
-        n_layers=2,
-        gs_big_scale=1000.0,
-        cn_big_scale=1000.0,
-        gene_set_strength=1000.0,
+        adata: AnnData,
+        markers_dict: Mapping[str, Sequence[str]],
+        add_other: Optional[
+            bool
+        ] = True,  # whether to add factors for cells which don't express any of the sets in markers_matrix
+        markers_layer: Optional[
+            int
+        ] = 0,  # by default, use lower layer and learn a hierarchy
+        n_factors_per_set: Optional[int] = 2,
+        n_layers: Optional[int] = 2,
+        gs_big_scale: Optional[float] = 1000.0,
+        cn_big_scale: Optional[float] = 1000.0,
+        gene_set_strength: Optional[float] = 1000.0,
         **kwargs,
     ):
         self.markers_dict = markers_dict

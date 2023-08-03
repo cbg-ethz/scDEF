@@ -1,3 +1,6 @@
+from ..utils import score_utils, hierarchy_utils, color_utils
+from ..utils.jax_utils import *
+
 from jax import jit, grad, vmap
 from jax.example_libraries import optimizers
 from jax import random, value_and_grad
@@ -25,30 +28,56 @@ import scanpy as sc
 from scipy.cluster.hierarchy import ward, leaves_list
 from scipy.spatial.distance import pdist
 
-from ..utils import score_utils, hierarchy_utils, color_utils
-from ..utils.jax_utils import *
+from typing import Optional, Union, Sequence, Mapping
 
 
 class scDEF(object):
+    """Single-cell Deep Exponential Families model.
+
+    This model learns multi-level gene signatures describing the input scRNA-seq
+    data from an AnnData object.
+
+    Args:
+        adata: AnnData object containing the gene expression data. scDEF learns a model from
+            counts, so they must be present in either adata.X or in adata.layers.
+        counts_layer: layer from adata.layers to get the count data from.
+        layer_sizes: number of factors per scDEF layer.
+        batch_key: key in adata.obs containing batch annotations for batch correction. If None, or not found,
+            no batch correction is performed.
+        seed: random seed for JAX
+        logginglevel: verbosity level for logger
+        layer_shapes: prior parameters for the z shape to use in each scDEF layer
+        brd: BRD prior parameter
+        use_brd: whether to use the BRD prior for factor relevance estimation
+        cell_scale_shape: concentration level in the cell scale prior
+        gene_scale_shape: concentration level in the gene scale prior
+        factor_shapes: prior parameters for the W shape to use in each scDEF layer
+        factor_rates: prior parameters for the W rate to use in each scDEF layer
+        layer_diagonals: prior diagonal strengths for the W parameters in each scDEF layer
+        batch_cpal: default color palette for batch annotations
+        layer_cpal: default color palettes for scDEF layers
+        lightness_mult: multiplier to define lightness of color palette at each scDEF layer
+    """
+
     def __init__(
         self,
-        adata,
-        counts_layer=None,
-        layer_sizes=[100, 30, 10, 3],
-        batch_key="batch",
-        seed=42,
-        logginglevel=logging.INFO,
-        layer_shapes=None,
-        brd=1e3,
-        use_brd=True,
-        cell_scale_shape=1.0,
-        gene_scale_shape=1.0,
-        factor_shapes=None,
-        factor_rates=None,
-        layer_diagonals=None,
-        batch_cpal="Dark2",
-        layer_cpal=None,
-        lightness_mult=0.15,
+        adata: AnnData,
+        counts_layer: Optional[str] = None,
+        layer_sizes: Optional[list] = [100, 30, 10, 3],
+        batch_key: Optional[str] = "batch",
+        seed: Optional[int] = 42,
+        logginglevel: Optional[int] = logging.INFO,
+        layer_shapes: Optional[list] = None,
+        brd: Optional[float] = 1e3,
+        use_brd: Optional[bool] = True,
+        cell_scale_shape: Optional[float] = 1.0,
+        gene_scale_shape: Optional[float] = 1.0,
+        factor_shapes: Optional[list] = None,
+        factor_rates: Optional[list] = None,
+        layer_diagonals: Optional[list] = None,
+        batch_cpal: Optional[str] = "Dark2",
+        layer_cpal: Optional[list] = None,
+        lightness_mult: Optional[float] = 0.15,
     ):
         self.layer_sizes = [int(x) for x in layer_sizes]
         self.n_layers = len(self.layer_sizes)
@@ -617,12 +646,25 @@ class scDEF(object):
 
     def learn(
         self,
-        n_epoch=[1000, 1000],
-        lr=0.1,
-        annealing=1.0,
-        num_samples=5,
-        batch_size=None,
+        n_epoch: Optional[Union[int, list]] = [1000, 1000],
+        lr: Optional[Union[float, list]] = 0.1,
+        annealing: Optional[Union[float, list]] = 1.0,
+        num_samples: Optional[int] = 5,
+        batch_size: Optional[int] = None,
     ):
+        """Fit a variational approximation to the posterior over scDEF parameters.
+
+        Args:
+            n_epoch: number of epochs (full passes of the data).
+                Can be a list of ints for multi-step learning.
+            lr: learning rate.
+                Can be a list of floats for multi-step learning.
+            annealing: scale factor for the entropy term.
+                Can be a list of floats for multi-step learning.
+            num_samples: number of Monte Carlo samples to use in the ELBO approximation.
+            batch_size: number of data points to use per iteration. If None, uses all.
+                Useful for data sets that do not fit in GPU memory.
+        """
         n_steps = 1
 
         if isinstance(n_epoch, list):
@@ -724,12 +766,18 @@ class scDEF(object):
                 np.exp(_w_shape) / np.exp(_w_rate)
             )
 
-    def filter_factors(self, thres=None, iqr_mult=3.0, min_cells=0):
-        """
-        The model tends to remove unused factors by itself, but we can remove further
-        noisy factors based low BRD posterior means. By default, keeps only factors
-        for which the relevance is at least 3 times the difference between the third
-        quartile and the median relevances, and to which at least 10 cells attach.
+    def filter_factors(
+        self,
+        thres: Optional[float] = None,
+        iqr_mult: Optional[float] = 3.0,
+        min_cells: Optional[int] = 10,
+    ):
+        """Filter our irrelevant factors based on the BRD posterior.
+
+        Args:
+            thres: minimum factor BRD value
+            iqr_mult: multiplier of the difference between the third quartile and the median BRD values to set the threshold
+            min_cells: minimum number of cells that factor must have attached to it for it to be kept
         """
         ard = []
         if thres is not None:
@@ -1175,20 +1223,37 @@ class scDEF(object):
 
     def make_graph(
         self,
-        hierarchy=None,
-        factor_annotations=None,
-        top_factor=None,
-        show_signatures=True,
-        enrichments=None,
-        top_genes=None,
-        show_batch_counts=False,
-        filled=None,
-        wedged=None,
-        color_edges=True,
-        show_confidences=False,
-        mc_samples=100,
+        hierarchy: Optional[dict] = None,
+        factor_annotations: Optional[dict] = None,
+        top_factor: Optional[str] = None,
+        show_signatures: Optional[bool] = True,
+        enrichments: Optional[pd.DataFrame] = None,
+        top_genes: Optional[int] = None,
+        show_batch_counts: Optional[bool] = False,
+        filled: Optional[str] = None,
+        wedged: Optional[str] = None,
+        color_edges: Optional[bool] = True,
+        show_confidences: Optional[bool] = False,
+        mc_samples: Optional[int] = 100,
         **fontsize_kwargs,
     ):
+        """Make Graphviz-formatted scDEF graph.
+
+        Args:
+            hierarchy: a dictionary containing the polytree to draw instead of the whole graph
+            factor_annotations: factor annotations to include in the node labels
+            top_factor: only include factors below this factor
+            show_signatures: whether to show the ranked gene signatures in the node labels
+            enrichments: enrichment results from gseapy to include in the node labels
+            top_genes: number of genes from each signature to be shown in the node labels
+            show_batch_counts: whether to show the number of cells from each batch that attach to each factor
+            filled: key from self.adata.obs to use to fill the nodes with
+            wedged: key from self.adata.obs to use to wedge the nodes with
+            color_edges: whether to color the graph edges according to the upper factors
+            show_confidences: whether to show the confidence score for each signature
+            mc_samples: number of Monte Carlo samples to take from the posterior to compute signature confidences
+            **fontsize_kwargs: keyword arguments to adjust the fontsizes according to the gene scores
+        """
         if top_genes is None:
             top_genes = [10] * self.n_layers
         elif isinstance(top_genes, float):
@@ -1633,13 +1698,21 @@ class scDEF(object):
 
     def plot_multilevel_paga(
         self,
-        neighbors_rep="X_factors",
-        figsize=(16, 4),
-        reuse_pos=True,
-        show=True,
+        neighbors_rep: Optional[str] = "X_factors",
+        figsize: Optional[tuple] = (16, 4),
+        reuse_pos: Optional[bool] = True,
+        show: Optional[bool] = True,
         **paga_kwargs,
     ):
-        "Plot PAGA graphs at all scDEF levels"
+        """Plot a PAGA graph from each scDEF layer.
+
+        Args:
+            neighbors_rep: the self.obsm key to use to compute the PAGA graphs
+            figsize: figure size
+            reuse_pos: whether to initialize each PAGA graph with the graph from the layer above
+            show: whether to show the plot
+            **paga_kwargs: keyword arguments to adjust the PAGA layouts
+        """
 
         fig, axes = plt.subplots(1, self.n_layers, figsize=figsize)
         sc.pp.neighbors(self.adata, use_rep=neighbors_rep)
@@ -2003,8 +2076,22 @@ class scDEF(object):
             plt.show()
 
     def plot_signatures_scores(
-        self, obs_keys, markers, top_genes=10, hierarchy=None, **kwargs
+        self,
+        obs_keys: Sequence[str],
+        markers: Mapping[str, Sequence[str]],
+        top_genes: Optional[int] = 10,
+        hierarchy: Optional[dict] = None,
+        **kwargs,
     ):
+        """Plot the association between a set of cell annotations and a set of gene signatures.
+
+        Args:
+            obs_keys: the keys in self.adata.obs to use
+            markers: a dictionary with keys corresponding to self.adata.obs[obs_keys] and values to gene lists
+            top_genes: number of genes to consider in the score computations
+            hierarchy: the polytree to restrict the associations to
+            **kwargs: plotting keyword arguments
+        """
         obs_mats, obs_clusters, obs_vals_dict = self._prepare_obs_factor_scores(
             obs_keys,
             self._get_signature_scores,
@@ -2014,7 +2101,16 @@ class scDEF(object):
         )
         self.plot_layers_obs(obs_keys, obs_mats, obs_clusters, obs_vals_dict, **kwargs)
 
-    def plot_obs_scores(self, obs_keys, hierarchy=None, **kwargs):
+    def plot_obs_scores(
+        self, obs_keys: Sequence[str], hierarchy: Optional[dict] = None, **kwargs
+    ):
+        """Plot the association between a set of cell annotations and the learned factor assignments.
+
+        Args:
+            obs_keys: the keys in self.adata.obs to use
+            hierarchy: the polytree to restrict the associations to
+            **kwargs: plotting keyword arguments
+        """
         obs_mats, obs_clusters, obs_vals_dict = self._prepare_obs_factor_scores(
             obs_keys,
             self._get_assignment_scores,
