@@ -43,9 +43,7 @@ def evaluate_methods(
 
         if "Hierarchical signature consistency" in metrics_list:
             if method == "scDEF":
-                method_simplified_hierarchy = method_outs.simplify_hierarchy(
-                    method_outs.get_hierarchy()
-                )
+                method_simplified_hierarchy = method_outs.get_hierarchy(simplified=True)
                 scdef_signatures, scdef_scores = method_outs.get_signatures_dict(
                     scores=True
                 )
@@ -157,8 +155,7 @@ def evaluate_methods(
 
 
 def evaluate_scdef_hierarchy(scd, obs_keys, true_hierarchy):
-    hierarchy = scd.get_hierarchy()
-    simplified = scd.simplify_hierarchy(hierarchy)
+    simplified = scd.get_hierarchy(simplified=True)
     assignments, matches = scd.assign_obs_to_factors(
         obs_keys, hierarchy_utils.get_nodes_from_hierarchy(simplified)
     )

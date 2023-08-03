@@ -118,8 +118,7 @@ def test_scdef():
 
     scdef.benchmark.evaluate_scdef_signatures(scd, "celltypes", markers)
 
-    hierarchy = scd.get_hierarchy()
-    simplified = scd.simplify_hierarchy(hierarchy)
+    simplified = scd.get_hierarchy(simplified=True)
     scd.make_graph(hierarchy=simplified)
 
     assignments, matches = scd.assign_obs_to_factors(

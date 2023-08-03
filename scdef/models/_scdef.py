@@ -1797,7 +1797,17 @@ class scDEF(object):
 
         return mat[upper_factor_idx][lower_factor_idx]
 
-    def get_hierarchy(self):
+    def get_hierarchy(
+        self, simplified: Optional[bool] = True
+    ) -> Mapping[str, Sequence[str]]:
+        """Get a dictionary containing the polytree contained in the scDEF graph.
+
+        Args:
+            simplified: whether to collapse single-child nodes
+
+        Returns:
+            hierarchy: the dictionary containing the hierarchy
+        """
         hierarchy = dict()
         for layer_idx in range(0, self.n_layers - 1):
             factors = self.factor_lists[layer_idx]
@@ -1823,13 +1833,14 @@ class scDEF(object):
                         np.where(assignments == upper_layer_factor)[0]
                     ].tolist()
                     hierarchy[upper_layer_factor_name] = assigned_lower
-        return hierarchy
 
-    def simplify_hierarchy(self, hierarchy):
-        layer_sizes = [len(self.factor_names[idx]) for idx in range(self.n_layers)]
-        return hierarchy_utils.simplify_hierarchy(
-            hierarchy, self.layer_names, layer_sizes
-        )
+        if simplified:
+            layer_sizes = [len(self.factor_names[idx]) for idx in range(self.n_layers)]
+            hierarchy = hierarchy_utils.simplify_hierarchy(
+                hierarchy, self.layer_names, layer_sizes
+            )
+
+        return hierarchy
 
     def compute_factor_obs_association_score(
         self, layer_idx, factor_name, obs_key, obs_val
