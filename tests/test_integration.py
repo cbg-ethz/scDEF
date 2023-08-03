@@ -79,6 +79,7 @@ def test_scdef():
     raw_adata = raw_adata.to_adata()
     raw_adata.X = raw_adata.X.toarray()
     adata.layers["counts"] = adata.X.toarray()  # Keep the counts
+    adata.X = adata.X.toarray()
 
     sc.pp.normalize_total(adata, target_sum=1e4)
     sc.pp.log1p(adata)
