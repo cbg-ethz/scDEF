@@ -1,5 +1,6 @@
-from collections import ChainMap
 from .score_utils import *
+
+from collections import ChainMap
 
 
 def get_hierarchy_from_clusters(clusters_levels, level_prefix="h"):

@@ -1,11 +1,8 @@
-import pytest
-import os
+import scdef
 
 import scanpy as sc
 import numpy as np
 import pandas as pd
-
-import scdef
 
 
 def test_scdef():
