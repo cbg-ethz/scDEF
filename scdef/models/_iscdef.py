@@ -14,6 +14,7 @@ class iscDEF(scDEF):
     This model extends the basic scDEF by using gene sets to guide the factors.
     iscDEF can either set the given sets as top layer factors and learn higher-resolution
     structure, or use them as the lowest resolution and learn a hierarchy that relates them.
+    All the methods from scDEF are available in iscDEF.
 
     Args:
         adata: AnnData object containing the gene expression data. scDEF learns a model from

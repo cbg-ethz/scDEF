@@ -13,7 +13,18 @@ theme:
     - content.code.copy
   language: en
   palette:
-    primary: darkpurple
+    - scheme: default
+      toggle:
+        icon: material/toggle-switch-off-outline
+        name: Switch to dark mode
+      primary: indigo
+    - scheme: slate
+      toggle:
+        icon: material/toggle-switch
+        name: Switch to light mode
+      primary: indigo
+  favicon: assets/images/icon.svg
+  logo: assets/images/icon.svg
 
 
 plugins:
@@ -29,9 +40,7 @@ plugins:
             show_root_heading: true
 
 nav:
-  - Getting started:
-    - Introduction: index.md
-    - Installation: installation.md
+  - Getting started: index.md
   - Examples:
     - Basic usage: examples/basicusage.md
     - Getting started with 3k PBMCs: examples/scdef-pbmcs3k.ipynb

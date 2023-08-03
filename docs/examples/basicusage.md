@@ -1,4 +1,4 @@
-scDEF takes as input an [AnnData](https://anndata.readthedocs.io/en/latest/) object containing UMI counts. We strongly recommend filtering the data to keep only highly variable genes. After [installing scDEF](https://cbg-ethz.github.io/scDEF/installation), the basic usage is to import it:
+scDEF takes as input an [AnnData](https://anndata.readthedocs.io/en/latest/) object containing UMI counts. We strongly recommend filtering the data to keep only highly variable genes. With scDEF [installed](https://cbg-ethz.github.io/scDEF/installation), start by importing the module:
 
 ```
 import scdef
