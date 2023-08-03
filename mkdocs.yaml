@@ -35,9 +35,6 @@ nav:
   - Examples:
     - Basic usage: examples/basicusage.md
     - Getting started with 3k PBMCs: examples/scdef-pbmcs3k.ipynb
-    - Integration of two similar batches of PBMCs: examples/scdef-pbmcs-2batches.ipynb
-    - Interferon-stimulated PBMCs: examples/scdef-ifn.ipynb
-    - Joint cell type assignment and clustering with iscDEF: examples/scdef-ifn.ipynb
   - API Reference: api.md
 
 repo_name: scDEF
