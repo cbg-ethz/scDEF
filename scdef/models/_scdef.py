@@ -1122,7 +1122,10 @@ class scDEF(object):
                 f"{self.layer_names[layer_idx]}factor"
             ].value_counts()
             for factor_idx, factor_name in enumerate(self.factor_names[layer_idx]):
-                sizes_dict[factor_name] = layer_sizes[factor_name]
+                if factor_name in layer_sizes.keys():
+                    sizes_dict[factor_name] = layer_sizes[factor_name]
+                else:
+                    sizes_dict[factor_name] = 0
         return sizes_dict
 
     def get_signatures_dict(self, top_genes=None, scores=False, sorted_scores=False):
