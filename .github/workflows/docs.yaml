@@ -1,25 +1,22 @@
-name: docs
+name: deploy
 
 on:
   push:
     branches: [ main ]
-
-permissions:
-  contents: write
+  pull_request:
 
 jobs:
-  deploy:
+  test:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v2
         with:
-          python-version: "3.9"
-          cache: "pip"
+          python-version: '3.9'
 
       - name: Install Poetry
         uses: snok/install-poetry@v1
