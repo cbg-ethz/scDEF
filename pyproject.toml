@@ -35,6 +35,10 @@ scikit-learn = '*'
 bump2version = "^1.0.1"
 black = "^23.3.0"
 pytest = "^6.2.4"
+mkdocs = "^1.4.3"
+mkdocstrings = {extras = ["python"], version = "^0.22.0"}
+mkdocs-material = "^9.1.18"
+mkdocs-jupyter = "^0.24.2 "
 
 [tool.poetry.scripts]
 scdef = "scdef:main"

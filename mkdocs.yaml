@@ -1,0 +1,47 @@
+site_name: scDEF
+
+theme:
+  name: "material"
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - toc.integrate
+    - search.suggest
+    - search.highlight
+    - content.tabs.link
+    - content.code.annotation
+    - content.code.copy
+  language: en
+  palette:
+    primary: darkpurple
+
+
+plugins:
+  - search
+  - mkdocs-jupyter:
+      execute: false
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          options:
+            show_source: false
+            show_root_heading: true
+
+nav:
+  - Getting started:
+    - Introduction: index.md
+    - Installation: installation.md
+  - Examples:
+    - Basic usage: examples/basicusage.md
+    - Getting started with 3k PBMCs: examples/scdef-pbmcs3k.ipynb
+    - Integration of two similar batches of PBMCs: examples/scdef-pbmcs-2batches.ipynb
+    - Interferon-stimulated PBMCs: examples/scdef-ifn.ipynb
+    - Joint cell type assignment and clustering with iscDEF: examples/scdef-ifn.ipynb
+  - API Reference: api.md
+
+repo_name: scDEF
+repo_url: https://github.com/cbg-ethz/scDEF
+
+watch:
+  - scdef
