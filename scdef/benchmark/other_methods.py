@@ -26,7 +26,7 @@ def run_multiple_resolutions(
         resolution_sweep: list of resolution parameters to use.
 
     Returns:
-        outs: dictionary containing all the outputs from the method across all resolutions. Keys: ["latents", "signatures", "assignments", "scores", "sizes", "simplify_hierarchy"]
+        outs: dictionary containing all the outputs from the method across all resolutions. Keys: ["latents", "signatures", "assignments", "scores", "sizes", "simplified_hierarchy"]
     """
     # method is a function
     assignments_results = []
