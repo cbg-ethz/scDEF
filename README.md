@@ -1,5 +1,5 @@
 <div align="left">
-  <img src="https://github.com/cbg-ethz/scDEF/raw/main/figures/scdef.png", width="300px">
+  <img src="https://github.com/cbg-ethz/scDEF/raw/main/docs/assets/images/scdef.png", width="300px">
 </div>
 <p></p>
 
