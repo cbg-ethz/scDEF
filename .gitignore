@@ -4,6 +4,5 @@ default.profraw
 results/
 figures/
 .snakemake/
-*.png
 *.txt
 *.pdf
