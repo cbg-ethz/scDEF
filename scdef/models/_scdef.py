@@ -7,6 +7,7 @@ from jax import random, value_and_grad
 from jax.scipy.stats import norm, gamma, poisson
 import jax.numpy as jnp
 import jax.nn as jnn
+import jax
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -432,6 +433,7 @@ class scDEF(object):
         indices,
         var_params,
         annealing_parameter,
+        stop_gradients,
         min_shape=1e-5,
         min_rate=1e-3,
         max_rate=1e3,
@@ -524,6 +526,26 @@ class scDEF(object):
 
         z_mean = jnp.einsum("nk,kp->np", _z_sample, _w_sample)
 
+        _z_shape = jax.lax.cond(
+            stop_gradients[-1],
+            lambda: jax.lax.stop_gradient(_z_shape),
+            lambda: _z_shape,
+        )
+        _z_rate = jax.lax.cond(
+            stop_gradients[-1], lambda: jax.lax.stop_gradient(_z_rate), lambda: _z_rate
+        )
+        _w_shape = jax.lax.cond(
+            stop_gradients[-1],
+            lambda: jax.lax.stop_gradient(_w_shape),
+            lambda: _w_shape,
+        )
+        _w_rate = jax.lax.cond(
+            stop_gradients[-1], lambda: jax.lax.stop_gradient(_w_rate), lambda: _w_rate
+        )
+        z_mean = jax.lax.cond(
+            stop_gradients[-1], lambda: z_mean * 0.0 + 1, lambda: z_mean
+        )
+
         for idx in list(np.arange(0, self.n_layers - 1)[::-1]):
             start = np.sum(self.layer_sizes[:idx]).astype(int)
             end = start + self.layer_sizes[idx]
@@ -564,6 +586,30 @@ class scDEF(object):
 
             z_mean = jnp.einsum("nk,kp->np", _z_sample, _w_sample)
 
+            _z_shape = jax.lax.cond(
+                stop_gradients[idx],
+                lambda: jax.lax.stop_gradient(_z_shape),
+                lambda: _z_shape,
+            )
+            _z_rate = jax.lax.cond(
+                stop_gradients[idx],
+                lambda: jax.lax.stop_gradient(_z_rate),
+                lambda: _z_rate,
+            )
+            _w_shape = jax.lax.cond(
+                stop_gradients[idx],
+                lambda: jax.lax.stop_gradient(_w_shape),
+                lambda: _w_shape,
+            )
+            _w_rate = jax.lax.cond(
+                stop_gradients[idx],
+                lambda: jax.lax.stop_gradient(_w_rate),
+                lambda: _w_rate,
+            )
+            z_mean = jax.lax.cond(
+                stop_gradients[idx], lambda: z_mean * 0.0 + 1, lambda: z_mean
+            )
+
         # Compute log likelihood
         mean_bottom = jnp.einsum(
             "nk,kg->ng", _z_sample / cell_budget_sample, _w_sample
@@ -580,12 +626,23 @@ class scDEF(object):
             + (indices.shape[0] / self.X.shape[0]) * (global_pl + global_en)
         )
 
-    def batch_elbo(self, rng, X, indices, var_params, num_samples, annealing_parameter):
+    def batch_elbo(
+        self,
+        rng,
+        X,
+        indices,
+        var_params,
+        num_samples,
+        annealing_parameter,
+        stop_gradients,
+    ):
         # Average over a batch of random samples.
         rngs = random.split(rng, num_samples)
-        vectorized_elbo = vmap(self.elbo, in_axes=(0, None, None, None, None))
+        vectorized_elbo = vmap(self.elbo, in_axes=(0, None, None, None, None, None))
         return jnp.mean(
-            vectorized_elbo(rngs, X, indices, var_params, annealing_parameter)
+            vectorized_elbo(
+                rngs, X, indices, var_params, annealing_parameter, stop_gradients
+            )
         )
 
     def _optimize(
@@ -594,12 +651,15 @@ class scDEF(object):
         opt_state,
         n_epochs=500,
         batch_size=1,
-        step_size=0.1,
         annealing_parameter=1.0,
+        stop_gradients=None,
         seed=None,
     ):
         if seed is None:
             seed = self.seed
+
+        if stop_gradients is None:
+            stop_gradients = np.zeros((self.n_layers))
 
         num_complete_batches, leftover = divmod(self.n_cells, batch_size)
         num_batches = num_complete_batches + bool(leftover)
@@ -620,6 +680,7 @@ class scDEF(object):
         losses = []
 
         annealing_parameter = jnp.array(annealing_parameter)
+        stop_gradients = jnp.array(stop_gradients)
         rng = random.PRNGKey(seed)
         t = 0
         pbar = tqdm(range(n_epochs))
@@ -630,7 +691,13 @@ class scDEF(object):
                 rng, rng_input = random.split(rng)
                 X, indices = next(batches)
                 loss, opt_state = update_func(
-                    X, indices, t, rng_input, opt_state, annealing_parameter
+                    X,
+                    indices,
+                    t,
+                    rng_input,
+                    opt_state,
+                    annealing_parameter,
+                    stop_gradients,
                 )
                 epoch_losses.append(loss)
                 t += 1
@@ -647,6 +714,7 @@ class scDEF(object):
         annealing: Optional[Union[float, list]] = 1.0,
         num_samples: Optional[int] = 5,
         batch_size: Optional[int] = None,
+        layerwise: Optional[bool] = False,
     ):
         """Fit a variational approximation to the posterior over scDEF parameters.
 
@@ -660,25 +728,42 @@ class scDEF(object):
             num_samples: number of Monte Carlo samples to use in the ELBO approximation.
             batch_size: number of data points to use per iteration. If None, uses all.
                 Useful for data sets that do not fit in GPU memory.
+            layerwise: whether to optimize the model parameters in a step-wise manner:
+                first learn only Layer 0 and 1, and then 2, and then 3, and so on. The size of
+                the n_epoch or lr schedules will be ignored, only the first value will be used
+                and each step will use that n_epoch value.
+
         """
         n_steps = 1
+        if layerwise:
+            n_steps = self.n_layers - 1
 
         if isinstance(n_epoch, list):
-            n_steps = len(n_epoch)
-            n_epoch_schedule = n_epoch
+            if layerwise:
+                n_epoch_schedule = [n_epoch[0]] * n_steps
+            else:
+                n_steps = len(n_epoch)
+                n_epoch_schedule = n_epoch
         else:
             n_epoch_schedule = [n_epoch]
 
         if isinstance(lr, list):
+            if layerwise:
+                lr_schedule = [lr[0]] * n_steps
             lr_schedule = lr
             if len(lr_schedule) != n_steps:
                 raise ValueError(
                     "lr_schedule list must be of same length as n_epoch_schedule"
                 )
         else:
-            lr_schedule = [lr * 0.5**step for step in range(n_steps)]
+            if layerwise:
+                lr_schedule = [lr] * n_steps
+            else:
+                lr_schedule = [lr * 0.5**step for step in range(n_steps)]
 
         if isinstance(annealing, list):
+            if layerwise:
+                annealing_schedule = [annealing[0]] * n_steps
             annealing_schedule = annealing
             if len(annealing_schedule) != n_steps:
                 raise ValueError(
@@ -691,16 +776,25 @@ class scDEF(object):
             batch_size = self.n_cells
 
         # Set up jitted functions
+        stop_gradients = np.ones((self.n_layers))
+        layers_to_optimize = np.arange(self.n_layers)
         init_params = self.var_params
 
-        def objective(X, indices, var_params, key, annealing_parameter):
+        def objective(X, indices, var_params, key, annealing_parameter, stop_gradients):
             return -self.batch_elbo(
-                key, X, indices, var_params, num_samples, annealing_parameter
+                key,
+                X,
+                indices,
+                var_params,
+                num_samples,
+                annealing_parameter,
+                stop_gradients,
             )  # minimize -ELBO
 
         loss_grad = jit(value_and_grad(objective, argnums=2))
 
-        for i in range(len(lr_schedule)):
+        for i in range(len(n_epoch_schedule)):
+            n_epochs = n_epoch_schedule[i]
             step_size = lr_schedule[i]
             anneal_param = annealing_schedule[i]
             self.logger.info(
@@ -708,10 +802,17 @@ class scDEF(object):
             )
             opt_init, opt_update, get_params = optimizers.adam(step_size=step_size)
 
-            def update(X, indices, i, key, opt_state, annealing_parameter):
+            stop_gradients[layers_to_optimize] = 0.0
+            if layerwise:
+                layers_to_optimize = np.arange(2 + i)
+                self.logger.info(f"Optimizing layers {layers_to_optimize}")
+
+            def update(
+                X, indices, i, key, opt_state, annealing_parameter, stop_gradients
+            ):
                 params = get_params(opt_state)
                 value, gradient = loss_grad(
-                    X, indices, params, key, annealing_parameter
+                    X, indices, params, key, annealing_parameter, stop_gradients
                 )
                 return value, opt_update(i, gradient, opt_state)
 
@@ -720,10 +821,10 @@ class scDEF(object):
             losses, opt_state = self._optimize(
                 update,
                 opt_state,
-                n_epochs=n_epoch_schedule[i],
-                step_size=lr_schedule[i],
+                n_epochs=n_epochs,
                 batch_size=batch_size,
                 annealing_parameter=anneal_param,
+                stop_gradients=stop_gradients,
             )
             params = get_params(opt_state)
             self.var_params = params
@@ -767,13 +868,15 @@ class scDEF(object):
         thres: Optional[float] = None,
         iqr_mult: Optional[float] = 3.0,
         min_cells: Optional[int] = 10,
+        filter_up: Optional[bool] = True,
     ):
         """Filter our irrelevant factors based on the BRD posterior.
 
         Args:
             thres: minimum factor BRD value
             iqr_mult: multiplier of the difference between the third quartile and the median BRD values to set the threshold
-            min_cells: minimum number of cells that factor must have attached to it for it to be kept
+            min_cells: minimum number of cells that factor must have attached to it for it to be kept.
+            filter_up: whether to remove factors in upper layers
         """
         ard = []
         if thres is not None:
@@ -810,11 +913,15 @@ class scDEF(object):
                     list(set(np.where(rels >= cutoff)[0]).intersection(keep))
                 )
             else:
-                mat = self.pmeans[f"{layer_name}W"]
-                assignments = []
-                for factor in self.factor_lists[i - 1]:
-                    assignments.append(np.argmax(mat[:, factor]))
-                keep = np.unique(assignments)
+                if filter_up:
+                    mat = self.pmeans[f"{layer_name}W"]
+                    assignments = []
+                    for factor in self.factor_lists[i - 1]:
+                        assignments.append(np.argmax(mat[:, factor]))
+
+                    keep = np.unique(assignments)
+                else:
+                    keep = np.arange(self.layer_sizes[i])
 
             if len(keep) == 0:
                 self.logger.info(
