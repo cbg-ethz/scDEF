@@ -66,7 +66,7 @@ class scDEF(object):
         counts_layer: Optional[str] = None,
         layer_sizes: Optional[list] = [100, 60, 30, 10],
         batch_key: Optional[str] = "batch",
-        seed: Optional[int] = 42,
+        seed: Optional[int] = 1,
         logginglevel: Optional[int] = logging.INFO,
         layer_shapes: Optional[list] = None,
         brd: Optional[float] = 1e3,
@@ -88,6 +88,7 @@ class scDEF(object):
 
         if layer_shapes is None:
             layer_shapes = [1.0] * self.n_layers
+            layer_shapes[-1] = 0.3
         elif isinstance(layer_shapes, float) or isinstance(layer_shapes, int):
             layer_shapes = [float(layer_shapes)] * self.n_layers
         elif len(layer_shapes) != self.n_layers:
