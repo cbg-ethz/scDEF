@@ -63,7 +63,7 @@ class scDEF(object):
         self,
         adata: AnnData,
         counts_layer: Optional[str] = None,
-        layer_sizes: Optional[list] = [100, 30, 10, 3],
+        layer_sizes: Optional[list] = [100, 60, 30, 10],
         batch_key: Optional[str] = "batch",
         seed: Optional[int] = 42,
         logginglevel: Optional[int] = logging.INFO,
@@ -93,16 +93,14 @@ class scDEF(object):
             raise ValueError("layer_shapes list must be of size scDEF.n_layers")
 
         if factor_shapes is None:
-            factor_shapes = [1.0] + [0.1] * (self.n_layers - 2)
-            factor_shapes.append(1.0)
+            factor_shapes = [1.0] + [0.1] * (self.n_layers - 1)
         elif isinstance(factor_shapes, float) or isinstance(factor_shapes, int):
             factor_shapes = [float(factor_shapes)] * self.n_layers
         elif len(factor_shapes) != self.n_layers:
             raise ValueError("factor_shapes list must be of size scDEF.n_layers")
 
         if factor_rates is None:
-            factor_rates = [10.0] + [0.3] * (self.n_layers - 2)
-            factor_rates.append(1.0)
+            factor_rates = [3.0] + [1.0] * (self.n_layers - 1)
         elif isinstance(factor_rates, float) or isinstance(factor_rates, int):
             factor_rates = [float(factor_rates)] * self.n_layers
         elif len(factor_rates) != self.n_layers:
