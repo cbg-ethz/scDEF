@@ -867,7 +867,7 @@ class scDEF(object):
     def filter_factors(
         self,
         thres: Optional[float] = None,
-        iqr_mult: Optional[float] = 3.0,
+        iqr_mult: Optional[float] = 2.0,
         min_cells: Optional[int] = 10,
         filter_up: Optional[bool] = True,
     ):
