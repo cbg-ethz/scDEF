@@ -102,7 +102,7 @@ class scDEF(object):
             raise ValueError("factor_shapes list must be of size scDEF.n_layers")
 
         if factor_rates is None:
-            factor_rates = [3.0] + [1.0] * (self.n_layers - 1)
+            factor_rates = [10.0] + [1.0] * (self.n_layers - 1)
         elif isinstance(factor_rates, float) or isinstance(factor_rates, int):
             factor_rates = [float(factor_rates)] * self.n_layers
         elif len(factor_rates) != self.n_layers:
@@ -867,7 +867,7 @@ class scDEF(object):
     def filter_factors(
         self,
         thres: Optional[float] = None,
-        iqr_mult: Optional[float] = 2.0,
+        iqr_mult: Optional[float] = 3.0,
         min_cells: Optional[int] = 10,
         filter_up: Optional[bool] = True,
     ):
