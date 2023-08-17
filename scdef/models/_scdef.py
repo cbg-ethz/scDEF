@@ -746,7 +746,7 @@ class scDEF(object):
                 n_steps = len(n_epoch)
                 n_epoch_schedule = n_epoch
         else:
-            n_epoch_schedule = [n_epoch]
+            n_epoch_schedule = [n_epoch] * n_steps
 
         if isinstance(lr, list):
             if layerwise:
@@ -803,10 +803,10 @@ class scDEF(object):
             )
             opt_init, opt_update, get_params = optimizers.adam(step_size=step_size)
 
-            stop_gradients[layers_to_optimize] = 0.0
             if layerwise:
                 layers_to_optimize = np.arange(2 + i)
                 self.logger.info(f"Optimizing layers {layers_to_optimize}")
+            stop_gradients[layers_to_optimize] = 0.0
 
             def update(
                 X, indices, i, key, opt_state, annealing_parameter, stop_gradients
