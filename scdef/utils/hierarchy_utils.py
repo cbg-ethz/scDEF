@@ -21,7 +21,7 @@ def get_hierarchy_from_clusters(clusters_levels, level_prefix="h"):
             for j, cluster_up in enumerate(unique_clusters_up):
                 cells_b = np.where(np.array(clusters_up) == cluster_up)[0]
 
-                scores.append(jaccard_similarity(cells_a, cells_b))
+                scores.append(jaccard_similarity([cells_a, cells_b]))
             upper_level = f"{level_prefixes[level+1]}{np.argmax(scores)}"
             if upper_level in hierarchy:
                 hierarchy[upper_level].append(name)

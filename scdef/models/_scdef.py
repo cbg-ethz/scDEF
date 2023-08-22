@@ -1197,7 +1197,12 @@ class scDEF(object):
         return top_terms
 
     def get_signature_confidence(
-        self, factor_idx, layer_idx, mc_samples=100, top_genes=10
+        self,
+        factor_idx,
+        layer_idx,
+        mc_samples=100,
+        top_genes=10,
+        pairwise=False,
     ):
         signatures = []
         for i in range(mc_samples):
@@ -1210,14 +1215,16 @@ class scDEF(object):
             )
             signatures.append(signature_sample)
 
-        jaccs = np.zeros((mc_samples, mc_samples))
-        for i in range(mc_samples):
-            for j in range(mc_samples):
-                jaccs[i, j] = score_utils.jaccard_similarity(
-                    signatures[i], signatures[j]
-                )
-
-        return np.mean(jaccs)
+        if pairwise:
+            jaccs = np.zeros((mc_samples, mc_samples))
+            for i in range(mc_samples):
+                for j in range(mc_samples):
+                    jaccs[i, j] = score_utils.jaccard_similarity(
+                        [signatures[i], signatures[j]]
+                    )
+            return np.mean(jaccs)
+        else:
+            return score_utils.jaccard_similarity(signatures)
 
     def get_sizes_dict(self):
         sizes_dict = {}

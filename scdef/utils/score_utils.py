@@ -83,10 +83,11 @@ def coherence_score(marker_gene_sets, heldout_counts_adata):
     return np.mean(chs)
 
 
-def jaccard_similarity(list1, list2):
-    s1 = set(list1)
-    s2 = set(list2)
-    return float(len(s1.intersection(s2)) / float(len(s1.union(s2))))
+def jaccard_similarity(lists):
+    list_of_sets = [set(list) for list in lists]
+    intersection = set.intersection(*list_of_sets)
+    union = set.union(*list_of_sets)
+    return float(len(intersection) / float(len(union)))
 
 
 def overlap_index(list1, list2):

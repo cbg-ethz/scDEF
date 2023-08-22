@@ -267,7 +267,7 @@ def evaluate_hierarchical_signatures_consistency(
                 var_names, gene_scores, children_sizes
             )
             overlap = score_utils.jaccard_similarity(
-                signatures[parent][:top_genes], consensus_signature[:top_genes]
+                [signatures[parent][:top_genes], consensus_signature[:top_genes]]
             )
             overlaps.append(overlap)
     return np.mean(overlaps)
