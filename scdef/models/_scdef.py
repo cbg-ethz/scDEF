@@ -69,6 +69,7 @@ class scDEF(object):
         seed: Optional[int] = 1,
         logginglevel: Optional[int] = logging.INFO,
         layer_shapes: Optional[list] = None,
+        layer_rates: Optional[list] = None,
         brd: Optional[float] = 1e3,
         use_brd: Optional[bool] = True,
         cell_scale_shape: Optional[float] = 1.0,
@@ -93,6 +94,13 @@ class scDEF(object):
             layer_shapes = [float(layer_shapes)] * self.n_layers
         elif len(layer_shapes) != self.n_layers:
             raise ValueError("layer_shapes list must be of size scDEF.n_layers")
+
+        if layer_rates is None:
+            layer_rates = layer_shapes
+        elif isinstance(layer_rates, float) or isinstance(layer_rates, int):
+            layer_rates = [float(layer_rates)] * self.n_layers
+        elif len(layer_rates) != self.n_layers:
+            raise ValueError("layer_rates list must be of size scDEF.n_layers")
 
         if factor_shapes is None:
             factor_shapes = [1.0] + [0.1] * (self.n_layers - 1)
@@ -123,6 +131,7 @@ class scDEF(object):
             raise ValueError("layer_cpal list must be of size scDEF.n_layers")
 
         self.layer_shapes = layer_shapes
+        self.layer_rates = layer_rates
         self.layer_diagonals = layer_diagonals
 
         self.factor_lists = [np.arange(size) for size in self.layer_sizes]
@@ -220,6 +229,11 @@ class scDEF(object):
             "\n\t"
             + "Layer shape parameters: "
             + ", ".join([str(shape) for shape in self.layer_shapes])
+        )
+        out += (
+            "\n\t"
+            + "Layer rate parameters: "
+            + ", ".join([str(rate) for rate in self.layer_rates])
         )
         out += (
             "\n\t"
@@ -521,7 +535,7 @@ class scDEF(object):
         _z_shape = z_shapes[:, start:end]
         _z_rate = z_rates[:, start:end]
         local_pl += gamma_logpdf(
-            _z_sample, self.layer_shapes[idx], self.layer_shapes[idx]
+            _z_sample, self.layer_shapes[idx], self.layer_rates[idx]
         )
         local_en += -gamma_logpdf(_z_sample, _z_shape, _z_rate)
 
@@ -581,7 +595,7 @@ class scDEF(object):
             _z_shape = z_shapes[:, start:end]
             _z_rate = z_rates[:, start:end]
             local_pl += gamma_logpdf(
-                _z_sample, self.layer_shapes[idx], self.layer_shapes[idx] / z_mean
+                _z_sample, self.layer_shapes[idx], self.layer_rates[idx] / z_mean
             )
             local_en += -gamma_logpdf(_z_sample, _z_shape, _z_rate)
 
