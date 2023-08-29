@@ -1,4 +1,4 @@
-from .score_utils import *
+from scdef.utils.score_utils import *
 
 from collections import ChainMap
 

@@ -1,4 +1,4 @@
-from ._scdef import scDEF
+from scdef.models._scdef import scDEF
 
 from anndata import AnnData
 import jax.numpy as jnp

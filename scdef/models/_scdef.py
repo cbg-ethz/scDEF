@@ -1,5 +1,5 @@
-from ..utils import score_utils, hierarchy_utils, color_utils
-from ..utils.jax_utils import *
+from scdef.utils import score_utils, hierarchy_utils, color_utils
+from scdef.utils.jax_utils import *
 
 from jax import jit, grad, vmap
 from jax.example_libraries import optimizers

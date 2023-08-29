@@ -1,4 +1,4 @@
-from ..utils import score_utils, hierarchy_utils
+from scdef.utils import score_utils, hierarchy_utils
 
 import pandas as pd
 import numpy as np

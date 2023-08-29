@@ -1,5 +1,5 @@
-from ..utils import hierarchy_utils
-from .constants import *
+from scdef.utils import hierarchy_utils
+from scdef.benchmark.constants import *
 
 import numpy as np
 from anndata import AnnData
