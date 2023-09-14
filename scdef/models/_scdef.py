@@ -90,22 +90,21 @@ class scDEF(object):
             raise ValueError("scDEF requires at least 2 layers")
 
         if layer_shapes is None:
-            layer_shapes = [1.0] * self.n_layers
-            layer_shapes[-1] = 0.3
+            layer_shapes = [0.3] + [1.0] * (self.n_layers - 1)
         elif isinstance(layer_shapes, float) or isinstance(layer_shapes, int):
             layer_shapes = [float(layer_shapes)] * self.n_layers
         elif len(layer_shapes) != self.n_layers:
             raise ValueError("layer_shapes list must be of size scDEF.n_layers")
 
         if layer_rates is None:
-            layer_rates = layer_shapes
+            layer_rates = [10.0] * self.n_layers
         elif isinstance(layer_rates, float) or isinstance(layer_rates, int):
             layer_rates = [float(layer_rates)] * self.n_layers
         elif len(layer_rates) != self.n_layers:
             raise ValueError("layer_rates list must be of size scDEF.n_layers")
 
         if factor_shapes is None:
-            factor_shapes = [1.0] + [0.1] * (self.n_layers - 1)
+            factor_shapes = [1.0] + [1.0] * (self.n_layers - 1)
         elif isinstance(factor_shapes, float) or isinstance(factor_shapes, int):
             factor_shapes = [float(factor_shapes)] * self.n_layers
         elif len(factor_shapes) != self.n_layers:
