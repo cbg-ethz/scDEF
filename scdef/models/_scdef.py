@@ -926,6 +926,36 @@ class scDEF(object):
                 np.exp(_w_shape) / np.exp(_w_rate)
             )
 
+    def set_posterior_variances(self):
+        cell_budget_params = self.var_params[0]
+        gene_budget_params = self.var_params[1]
+        fscale_params = self.var_params[2]
+        z_params = self.var_params[3]
+        w_params = self.var_params[4]
+
+        self.pvars = {
+            "cell_scale": np.array(
+                np.exp(cell_budget_params[0]) / np.exp(cell_budget_params[1]) ** 2
+            ),
+            "gene_scale": np.array(
+                np.exp(gene_budget_params[0]) / np.exp(gene_budget_params[1]) ** 2
+            ),
+            "brd": np.array(np.exp(fscale_params[0]) / np.exp(fscale_params[1]) ** 2),
+        }
+
+        for idx in range(self.n_layers):
+            start = sum(self.layer_sizes[:idx])
+            end = start + self.layer_sizes[idx]
+            self.pvars[f"{self.layer_names[idx]}z"] = np.array(
+                np.exp(z_params[0][:, start:end])
+                / np.exp(z_params[1][:, start:end]) ** 2
+            )
+            _w_shape = self.var_params[4 + idx][0]
+            _w_rate = self.var_params[4 + idx][1]
+            self.pvars[f"{self.layer_names[idx]}W"] = np.array(
+                np.exp(_w_shape) / np.exp(_w_rate) ** 2
+            )
+
     def filter_factors(
         self,
         thres: Optional[float] = None,
