@@ -64,15 +64,15 @@ class scDEF(object):
         self,
         adata: AnnData,
         counts_layer: Optional[str] = None,
-        layer_sizes: Optional[list] = [100, 60, 30, 10],
+        layer_sizes: Optional[list] = [128, 64, 32, 16, 1],
         batch_key: Optional[str] = "batch",
-        seed: Optional[int] = 1,
+        seed: Optional[int] = 42,
         logginglevel: Optional[int] = logging.INFO,
         layer_shapes: Optional[list] = None,
         layer_rates: Optional[list] = None,
         brd: Optional[float] = 1e3,
         use_brd: Optional[bool] = True,
-        cell_scale_shape: Optional[float] = 1.0,
+        cell_scale_shape: Optional[float] = 10.0,
         gene_scale_shape: Optional[float] = 1.0,
         factor_shapes: Optional[list] = None,
         factor_rates: Optional[list] = None,
@@ -104,14 +104,14 @@ class scDEF(object):
             raise ValueError("layer_rates list must be of size scDEF.n_layers")
 
         if factor_shapes is None:
-            factor_shapes = [1.0] + [1.0] * (self.n_layers - 1)
+            factor_shapes = [1.0] + [0.3] * (self.n_layers - 1)
         elif isinstance(factor_shapes, float) or isinstance(factor_shapes, int):
             factor_shapes = [float(factor_shapes)] * self.n_layers
         elif len(factor_shapes) != self.n_layers:
             raise ValueError("factor_shapes list must be of size scDEF.n_layers")
 
         if factor_rates is None:
-            factor_rates = [10.0] + [1.0] * (self.n_layers - 1)
+            factor_rates = [30.0] + [1.0] * (self.n_layers - 1)
         elif isinstance(factor_rates, float) or isinstance(factor_rates, int):
             factor_rates = [float(factor_rates)] * self.n_layers
         elif len(factor_rates) != self.n_layers:
@@ -360,18 +360,21 @@ class scDEF(object):
                     jnp.log(
                         random.uniform(
                             rngs[4],
-                            minval=1.0,
-                            maxval=1.0,
+                            minval=minval,
+                            maxval=maxval,
                             shape=[self.layer_sizes[0], 1],
                         )
+                        * self.brd
                     ),  # BRD
                     jnp.log(
                         random.uniform(
                             rngs[5],
-                            minval=1.0,
-                            maxval=1.0,
+                            minval=minval,
+                            maxval=maxval,
                             shape=[self.layer_sizes[0], 1],
                         )
+                        * self.brd
+                        * self.factor_rates[0]
                     ),
                 )
             )
@@ -425,7 +428,7 @@ class scDEF(object):
                     maxval=maxval,
                     shape=[in_layer, out_layer],
                 )
-                * jnp.clip(self.w_priors[layer_idx][0], 1e-2, 1e2)
+                * 1.0
             )
             rng_cnt += 1
             w_rate = jnp.log(
@@ -435,7 +438,7 @@ class scDEF(object):
                     maxval=maxval,
                     shape=[in_layer, out_layer],
                 )
-                * jnp.clip(self.w_priors[layer_idx][1], 1e-2, 1e2)
+                * 1.0
             )
             rng_cnt += 1
 
