@@ -66,7 +66,7 @@ class scDEF(object):
         counts_layer: Optional[str] = None,
         layer_sizes: Optional[list] = [128, 64, 32, 16, 1],
         batch_key: Optional[str] = "batch",
-        seed: Optional[int] = 42,
+        seed: Optional[int] = 1,
         logginglevel: Optional[int] = logging.INFO,
         layer_shapes: Optional[list] = None,
         layer_rates: Optional[list] = None,
@@ -90,7 +90,7 @@ class scDEF(object):
             raise ValueError("scDEF requires at least 2 layers")
 
         if layer_shapes is None:
-            layer_shapes = [0.3] + [1.0] * (self.n_layers - 1)
+            layer_shapes = [1.0] * self.n_layers
         elif isinstance(layer_shapes, float) or isinstance(layer_shapes, int):
             layer_shapes = [float(layer_shapes)] * self.n_layers
         elif len(layer_shapes) != self.n_layers:
@@ -104,7 +104,8 @@ class scDEF(object):
             raise ValueError("layer_rates list must be of size scDEF.n_layers")
 
         if factor_shapes is None:
-            factor_shapes = [1.0] + [0.3] * (self.n_layers - 1)
+            factor_shapes = [1.0] + [0.3] * (self.n_layers-1)
+            factor_shapes[-1] = 1.0
         elif isinstance(factor_shapes, float) or isinstance(factor_shapes, int):
             factor_shapes = [float(factor_shapes)] * self.n_layers
         elif len(factor_shapes) != self.n_layers:
@@ -310,7 +311,7 @@ class scDEF(object):
         self.batch_lib_ratio = jnp.array(self.batch_lib_ratio)
         self.gene_ratio = jnp.array(self.gene_ratio)
 
-    def init_var_params(self, minval=0.5, maxval=1.5):
+    def init_var_params(self, minval=1.0, maxval=1.0):
         rngs = random.split(random.PRNGKey(self.seed), 6 + 2 * 2 * self.n_layers)
 
         self.var_params = [
@@ -318,13 +319,13 @@ class scDEF(object):
                 (
                     jnp.log(
                         random.uniform(
-                            rngs[0], minval=0.5, maxval=1.5, shape=[self.n_cells, 1]
+                            rngs[0], minval=minval, maxval=maxval, shape=[self.n_cells, 1]
                         )
                         * 10.0
                     ),  # cell_scales
                     jnp.log(
                         random.uniform(
-                            rngs[1], minval=0.5, maxval=1.5, shape=[self.n_cells, 1]
+                            rngs[1], minval=minval, maxval=maxval, shape=[self.n_cells, 1]
                         )
                     )
                     * jnp.clip(10.0 * self.batch_lib_ratio, 1e-6, 1e2),
@@ -335,8 +336,8 @@ class scDEF(object):
                     jnp.log(
                         random.uniform(
                             rngs[2],
-                            minval=0.5,
-                            maxval=1.5,
+                            minval=minval,
+                            maxval=maxval,
                             shape=[self.n_batches, self.n_genes],
                         )
                         * 10.0
@@ -344,8 +345,8 @@ class scDEF(object):
                     jnp.log(
                         random.uniform(
                             rngs[3],
-                            minval=0.5,
-                            maxval=1.5,
+                            minval=minval,
+                            maxval=maxval,
                             shape=[self.n_batches, self.n_genes],
                         )
                         * jnp.clip(10.0 * self.gene_ratio, 1e-6, 1e2)
@@ -363,8 +364,7 @@ class scDEF(object):
                             minval=minval,
                             maxval=maxval,
                             shape=[self.layer_sizes[0], 1],
-                        )
-                        * self.brd
+                        ) * self.brd
                     ),  # BRD
                     jnp.log(
                         random.uniform(
@@ -372,9 +372,7 @@ class scDEF(object):
                             minval=minval,
                             maxval=maxval,
                             shape=[self.layer_sizes[0], 1],
-                        )
-                        * self.brd
-                        * self.factor_rates[0]
+                        ) * self.brd * self.factor_rates[0]
                     ),
                 )
             )
@@ -428,7 +426,7 @@ class scDEF(object):
                     maxval=maxval,
                     shape=[in_layer, out_layer],
                 )
-                * 1.0
+                * jnp.clip(self.w_priors[layer_idx][0], 1e-2, 1e2)
             )
             rng_cnt += 1
             w_rate = jnp.log(
@@ -438,7 +436,7 @@ class scDEF(object):
                     maxval=maxval,
                     shape=[in_layer, out_layer],
                 )
-                * 1.0
+                * jnp.clip(self.w_priors[layer_idx][1], 1e-2, 1e2)
             )
             rng_cnt += 1
 
