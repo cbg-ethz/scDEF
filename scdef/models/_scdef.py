@@ -104,8 +104,7 @@ class scDEF(object):
             raise ValueError("layer_rates list must be of size scDEF.n_layers")
 
         if factor_shapes is None:
-            factor_shapes = [1.0] + self.n_layers
-            factor_shapes[-1] = 1.0
+            factor_shapes = [1.0] * self.n_layers
         elif isinstance(factor_shapes, float) or isinstance(factor_shapes, int):
             factor_shapes = [float(factor_shapes)] * self.n_layers
         elif len(factor_shapes) != self.n_layers:
