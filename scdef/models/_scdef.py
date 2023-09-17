@@ -104,7 +104,7 @@ class scDEF(object):
             raise ValueError("layer_rates list must be of size scDEF.n_layers")
 
         if factor_shapes is None:
-            factor_shapes = [1.0] + [0.3] * (self.n_layers-1)
+            factor_shapes = [1.0] + [0.3] * (self.n_layers - 1)
             factor_shapes[-1] = 1.0
         elif isinstance(factor_shapes, float) or isinstance(factor_shapes, int):
             factor_shapes = [float(factor_shapes)] * self.n_layers
@@ -319,13 +319,19 @@ class scDEF(object):
                 (
                     jnp.log(
                         random.uniform(
-                            rngs[0], minval=minval, maxval=maxval, shape=[self.n_cells, 1]
+                            rngs[0],
+                            minval=minval,
+                            maxval=maxval,
+                            shape=[self.n_cells, 1],
                         )
                         * 10.0
                     ),  # cell_scales
                     jnp.log(
                         random.uniform(
-                            rngs[1], minval=minval, maxval=maxval, shape=[self.n_cells, 1]
+                            rngs[1],
+                            minval=minval,
+                            maxval=maxval,
+                            shape=[self.n_cells, 1],
                         )
                     )
                     * jnp.clip(10.0 * self.batch_lib_ratio, 1e-6, 1e2),
@@ -364,7 +370,8 @@ class scDEF(object):
                             minval=minval,
                             maxval=maxval,
                             shape=[self.layer_sizes[0], 1],
-                        ) * self.brd
+                        )
+                        * self.brd
                     ),  # BRD
                     jnp.log(
                         random.uniform(
@@ -372,7 +379,9 @@ class scDEF(object):
                             minval=minval,
                             maxval=maxval,
                             shape=[self.layer_sizes[0], 1],
-                        ) * self.brd * self.factor_rates[0]
+                        )
+                        * self.brd
+                        * self.factor_rates[0]
                     ),
                 )
             )
