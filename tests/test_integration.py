@@ -125,8 +125,9 @@ def test_scdef():
     )
     scd.make_graph(hierarchy=simplified, factor_annotations=matches)
 
-    k = list(simplified.keys())[0]
-    scd.make_graph(hierarchy=simplified, top_factor=k, factor_annotations=matches)
+    if len(simplified.keys()) > 0:
+        k = list(simplified.keys())[0]
+        scd.make_graph(hierarchy=simplified, top_factor=k, factor_annotations=matches)
 
     signatures, scores = scd.get_signatures_dict(scores=True, sorted_scores=False)
     sizes = scd.get_sizes_dict()
