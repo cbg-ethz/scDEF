@@ -90,21 +90,21 @@ class scDEF(object):
             raise ValueError("scDEF requires at least 2 layers")
 
         if layer_shapes is None:
-            layer_shapes = [1.0] * self.n_layers
+            layer_shapes = [0.3] + [1.0] * (self.n_layers - 1)
         elif isinstance(layer_shapes, float) or isinstance(layer_shapes, int):
             layer_shapes = [float(layer_shapes)] * self.n_layers
         elif len(layer_shapes) != self.n_layers:
             raise ValueError("layer_shapes list must be of size scDEF.n_layers")
 
         if layer_rates is None:
-            layer_rates = [10.0] * self.n_layers
+            layer_rates = [1.0] + [10.0] * (self.n_layers - 1)
         elif isinstance(layer_rates, float) or isinstance(layer_rates, int):
             layer_rates = [float(layer_rates)] * self.n_layers
         elif len(layer_rates) != self.n_layers:
             raise ValueError("layer_rates list must be of size scDEF.n_layers")
 
         if factor_shapes is None:
-            factor_shapes = [1.0] + [0.3] * (self.n_layers - 1)
+            factor_shapes = [1.0] + self.n_layers
             factor_shapes[-1] = 1.0
         elif isinstance(factor_shapes, float) or isinstance(factor_shapes, int):
             factor_shapes = [float(factor_shapes)] * self.n_layers
@@ -112,7 +112,7 @@ class scDEF(object):
             raise ValueError("factor_shapes list must be of size scDEF.n_layers")
 
         if factor_rates is None:
-            factor_rates = [30.0] + [1.0] * (self.n_layers - 1)
+            factor_rates = [10.0] + [1.0] * (self.n_layers - 1)
         elif isinstance(factor_rates, float) or isinstance(factor_rates, int):
             factor_rates = [float(factor_rates)] * self.n_layers
         elif len(factor_rates) != self.n_layers:
@@ -781,10 +781,10 @@ class scDEF(object):
 
     def learn(
         self,
-        n_epoch: Optional[Union[int, list]] = [1000, 1000],
+        n_epoch: Optional[Union[int, list]] = [1000],
         lr: Optional[Union[float, list]] = 0.1,
         annealing: Optional[Union[float, list]] = 1.0,
-        num_samples: Optional[int] = 5,
+        num_samples: Optional[int] = 10,
         batch_size: Optional[int] = None,
         layerwise: Optional[bool] = False,
     ):
