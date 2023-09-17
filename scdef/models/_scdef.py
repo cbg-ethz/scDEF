@@ -2113,7 +2113,7 @@ class scDEF(object):
                 layers.append(layer_idx)
         return scores, factors, layers
 
-    def assign_obs_to_factors(self, obs_keys, factor_names=None):
+    def assign_obs_to_factors(self, obs_keys, factor_names=[]):
         if not isinstance(obs_keys, list):
             obs_keys = [obs_keys]
 
@@ -2126,7 +2126,7 @@ class scDEF(object):
                 scores, factors, layers = self.get_factor_obs_association_scores(
                     obs_key, obs
                 )
-                if factor_names is not None:
+                if len(factor_names) > 0:
                     # Subset to factor_names
                     idx = np.array(
                         [
