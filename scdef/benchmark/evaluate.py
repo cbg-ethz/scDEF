@@ -206,7 +206,7 @@ def evaluate_hierarchy_from_cluster_levels(
 
 
 def evaluate_cluster_signatures(
-    adata, clusters_levels, signatures, obs_keys, markers, cluster_names=None
+    adata, clusters_levels, signatures, obs_keys, markers, cluster_names=[]
 ):
     layer_names = ["h" * level for level in range(len(clusters_levels))]
 
