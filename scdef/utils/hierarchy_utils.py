@@ -160,7 +160,7 @@ def get_cluster_obs_association_scores(adata, clusters, layer_names, obs_key, ob
 
 
 def assign_obs_to_clusters(
-    adata, clusters_levels, layer_names, obs_keys, cluster_names=None
+    adata, clusters_levels, layer_names, obs_keys, cluster_names=[]
 ):
     if not isinstance(obs_keys, list):
         obs_keys = [obs_keys]
@@ -174,7 +174,7 @@ def assign_obs_to_clusters(
             scores, factors, layers = get_cluster_obs_association_scores(
                 adata, clusters_levels, layer_names, obs_key, obs
             )
-            if cluster_names is not None:
+            if len(cluster_names) > 0:
                 # Subset to factor_names
                 idx = np.array(
                     [i for i, factor in enumerate(factors) if factor in cluster_names]
