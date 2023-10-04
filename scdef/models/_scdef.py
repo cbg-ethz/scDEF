@@ -64,15 +64,15 @@ class scDEF(object):
         self,
         adata: AnnData,
         counts_layer: Optional[str] = None,
-        layer_sizes: Optional[list] = [128, 64, 32, 16, 1],
+        layer_sizes: Optional[list] = [100, 60, 30, 10, 1],
         batch_key: Optional[str] = "batch",
-        seed: Optional[int] = 1,
+        seed: Optional[int] = 123,
         logginglevel: Optional[int] = logging.INFO,
         layer_shapes: Optional[list] = None,
         layer_rates: Optional[list] = None,
         brd: Optional[float] = 1e3,
         use_brd: Optional[bool] = True,
-        cell_scale_shape: Optional[float] = 10.0,
+        cell_scale_shape: Optional[float] = 1.0,
         gene_scale_shape: Optional[float] = 1.0,
         factor_shapes: Optional[list] = None,
         factor_rates: Optional[list] = None,
@@ -90,28 +90,28 @@ class scDEF(object):
             raise ValueError("scDEF requires at least 2 layers")
 
         if layer_shapes is None:
-            layer_shapes = [0.3] + [1.0] * (self.n_layers - 1)
+            layer_shapes = [0.3] * (self.n_layers - 1) + [1.0]
         elif isinstance(layer_shapes, float) or isinstance(layer_shapes, int):
             layer_shapes = [float(layer_shapes)] * self.n_layers
         elif len(layer_shapes) != self.n_layers:
             raise ValueError("layer_shapes list must be of size scDEF.n_layers")
 
         if layer_rates is None:
-            layer_rates = [1.0] + [10.0] * (self.n_layers - 1)
+            layer_rates = [10.0 * self.n_cells / self.n_genes] * self.n_layers
         elif isinstance(layer_rates, float) or isinstance(layer_rates, int):
             layer_rates = [float(layer_rates)] * self.n_layers
         elif len(layer_rates) != self.n_layers:
             raise ValueError("layer_rates list must be of size scDEF.n_layers")
 
         if factor_shapes is None:
-            factor_shapes = [1.0] * self.n_layers
+            factor_shapes = [1.0] + [0.3] * (self.n_layers - 2) + [1.0]
         elif isinstance(factor_shapes, float) or isinstance(factor_shapes, int):
             factor_shapes = [float(factor_shapes)] * self.n_layers
         elif len(factor_shapes) != self.n_layers:
             raise ValueError("factor_shapes list must be of size scDEF.n_layers")
 
         if factor_rates is None:
-            factor_rates = [10.0] + [1.0] * (self.n_layers - 1)
+            factor_rates = [30.0] + [0.3] * (self.n_layers - 2) + [1.0]
         elif isinstance(factor_rates, float) or isinstance(factor_rates, int):
             factor_rates = [float(factor_rates)] * self.n_layers
         elif len(factor_rates) != self.n_layers:
@@ -458,9 +458,9 @@ class scDEF(object):
         var_params,
         annealing_parameter,
         stop_gradients,
-        min_shape=1e-5,
-        min_rate=1e-3,
-        max_rate=1e3,
+        min_shape=1e-6,
+        min_rate=1e-6,
+        max_rate=1e6,
     ):
         # Single-sample Monte Carlo estimate of the variational lower bound.
         batch_indices_onehot = self.batch_indices_onehot[indices]
