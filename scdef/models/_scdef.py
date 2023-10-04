@@ -2354,3 +2354,74 @@ class scDEF(object):
             hierarchy=hierarchy,
         )
         self.plot_layers_obs(obs_keys, obs_mats, obs_clusters, obs_vals_dict, **kwargs)
+
+    def plot_umaps(
+        self,
+        color=[],
+        n_layers=None,
+        figsize=(16, 4),
+        fontsize=12,
+        legend_fontsize=10,
+        show=True,
+    ):
+        if n_layers is None:
+            n_layers = self.n_layers - 1
+
+        if "X_umap" in self.adata.obsm:
+            self.adata.obsm["X_umap_original"] = self.adata.obsm["X_umap"].copy()
+
+        if not isinstance(color, list):
+            color = [color]
+
+        n_rows = len(color)
+        if n_rows == 0:
+            n_rows = 1
+
+        fig, axes = plt.subplots(n_rows, n_layers, figsize=figsize)
+        for layer in range(0, n_layers):
+            # Compute UMAP
+            self.adata.obsm[f"X_{self.layer_names[layer]}factors_log"] = np.log(
+                self.adata.obsm[f"X_{self.layer_names[layer]}factors"]
+            )
+            sc.pp.neighbors(
+                self.adata, use_rep=f"X_{self.layer_names[layer]}factors_log"
+            )
+            sc.tl.umap(self.adata)
+
+            for row in range(len(color)):
+                if n_rows > 1:
+                    ax = axes[row, layer]
+                else:
+                    ax = axes[layer]
+                legend_loc = None
+                if layer == n_layers - 1:
+                    legend_loc = "right margin"
+                ax = sc.pl.umap(
+                    self.adata,
+                    color=[color[row]],
+                    frameon=False,
+                    show=False,
+                    ax=ax,
+                    legend_loc=legend_loc,
+                )
+                if row == 0:
+                    ax.set_title(f"Layer {layer}", fontsize=fontsize)
+                else:
+                    ax.set_title("")
+
+                if layer == n_layers - 1:
+                    ax.legend(
+                        loc="center left",
+                        bbox_to_anchor=(1, 0.5),
+                        frameon=False,
+                        title_fontsize=legend_fontsize,
+                        fontsize=legend_fontsize,
+                        title=color[row],
+                    )
+
+        # Put the original one back
+        if "X_umap_original" in self.adata.obsm:
+            self.adata.obsm["X_umap"] = self.adata.obsm["X_umap_original"].copy()
+
+        if show:
+            plt.show()
