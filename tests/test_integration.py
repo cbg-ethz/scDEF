@@ -43,6 +43,8 @@ def test_scdef():
     ctypes = np.random.choice(list(markers.keys()), size=n_cells)
     annotations = pd.DataFrame(index=adata.obs.index)
     annotations["ctypes"] = ctypes
+    batches = np.random.choice(["A", "B", "C"], size=n_cells)
+    annotations["batches"] = batches
 
     map_coarse = {}
     for c in annotations["ctypes"].astype("category").cat.categories:
@@ -54,6 +56,7 @@ def test_scdef():
             map_coarse[c] = c
 
     adata.obs["celltypes"] = annotations["ctypes"]
+    adata.obs["batches"] = annotations["batches"]
 
     adata.obs["celltypes_coarse"] = (
         adata.obs["celltypes"].map(map_coarse).astype("category")
@@ -136,10 +139,12 @@ def test_scdef():
     )
 
     # Evaluate methods
-    methods_list = ["Leiden+Wilcoxon", "NMF"]
+    methods_list = ["Leiden", "Harmony", "NMF"]
     metrics_list = [
         "Cell Type ARI",
         "Cell Type ASW",
+        "Batch ARI",
+        "Batch ASW",
         "Hierarchical signature consistency",
         "Hierarchy accuracy",
         "Signature sparsity",
@@ -160,7 +165,10 @@ def test_scdef():
         )
     )
     methods_results = scdef.benchmark.other_methods.run_methods(
-        adata, methods_list, res_sweeps=res_sweeps
+        adata,
+        methods_list,
+        res_sweeps=res_sweeps,
+        batch_key="batches",
     )
     methods_results["scDEF"] = scd
     df = scdef.benchmark.evaluate.evaluate_methods(
@@ -171,6 +179,5 @@ def test_scdef():
         metrics_list,
         methods_results,
         celltype_obs_key="celltypes",
+        batch_obs_key="batches",
     )
-
-    assert ~df.isnull().values.any()

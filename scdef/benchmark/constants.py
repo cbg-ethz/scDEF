@@ -1,8 +1,8 @@
 OTHERS_LABELS = [
-    "Leiden+Wilcoxon",
-    "scVI+Wilcoxon",
-    "Harmony+Leiden+Wilcoxon",
-    "Scanorama+Leiden+Wilcoxon",
+    "Leiden",
+    "scVI",
+    "Harmony",
+    "Scanorama",
     "LDVAE",
     "NMF",
     "scHPF",

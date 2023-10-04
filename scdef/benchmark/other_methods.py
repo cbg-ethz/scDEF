@@ -77,6 +77,7 @@ def run_unintegrated(
     sorted_scores=False,
     return_signatures=True,
     return_cluster_assignments=True,
+    **kwargs,
 ):
     try:
         import leidenalg
@@ -125,6 +126,7 @@ def run_nmf(
     resolution=1.0,
     return_signatures=True,
     return_cluster_assignments=True,
+    **kwargs,
 ):
     try:
         from sklearn.decomposition import NMF
@@ -188,6 +190,7 @@ def run_schpf(
     resolution=1.0,
     return_signatures=True,
     return_cluster_assignments=True,
+    **kwargs,
 ):
     try:
         import schpf
@@ -230,6 +233,7 @@ def run_harmony(
     resolution=1.0,
     return_signatures=True,
     return_cluster_assignments=True,
+    **kwargs,
 ):
     try:
         import harmonypy
@@ -277,6 +281,7 @@ def run_scanorama(
     resolution=1.0,
     return_signatures=True,
     return_cluster_assignments=True,
+    **kwargs,
 ):
     try:
         import scanorama
@@ -325,6 +330,7 @@ def run_scvi(
     resolution=1.0,
     return_signatures=True,
     return_cluster_assignments=True,
+    **kwargs,
 ):
     try:
         import scvi
@@ -372,7 +378,14 @@ def run_scvi(
     return outs
 
 
-def run_ldvae(ad, k_range=[5, 15], resolution=1.0, batch_key="Batch", layer="counts"):
+def run_ldvae(
+    ad,
+    k_range=[5, 15],
+    resolution=1.0,
+    batch_key="Batch",
+    layer="counts",
+    **kwargs,
+):
     try:
         import scvi
     except ImportError:
@@ -418,7 +431,7 @@ OTHERS_FUNCS = dict(
 )
 
 
-def run_methods(adata, methods_list, res_sweeps=None):
+def run_methods(adata, methods_list, res_sweeps=None, **kwargs):
     methods_outs = dict()
     for method in methods_list:
         logging.info(f"Running {method}...")
@@ -428,7 +441,7 @@ def run_methods(adata, methods_list, res_sweeps=None):
         res_sweep = OTHERS_RES_SWEEPS[method]
         if res_sweeps is not None:
             res_sweep = res_sweeps[method]
-        method_outs = run_multiple_resolutions(func, adata, res_sweep)
+        method_outs = run_multiple_resolutions(func, adata, res_sweep, **kwargs)
 
         methods_outs[method] = method_outs
 
