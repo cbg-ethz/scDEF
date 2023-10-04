@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "scdef"
-version = "0.0.12"
+version = "0.0.13"
 description = "Extract hierarchical signatures of cell state from single-cell data."
 license = "MIT"
 authors = ["pedrofale <pedro.miguel.ferreira.pf@gmail.com>"]
@@ -8,13 +8,13 @@ readme = "README.md"
 repository = "https://github.com/cbg-ethz/scdef"
 
 [tool.poetry.dependencies]
-python = ">=3.9,<4.0"
+python = ">=3.8,<4.0"
 pandas = "^1.5.1"
 numpy = "^1.23.4"
-jax = ">=0.3.4"
-jaxlib = ">=0.3.4"
-scanpy = {extras = ["leidenalg"], version =  "^1.9.3"}
-anndata = "^0.9.1"
+jax = ">='0.4.13'"
+jaxlib = ">='0.4.13'"
+scanpy = {extras = ["leidenalg"], version =  "^1.9.5"}
+anndata = "^0.9.2"
 click = "^8.0.1"
 tqdm = "^4.64.0"
 gseapy = "^1.0.4"
