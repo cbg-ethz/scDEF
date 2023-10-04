@@ -2028,6 +2028,7 @@ class scDEF(object):
     def plot_multilevel_paga(
         self,
         neighbors_rep: Optional[str] = "X_factors",
+        n_layers: Optional[int] = None,
         figsize: Optional[tuple] = (16, 4),
         reuse_pos: Optional[bool] = True,
         show: Optional[bool] = True,
@@ -2037,25 +2038,29 @@ class scDEF(object):
 
         Args:
             neighbors_rep: the self.obsm key to use to compute the PAGA graphs
+            n_layers: number of layers to plot
             figsize: figure size
             reuse_pos: whether to initialize each PAGA graph with the graph from the layer above
             show: whether to show the plot
             **paga_kwargs: keyword arguments to adjust the PAGA layouts
         """
 
-        fig, axes = plt.subplots(1, self.n_layers, figsize=figsize)
+        if n_layers is None:
+            n_layers = self.n_layers - 1
+
+        fig, axes = plt.subplots(1, n_layers, figsize=figsize)
         sc.pp.neighbors(self.adata, use_rep=neighbors_rep)
         pos = None
-        for i, layer_idx in enumerate(range(self.n_layers - 1, -1, -1)):
+        for i, layer_idx in enumerate(range(n_layers - 1, -1, -1)):
             if len(self.factor_lists[layer_idx]) <= 1:
                 break
-            ax = axes[i]
+            ax = axes[layer_idx]
             new_layer_name = f"{self.layer_names[layer_idx]}factor"
 
             self.logger.info(f"Computing PAGA graph of layer {layer_idx}")
 
             # Use previous PAGA as initial positions for new PAGA
-            if layer_idx != self.n_layers - 1 and reuse_pos:
+            if layer_idx != n_layers - 1 and reuse_pos:
                 self.logger.info(
                     f"Re-using PAGA positions from layer {layer_idx+1} to init {layer_idx}"
                 )
@@ -2352,6 +2357,7 @@ class scDEF(object):
         obs_clusters,
         obs_vals_dict,
         sort_layer_factors=True,
+        layers=None,
         vmax=1.0,
         vmin=0.0,
         cb_title="",
@@ -2364,23 +2370,25 @@ class scDEF(object):
         if not isinstance(obs_keys, list):
             obs_keys = [obs_keys]
 
+        if layers is None:
+            layers = np.arange(self.n_layers - 1)
+        n_layers = len(layers)
+
         if sort_layer_factors:
             layer_factor_orders = self.get_layer_factor_orders()
         else:
-            layer_factor_orders = [
-                np.arange(len(self.factor_lists[i])) for i in range(self.n_layers)
-            ]
+            layer_factor_orders = [np.arange(len(self.factor_lists[i])) for i in layers]
 
-        n_factors = [len(self.factor_lists[idx]) for idx in range(self.n_layers)]
+        n_factors = [len(self.factor_lists[idx]) for idx in layers]
         n_obs = [len(obs_clusters[obs_key]) for obs_key in obs_keys]
         fig, axs = plt.subplots(
             len(obs_keys),
-            self.n_layers,
+            n_layers,
             figsize=figsize,
             gridspec_kw={"width_ratios": n_factors, "height_ratios": n_obs},
         )
-        axs = axs.reshape((len(obs_keys), self.n_layers))
-        for i in range(self.n_layers):
+        axs = axs.reshape((len(obs_keys), n_layers))
+        for i in layers:
             axs[0][i].set_title(f"Layer {i}")
             for j, obs_key in enumerate(obs_keys):
                 ax = axs[j][i]
@@ -2406,7 +2414,7 @@ class scDEF(object):
                 else:
                     ax.set(yticks=[])
 
-                if i == self.n_layers - 1:
+                if i == n_layers - 1:
                     ax.yaxis.set_label_position("right")
                     ax.set_ylabel(obs_key, rotation=270, labelpad=20.0)
 
