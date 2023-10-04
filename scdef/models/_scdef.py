@@ -1745,6 +1745,59 @@ class scDEF(object):
             attachments.append(layer_attachments)
         return attachments
 
+    def plot_scales(
+        self, figsize=(8, 4), alpha=0.6, fontsize=12, legend_fontsize=10, show=True
+    ):
+        fig, axes = plt.subplots(1, 2, figsize=figsize)
+        plt.sca(axes[0])
+        if len(self.batches) > 1:
+            for i, b in enumerate(self.batches):
+                cells = np.where(self.adata.obs[self.batch_key] == b)[0]
+                plt.scatter(
+                    self.batch_lib_sizes[cells],
+                    1.0 / self.pmeans["cell_scale"].ravel()[cells],
+                    label=b,
+                    alpha=alpha,
+                )
+        else:
+            plt.scatter(
+                self.batch_lib_sizes,
+                1.0 / self.pmeans["cell_scale"].ravel(),
+                alpha=alpha,
+            )
+        plt.yscale("log")
+        plt.xscale("log")
+        plt.xlabel("Observed library size", fontsize=fontsize)
+        plt.ylabel("Learned cell size factor", fontsize=fontsize)
+
+        plt.sca(axes[1])
+        if len(self.batches) > 1:
+            for i, b in enumerate(self.batches):
+                plt.scatter(
+                    np.sum(self.X[self.adata.obs[self.batch_key] == b], axis=0),
+                    1.0 / self.pmeans["gene_scale"][i].ravel(),
+                    label=b,
+                    alpha=alpha,
+                )
+        else:
+            plt.scatter(
+                np.sum(self.X, axis=0),
+                1.0 / self.pmeans["gene_scale"].ravel(),
+                alpha=alpha,
+            )
+        plt.yscale("log")
+        plt.xscale("log")
+        plt.xlabel("Observed gene scale", fontsize=fontsize)
+        plt.ylabel("Learned gene size factor", fontsize=fontsize)
+
+        if len(self.batches) > 1:
+            plt.legend(fontsize=legend_fontsize)
+
+        fig.tight_layout()
+
+        if show:
+            plt.show()
+
     def plot_brd(
         self,
         thres=None,
