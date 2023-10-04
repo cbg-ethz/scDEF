@@ -1801,10 +1801,15 @@ class scDEF(object):
     def plot_brd(
         self,
         thres=None,
-        iqr_mult=3.0,
+        iqr_mult=None,
         show_yticks=False,
         scale="linear",
         normalize=True,
+        fontsize=14,
+        legend_fontsize=12,
+        xlabel="Factor",
+        ylabel="Relevance",
+        title="Biological relevance determination",
         show=True,
         **kwargs,
     ):
@@ -1820,28 +1825,72 @@ class scDEF(object):
             scales = scales - np.min(scales)
             scales = scales / np.max(scales)
         if thres is None:
-            median = np.median(scales)
-            q3 = np.percentile(scales, 75)
-            cutoff = ard * (q3 - median)
+            if iqr_mult is not None:
+                median = np.median(scales)
+                q3 = np.percentile(scales, 75)
+                cutoff = ard * (q3 - median)
         else:
             cutoff = ard
 
         fig = plt.figure(**kwargs)
-        plt.axhline(cutoff, color="red", ls="--")
-        above = np.where(scales >= cutoff)[0]
-        below = np.where(scales < cutoff)[0]
-        plt.bar(np.arange(layer_size)[above], scales[above])
-        plt.bar(np.arange(layer_size)[below], scales[below], alpha=0.6, color="gray")
+        if thres is None and iqr_mult is None:
+            l = np.arange(self.layer_sizes[0])
+            above = self.factor_lists[0]
+            below = np.array([f for f in l if f not in above])
+        else:
+            plt.axhline(cutoff, color="red", ls="--")
+            above = np.where(scales >= cutoff)[0]
+            below = np.where(scales < cutoff)[0]
+        plt.bar(np.arange(layer_size)[above], scales[above], label="Kept")
+        plt.bar(
+            np.arange(layer_size)[below],
+            scales[below],
+            alpha=0.6,
+            color="gray",
+            label="Removed",
+        )
         if len(scales) > 15:
             plt.xticks(np.arange(0, layer_size, 2))
         else:
             plt.xticks(np.arange(layer_size))
         if not show_yticks:
             plt.yticks([])
-        plt.title(f"Biological relevance determination")
-        plt.xlabel("Factor")
+        plt.title(title, fontsize=fontsize)
+        plt.xlabel(xlabel, fontsize=fontsize)
         plt.yscale(scale)
-        plt.ylabel("Relevance")
+        plt.ylabel(ylabel, fontsize=fontsize)
+        plt.legend(fontsize=legend_fontsize)
+        if show:
+            plt.show()
+
+    def plot_gini_brd(
+        self, figsize=(4, 4), alpha=0.6, fontsize=12, legend_fontsize=10, show=True
+    ):
+        brds = self.pmeans["brd"].ravel()
+        brds = brds - np.min(brds)
+        brds = brds / np.max(brds)
+        ginis = np.array(
+            [score_utils.gini(self.pmeans["W"][k]) for k in range(self.layer_sizes[0])]
+        )
+        is_kept = np.zeros((self.layer_sizes[0]))
+        is_kept[self.factor_lists[0]] = 1
+
+        plt.figure(figsize=figsize)
+        for c in [1, 0]:
+            label = "Kept" if c == 1 else "Removed"
+            color = "C0" if c == 1 else "gray"
+            _alpha = 1 if c == 1 else alpha
+            plt.scatter(
+                ginis[np.where(is_kept == c)[0]],
+                brds[np.where(is_kept == c)[0]],
+                label=label,
+                color=color,
+                alpha=_alpha,
+            )
+        plt.xlabel("Gini index", fontsize=fontsize)
+        plt.ylabel("BRD posterior mean", fontsize=fontsize)
+        plt.legend(fontsize=legend_fontsize)
+
         if show:
             plt.show()
 
@@ -2306,6 +2355,7 @@ class scDEF(object):
         cb_title_fontsize=10,
         pad=0.1,
         shrink=0.7,
+        figsize=(10, 4),
         show=True,
     ):
         if not isinstance(obs_keys, list):
@@ -2323,7 +2373,7 @@ class scDEF(object):
         fig, axs = plt.subplots(
             len(obs_keys),
             self.n_layers,
-            figsize=(10, 4),
+            figsize=figsize,
             gridspec_kw={"width_ratios": n_factors, "height_ratios": n_obs},
         )
         axs = axs.reshape((len(obs_keys), self.n_layers))
