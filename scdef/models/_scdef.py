@@ -971,13 +971,13 @@ class scDEF(object):
         min_cells: Optional[int] = 10,
         filter_up: Optional[bool] = True,
     ):
-        """Filter our irrelevant factors based on the BRD posterior.
+        """Filter our irrelevant factors based on the BRD posterior or the cell attachments.
 
         Args:
             thres: minimum factor BRD value
             iqr_mult: multiplier of the difference between the third quartile and the median BRD values to set the threshold
-            min_cells: minimum number of cells that factor must have attached to it for it to be kept.
-            filter_up: whether to remove factors in upper layers
+            min_cells: minimum number of cells that each factor must have attached to it for it to be kept
+            filter_up: whether to remove factors in upper layers via inter-layer attachments
         """
         ard = []
         if thres is not None:
@@ -1014,15 +1014,25 @@ class scDEF(object):
                     list(set(np.where(rels >= cutoff)[0]).intersection(keep))
                 )
             else:
+                assignments = np.argmax(self.pmeans[f"{layer_name}z"], axis=1)
+                counts = np.array(
+                    [
+                        np.count_nonzero(assignments == a)
+                        for a in range(self.layer_sizes[i])
+                    ]
+                )
+                keep = np.array(range(self.layer_sizes[i]))[
+                    np.where(counts >= min_cells)[0]
+                ]
                 if filter_up:
                     mat = self.pmeans[f"{layer_name}W"]
                     assignments = []
                     for factor in self.factor_lists[i - 1]:
                         assignments.append(np.argmax(mat[:, factor]))
 
-                    keep = np.unique(assignments)
-                else:
-                    keep = np.arange(self.layer_sizes[i])
+                    keep = np.unique(
+                        list(set(np.unique(assignments)).intersection(keep))
+                    )
 
             if len(keep) == 0:
                 self.logger.info(
