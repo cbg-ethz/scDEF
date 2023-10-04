@@ -1447,6 +1447,7 @@ class scDEF(object):
 
     def make_graph(
         self,
+        n_cells: Optional[bool] = False,
         hierarchy: Optional[dict] = None,
         factor_annotations: Optional[dict] = None,
         top_factor: Optional[str] = None,
@@ -1464,6 +1465,7 @@ class scDEF(object):
         """Make Graphviz-formatted scDEF graph.
 
         Args:
+            n_cells: wether to show the number of cells that attach to the factor
             hierarchy: a dictionary containing the polytree to draw instead of the whole graph
             factor_annotations: factor annotations to include in the node labels
             top_factor: only include factors below this factor
@@ -1576,6 +1578,13 @@ class scDEF(object):
                     if factor_name in factor_annotations:
                         label = factor_annotations[factor_name]
 
+                cells = np.where(self.adata.obs[f"{layer_name}factor"] == factor_name)[
+                    0
+                ]
+
+                if n_cells:
+                    label = f"{label}<br/>({len(cells)} cells)"
+
                 if color_edges:
                     color = matplotlib.colors.to_hex(layer_colors[factor_idx])
                 fillcolor = "#FFFFFF"
@@ -1585,9 +1594,6 @@ class scDEF(object):
                     elif filled is not None:
                         # cells attached to this factor
                         original_factor_index = self.factor_lists[layer_idx][factor_idx]
-                        cells = np.where(
-                            self.adata.obs[f"{layer_name}factor"] == factor_name
-                        )[0]
                         if len(cells) > 0:
                             # cells in this factor that belong to each obs
                             prevs = [
@@ -1608,9 +1614,6 @@ class scDEF(object):
                 elif style == "wedged":
                     # cells attached to this factor
                     original_factor_index = self.factor_lists[layer_idx][factor_idx]
-                    cells = np.where(
-                        self.adata.obs[f"{layer_name}factor"] == factor_name
-                    )[0]
                     if len(cells) > 0:
                         # cells in this factor that belong to each obs
                         # normalized by total num of cells in each obs
