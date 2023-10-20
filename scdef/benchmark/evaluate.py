@@ -8,11 +8,11 @@ from sklearn.metrics import adjusted_rand_score, silhouette_score
 
 def evaluate_methods(
     adata,
-    true_hierarchy,
-    hierarchy_obs_keys,
-    markers,
     metrics_list,
     methods_results,
+    true_hierarchy=None,
+    hierarchy_obs_keys=None,
+    markers=None,
     celltype_obs_key="celltype",
     batch_obs_key="batch",
 ):
