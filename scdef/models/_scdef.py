@@ -1450,7 +1450,6 @@ class scDEF(object):
 
     def make_graph(
         self,
-        n_cells: Optional[bool] = False,
         hierarchy: Optional[dict] = None,
         factor_annotations: Optional[dict] = None,
         top_factor: Optional[str] = None,
@@ -1463,12 +1462,17 @@ class scDEF(object):
         color_edges: Optional[bool] = True,
         show_confidences: Optional[bool] = False,
         mc_samples: Optional[int] = 100,
+        n_cells_label: Optional[bool] = False,
+        n_cells: Optional[bool] = False,
+        node_size_max: Optional[int] = 2.0,
+        node_size_min: Optional[int] = 0.05,
+        scale_level: Optional[bool] = False,
+        show_label: Optional[bool] = True,
         **fontsize_kwargs,
     ):
         """Make Graphviz-formatted scDEF graph.
 
         Args:
-            n_cells: wether to show the number of cells that attach to the factor
             hierarchy: a dictionary containing the polytree to draw instead of the whole graph
             factor_annotations: factor annotations to include in the node labels
             top_factor: only include factors below this factor
@@ -1481,6 +1485,12 @@ class scDEF(object):
             color_edges: whether to color the graph edges according to the upper factors
             show_confidences: whether to show the confidence score for each signature
             mc_samples: number of Monte Carlo samples to take from the posterior to compute signature confidences
+            n_cells_label: wether to show the number of cells that attach to the factor
+            n_cells: wether to scale the node sizes by the number of cells that attach to the factor
+            node_size_max: maximum node size when scaled by cell numbers
+            node_size_min: minimum node size when scaled by cell numbers
+            scale_level: wether to scale node sizes per level instead of across all levels
+            show_label: wether to show labels on nodes
             **fontsize_kwargs: keyword arguments to adjust the fontsizes according to the gene scores
         """
         if top_genes is None:
@@ -1584,9 +1594,10 @@ class scDEF(object):
                 cells = np.where(self.adata.obs[f"{layer_name}factor"] == factor_name)[
                     0
                 ]
+                node_num_cells = len(cells)
 
-                if n_cells:
-                    label = f"{label}<br/>({len(cells)} cells)"
+                if n_cells_label:
+                    label = f"{label}<br/>({node_num_cells} cells)"
 
                 if color_edges:
                     color = matplotlib.colors.to_hex(layer_colors[factor_idx])
@@ -1670,6 +1681,24 @@ class scDEF(object):
                     label += "<br/><br/>" + ""
 
                 label = "<" + label + ">"
+                size = node_size_min
+                fixedsize = "false"
+                if n_cells:
+                    max_cells = self.n_cells
+                    if scale_level:
+                        max_cells = (
+                            self.adata.obs[f"{layer_name}factor"].value_counts().max()
+                        )
+                    size = np.maximum(
+                        node_size_max * (node_num_cells / max_cells), node_size_min
+                    )
+                    if len(self.factor_lists[layer_idx]) == 1:
+                        size = node_size_min
+                    fixedsize = "true"
+
+                if not show_label:
+                    label = ""
+
                 g.node(
                     factor_name,
                     label=label,
@@ -1677,6 +1706,9 @@ class scDEF(object):
                     color=color,
                     ordering=ordering,
                     style=style,
+                    width=str(size),
+                    height=str(size),
+                    fixedsize=fixedsize,
                 )
 
                 if layer_idx > 0:
