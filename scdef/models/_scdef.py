@@ -1004,18 +1004,20 @@ class scDEF(object):
                 keep = np.array(range(self.layer_sizes[i]))[
                     np.where(counts >= min_cells)[0]
                 ]
-                rels = self.pmeans[f"brd"].ravel()
-                rels = rels - np.min(rels)
-                rels = rels / np.max(rels)
-                if thres is None:
-                    median = np.median(rels)
-                    q3 = np.percentile(rels, 75)
-                    cutoff = ard * (q3 - median)
-                else:
-                    cutoff = ard
-                keep = np.unique(
-                    list(set(np.where(rels >= cutoff)[0]).intersection(keep))
-                )
+                brd_keep = np.arange(self.layer_sizes[i])
+                if self.use_brd:
+                    rels = self.pmeans[f"brd"].ravel()
+                    rels = rels - np.min(rels)
+                    rels = rels / np.max(rels)
+                    if thres is None:
+                        median = np.median(rels)
+                        q3 = np.percentile(rels, 75)
+                        cutoff = ard * (q3 - median)
+                        print(median, q3, cutoff)
+                    else:
+                        cutoff = ard
+                    brd_keep = np.where(rels >= cutoff)[0]
+                keep = np.unique(list(set(brd_keep).intersection(keep)))
             else:
                 assignments = np.argmax(self.pmeans[f"{layer_name}z"], axis=1)
                 counts = np.array(
