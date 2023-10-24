@@ -173,11 +173,11 @@ def test_scdef():
     methods_results["scDEF"] = scd
     df = scdef.benchmark.evaluate.evaluate_methods(
         adata,
-        true_hierarchy,
-        ["celltypes", "celltypes_coarse"],
-        markers,
         metrics_list,
         methods_results,
+        true_hierarchy=true_hierarchy,
+        hierarchy_obs_keys=["celltypes", "celltypes_coarse"],
+        markers=markers,
         celltype_obs_key="celltypes",
         batch_obs_key="batches",
     )
