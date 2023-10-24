@@ -42,9 +42,14 @@ class iscDEF(scDEF):
         ] = 0,  # by default, use lower layer and learn a hierarchy
         n_factors_per_set: Optional[int] = 2,
         n_layers: Optional[int] = 2,
-        gs_big_scale: Optional[float] = 1000.0,
-        cn_big_scale: Optional[float] = 1000.0,
-        gene_set_strength: Optional[float] = 1000.0,
+        cn_small_scale: Optional[float] = 0.1,
+        cn_big_scale: Optional[float] = 10.0,
+        cn_small_strength: Optional[float] = 10.0,
+        cn_big_strength: Optional[float] = 1.0,
+        gs_small_scale: Optional[float] = 0.1,
+        gs_big_scale: Optional[float] = 10.0,
+        marker_strength: Optional[float] = 10.0,
+        nonmarker_strength: Optional[float] = 10.0,
         **kwargs,
     ):
         self.markers_dict = markers_dict
@@ -89,8 +94,17 @@ class iscDEF(scDEF):
                 layer_sizes.append(size)
                 layer_names.append(name)
 
+        if "layer_shapes" not in kwargs:
+            kwargs["layer_shapes"] = 0.3
+        if "layer_rates" not in kwargs:
+            kwargs["layer_rates"] = 0.3
+        if "factor_shapes" not in kwargs:
+            kwargs["factor_shapes"] = 0.3
+        if "factor_rates" not in kwargs:
+            kwargs["factor_rates"] = 0.3
+
         super(iscDEF, self).__init__(
-            adata, layer_sizes=layer_sizes, layer_shapes=0.3, use_brd=False, **kwargs
+            adata, layer_sizes=layer_sizes, use_brd=False, **kwargs
         )
 
         logginglevel = self.logger.level
@@ -101,63 +115,20 @@ class iscDEF(scDEF):
 
         # Set w_priors
         if self.markers_layer != 0:
-            # Do connectivities
-            cn_small_scale = 0.1
-            for layer_idx in range(1, self.n_layers):
-                connectivity_matrix = cn_small_scale * np.ones(
-                    (self.layer_sizes[layer_idx], self.layer_sizes[layer_idx - 1])
-                )
-
-                layer_rev_idx = self.n_layers - 1 - layer_idx
-
-                if layer_idx == self.n_layers - 1:
-                    n_local_factors_per_set = 1
-                else:
-                    n_local_factors_per_set = self.n_factors_per_set * (layer_rev_idx)
-                n_lower_factors_per_set = self.n_factors_per_set * (layer_rev_idx + 1)
-                for i in range(len(self.marker_names)):
-                    upper_start = i * n_local_factors_per_set
-                    upper_end = (i + 1) * n_local_factors_per_set
-
-                    local_start = i * n_lower_factors_per_set
-                    local_end = (i + 1) * n_lower_factors_per_set
-
-                    connectivity_matrix[
-                        upper_start:upper_end, local_start:local_end
-                    ] = self.cn_big_scale
-                self.w_priors[layer_idx][0] = jnp.array(connectivity_matrix)
-                self.w_priors[layer_idx][1] = jnp.array(
-                    np.ones(connectivity_matrix.shape)
-                )
+            self.set_connectivity_prior(
+                cn_small_strength=cn_small_strength,
+                cn_big_strength=cn_big_strength,
+                cn_small_scale=cn_small_scale,
+                cn_big_scale=cn_big_scale,
+            )
 
         # Do gene sets
-        gs_small_scale = 1.0 / self.gs_big_scale
-        self.gene_sets = np.ones((self.layer_sizes[0], self.n_genes)) * gs_small_scale
-        self.marker_gene_locs = []
-        for i, cellgroup in enumerate(self.marker_names):
-            if cellgroup == "other":
-                continue
-
-            factors_start = i
-            factors_end = i + 1
-            if self.markers_layer != 0:
-                factors_start = i * self.n_factors_per_set * self.n_layers
-                factors_end = (i + 1) * self.n_factors_per_set * self.n_layers
-            for gene in self.markers_dict[cellgroup]:
-                loc = np.where(self.adata.var.index == gene)[0]
-                if len(loc) == 0:
-                    self.logger.warning(
-                        f"Did not find gene {gene} for set {cellgroup} in AnnData object."
-                    )
-                self.marker_gene_locs.append(loc)
-                self.gene_sets[factors_start:factors_end, loc] = self.gs_big_scale
-
-        self.w_priors[0][0] = jnp.array(
-            self.gene_set_strength * self.gene_sets
-        )  # shape
-        self.w_priors[0][1] = jnp.array(
-            self.gene_set_strength * np.ones(self.gene_sets.shape)
-        )  # rate
+        self.set_geneset_prior(
+            gs_big_scale=gs_big_scale,
+            gs_small_scale=gs_small_scale,
+            marker_strength=marker_strength,
+            nonmarker_strength=nonmarker_strength,
+        )
 
         self.init_var_params()
         self.set_posterior_means()
@@ -167,7 +138,7 @@ class iscDEF(scDEF):
         out = f"iscDEF object with {self.n_layers} layers"
         out += "\n\t" + "Markers layer: " + str(self.markers_layer)
         out += "\n\t" + "Contains `other` category: " + str(self.add_other)
-        out += "\n\t" + "Gene set strength: " + str(self.gene_set_strength)
+        out += "\n\t" + "Gene set strength: " + str(self.cn_big_strength)
         out += "\n\t" + "Gene set scale: " + str(self.gs_big_scale)
         out += (
             "\n\t"
@@ -183,6 +154,11 @@ class iscDEF(scDEF):
             "\n\t"
             + "Layer shape parameters: "
             + ", ".join([str(shape) for shape in self.layer_shapes])
+        )
+        out += (
+            "\n\t"
+            + "Layer rate parameters: "
+            + ", ".join([str(rate) for rate in self.layer_rates])
         )
         if self.markers_layer == 0:
             out += (
@@ -201,6 +177,97 @@ class iscDEF(scDEF):
         out += "\n" + "Contains " + self.adata.__str__()
         return out
 
+    def set_connectivity_prior(
+        self,
+        cn_small_strength=10.0,
+        cn_big_strength=10.0,
+        cn_small_scale=0.1,
+        cn_big_scale=10.0,
+    ):
+        self.cn_small_strength = cn_small_strength
+        self.cn_big_strength = cn_big_strength
+        self.cn_small_scale = cn_small_scale
+        self.cn_big_scale = cn_big_scale
+
+        # Do connectivities
+        for layer_idx in range(1, self.n_layers):
+            connectivity_matrix = cn_small_scale * np.ones(
+                (self.layer_sizes[layer_idx], self.layer_sizes[layer_idx - 1])
+            )
+            strength_matrix = cn_small_strength * np.ones(
+                (self.layer_sizes[layer_idx], self.layer_sizes[layer_idx - 1])
+            )
+
+            layer_rev_idx = self.n_layers - 1 - layer_idx
+
+            if layer_idx == self.n_layers - 1:
+                n_local_factors_per_set = 1
+            else:
+                n_local_factors_per_set = self.n_factors_per_set * (layer_rev_idx)
+            n_lower_factors_per_set = self.n_factors_per_set * (layer_rev_idx + 1)
+            for i in range(len(self.marker_names)):
+                upper_start = i * n_local_factors_per_set
+                upper_end = (i + 1) * n_local_factors_per_set
+
+                local_start = i * n_lower_factors_per_set
+                local_end = (i + 1) * n_lower_factors_per_set
+
+                connectivity_matrix[
+                    upper_start:upper_end, local_start:local_end
+                ] = self.cn_big_scale
+
+                strength_matrix[
+                    upper_start:upper_end, local_start:local_end
+                ] = cn_big_strength
+
+            self.w_priors[layer_idx][0] = strength_matrix
+            self.w_priors[layer_idx][1] = strength_matrix / connectivity_matrix
+
+    def set_geneset_prior(
+        self,
+        gs_big_scale=10.0,
+        gs_small_scale=0.1,
+        marker_strength=10.0,
+        nonmarker_strength=10.0,
+    ):
+        self.gs_big_scale = gs_big_scale
+        self.gs_small_scale = gs_small_scale
+        self.marker_strength = marker_strength
+        self.nonmarker_strength = nonmarker_strength
+
+        # Do gene sets
+        self.gene_sets = np.ones((self.layer_sizes[0], self.n_genes)) * gs_small_scale
+        self.strengths = (
+            np.ones((self.layer_sizes[0], self.n_genes)) * nonmarker_strength
+        )
+        self.marker_gene_locs = []
+        for i, cellgroup in enumerate(self.marker_names):
+            if cellgroup == "other":
+                continue
+
+            factors_start = i
+            factors_end = i + 1
+            if self.markers_layer != 0:
+                factors_start = i * self.n_factors_per_set * (self.n_layers - 1)
+                factors_end = (i + 1) * self.n_factors_per_set * (self.n_layers - 1)
+                print(i, cellgroup, factors_start, factors_end)
+            for gene in self.markers_dict[cellgroup]:
+                loc = np.where(self.adata.var.index == gene)[0]
+                if len(loc) == 0:
+                    self.logger.warning(
+                        f"Did not find gene {gene} for set {cellgroup} in AnnData object."
+                    )
+                self.marker_gene_locs.append(loc)
+                self.gene_sets[factors_start:factors_end, loc] = self.gs_big_scale
+                self.strengths[factors_start:factors_end, loc] = marker_strength
+
+        self.w_priors[0][0] = jnp.array(
+            self.strengths * np.ones(self.gene_sets.shape)
+        )  # shape
+        self.w_priors[0][1] = jnp.array(
+            self.strengths * np.ones(self.gene_sets.shape) / self.gene_sets
+        )  # rate
+
     def set_factor_names(self):
         self.factor_names = []
 
@@ -208,7 +275,9 @@ class iscDEF(scDEF):
             layer_name = self.layer_names[idx]
             if self.markers_layer == 0:
                 if idx == 0:
-                    self.factor_names.append(self.marker_names)
+                    self.factor_names.append(
+                        [f"{self.marker_names[i]}" for i in self.factor_lists[idx]]
+                    )
                 else:
                     self.factor_names.append(
                         [
@@ -228,11 +297,14 @@ class iscDEF(scDEF):
                     factor_names = []
                     for marker_idx, marker_name in enumerate(self.marker_names):
                         marker_factor_names = []
-                        sub_factors = np.arange(self.n_factors_per_set * rev_idx)
+                        sub_factors = np.arange(
+                            marker_idx * self.n_factors_per_set * rev_idx,
+                            (marker_idx + 1) * self.n_factors_per_set * rev_idx,
+                        )
                         filtered_sub_factors = [
                             factor
                             for factor in sub_factors
-                            if factor * marker_idx in self.factor_lists[idx]
+                            if factor in self.factor_lists[idx]
                         ]
                         for sub_factor in range(len(filtered_sub_factors)):
                             marker_factor_names.append(
