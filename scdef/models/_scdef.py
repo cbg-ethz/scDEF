@@ -1082,10 +1082,15 @@ class scDEF(object):
             self.adata.obs[f"{layer_name}factor"] = [
                 self.factor_names[idx][a] for a in assignments
             ]
-            self.adata.uns[f"{layer_name}factor_colors"] = [
+            # Make sure factor colors in UMAP respect the palette
+            factor_colors = [
                 matplotlib.colors.to_hex(self.layer_colorpalettes[idx][i])
                 for i in range(len(self.factor_lists[idx]))
             ]
+            sorted_colors = np.array(factor_colors)[
+                np.argsort(self.factor_names[idx])
+            ].tolist()
+            self.adata.uns[f"{layer_name}factor_colors"] = sorted_colors
 
             scores_names = [f + "_score" for f in self.factor_names[idx]]
             df = pd.DataFrame(
