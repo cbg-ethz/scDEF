@@ -113,13 +113,16 @@ def compare_hierarchies(inf_complete, true_complete):
     return np.mean(scores)
 
 
-def simplify_hierarchy(hierarchy, layer_names, layer_sizes):
+def simplify_hierarchy(hierarchy, layer_names, layer_sizes, factor_names=None):
     simplified = hierarchy.copy()
     n_layers = len(layer_names)
     for layer_idx in range(1, n_layers):
         layer_name = layer_names[layer_idx]
         for factor_idx in range(layer_sizes[layer_idx]):
-            factor_name = self.factor_names[layer_idx][factor_idx]
+            if factor_names is not None:
+                factor_name = factor_names[layer_idx][factor_idx]
+            else:
+                factor_name = f"{layer_name}{factor_idx}"
             if factor_name in simplified:
                 if len(simplified[factor_name]) == 1:
                     if simplified[factor_name][0] in simplified:
