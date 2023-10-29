@@ -1020,7 +1020,6 @@ class scDEF(object):
                         median = np.median(rels)
                         q3 = np.percentile(rels, 75)
                         cutoff = ard * (q3 - median)
-                        print(median, q3, cutoff)
                     else:
                         cutoff = ard
                     brd_keep = np.where(rels >= cutoff)[0]
@@ -1865,6 +1864,9 @@ class scDEF(object):
         show=True,
         **kwargs,
     ):
+        if not self.use_brd:
+            raise ValueError("This model instance doesn't use the BRD prior.")
+
         ard = []
         if thres is not None:
             ard = thres
@@ -1885,6 +1887,7 @@ class scDEF(object):
             cutoff = ard
 
         fig = plt.figure(**kwargs)
+        below = []
         if thres is None and iqr_mult is None:
             l = np.arange(self.layer_sizes[0])
             above = self.factor_lists[0]
@@ -1894,13 +1897,14 @@ class scDEF(object):
             above = np.where(scales >= cutoff)[0]
             below = np.where(scales < cutoff)[0]
         plt.bar(np.arange(layer_size)[above], scales[above], label="Kept")
-        plt.bar(
-            np.arange(layer_size)[below],
-            scales[below],
-            alpha=0.6,
-            color="gray",
-            label="Removed",
-        )
+        if len(below) > 0:
+            plt.bar(
+                np.arange(layer_size)[below],
+                scales[below],
+                alpha=0.6,
+                color="gray",
+                label="Removed",
+            )
         if len(scales) > 15:
             plt.xticks(np.arange(0, layer_size, 2))
         else:
