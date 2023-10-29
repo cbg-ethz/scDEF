@@ -2226,7 +2226,7 @@ class scDEF(object):
         if simplified:
             layer_sizes = [len(self.factor_names[idx]) for idx in range(self.n_layers)]
             hierarchy = hierarchy_utils.simplify_hierarchy(
-                hierarchy, self.layer_names, layer_sizes
+                hierarchy, self.layer_names, layer_sizes, factor_names=self.factor_names
             )
 
         return hierarchy
