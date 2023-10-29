@@ -85,6 +85,7 @@ class scDEF(object):
 
         self.layer_sizes = [int(x) for x in layer_sizes]
         self.n_layers = len(self.layer_sizes)
+        self.use_brd = use_brd
 
         if self.n_layers < 2:
             raise ValueError("scDEF requires at least 2 layers")
@@ -111,7 +112,10 @@ class scDEF(object):
         self.layer_rates = layer_rates
 
         if factor_shapes is None:
-            factor_shapes = [1.0] + [0.3] * (self.n_layers - 2) + [1.0]
+            if self.use_brd:
+                factor_shapes = [1.0] + [0.3] * (self.n_layers - 2) + [1.0]
+            else:
+                factor_shapes = [0.3] * (self.n_layers - 1) + [1.0]
         elif isinstance(factor_shapes, float) or isinstance(factor_shapes, int):
             factor_shapes = [float(factor_shapes)] * self.n_layers
         elif len(factor_shapes) != self.n_layers:
@@ -119,7 +123,10 @@ class scDEF(object):
         self.factor_shapes = factor_shapes
 
         if factor_rates is None:
-            factor_rates = [100.0] + [0.3] * (self.n_layers - 2) + [1.0]
+            if self.use_brd:
+                factor_rates = [100.0] + [0.3] * (self.n_layers - 2) + [1.0]
+            else:
+                factor_rates = [0.3] * (self.n_layers - 1) + [1.0]
         elif isinstance(factor_rates, float) or isinstance(factor_rates, int):
             factor_rates = [float(factor_rates)] * self.n_layers
         elif len(factor_rates) != self.n_layers:
@@ -144,7 +151,6 @@ class scDEF(object):
         self.factor_lists = [np.arange(size) for size in self.layer_sizes]
 
         self.brd = brd
-        self.use_brd = use_brd
         self.cell_scale_shape = cell_scale_shape
         self.gene_scale_shape = gene_scale_shape
 
@@ -248,7 +254,8 @@ class scDEF(object):
             + "Layer factor rate parameters: "
             + ", ".join([str(rate) for rate in self.factor_rates])
         )
-        out += "\n\t" + "BRD prior parameter: " + str(self.brd)
+        if self.use_brd == True:
+            out += "\n\t" + "Using BRD with prior parameter: " + str(self.brd)
         out += "\n\t" + "Number of batches: " + str(self.n_batches)
         out += "\n" + "Contains " + self.adata.__str__()
         return out
@@ -628,8 +635,8 @@ class scDEF(object):
             if idx == 0 and self.use_brd:
                 global_pl += gamma_logpdf(
                     _w_sample,
-                    self.w_priors[idx][0] / fscale_samples,
-                    self.w_priors[idx][1] / fscale_samples,
+                    1.0 / fscale_samples,
+                    1.0 / fscale_samples,
                 )
             elif idx == 1 and self.use_brd:
                 global_pl += gamma_logpdf(
