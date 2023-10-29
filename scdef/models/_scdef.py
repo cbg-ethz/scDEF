@@ -2418,6 +2418,7 @@ class scDEF(object):
         pad=0.1,
         shrink=0.7,
         figsize=(10, 4),
+        xticks_rotation=90.0,
         show=True,
     ):
         if not isinstance(obs_keys, list):
@@ -2452,9 +2453,8 @@ class scDEF(object):
                 if j == len(obs_keys) - 1:
                     xlabels = self.factor_names[i]
                     xlabels = np.array(xlabels)[layer_factor_orders[i]]
-                    ax.set(
-                        xticks=np.arange(len(xlabels)) + 0.5,
-                        xticklabels=xlabels,
+                    ax.set_xticks(
+                        np.arange(len(xlabels)) + 0.5, xlabels, rotation=xticks_rotation
                     )
                 else:
                     ax.set(xticks=[])
