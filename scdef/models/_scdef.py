@@ -2295,6 +2295,10 @@ class scDEF(object):
         if not isinstance(obs_keys, list):
             obs_keys = [obs_keys]
 
+        # Sort obs_keys from broad to specific
+        sizes = [len(self.adata.obs[obs_key].unique()) for obs_key in obs_keys]
+        obs_keys = np.array(obs_keys)[np.argsort(sizes)].tolist()
+
         obs_to_factor_assignments = []
         obs_to_factor_matches = []
         for obs_key in obs_keys:
