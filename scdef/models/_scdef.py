@@ -2429,7 +2429,12 @@ class scDEF(object):
             obs_keys = [obs_keys]
 
         if layers is None:
-            layers = np.arange(self.n_layers - 1)
+            layers = [
+                i
+                for i in range(self.n_layers - 1, -1, -1)
+                if len(self.factor_lists[i]) > 1
+            ]
+
         n_layers = len(layers)
 
         if sort_layer_factors:
@@ -2529,14 +2534,20 @@ class scDEF(object):
     def plot_umaps(
         self,
         color=[],
-        n_layers=None,
+        layers=None,
         figsize=(16, 4),
         fontsize=12,
         legend_fontsize=10,
         show=True,
     ):
-        if n_layers is None:
-            n_layers = self.n_layers - 1
+        if layers is None:
+            layers = [
+                i
+                for i in range(self.n_layers - 1, -1, -1)
+                if len(self.factor_lists[i]) > 1
+            ]
+
+        n_layers = len(layers)
 
         if "X_umap" in self.adata.obsm:
             self.adata.obsm["X_umap_original"] = self.adata.obsm["X_umap"].copy()
@@ -2549,7 +2560,7 @@ class scDEF(object):
             n_rows = 1
 
         fig, axes = plt.subplots(n_rows, n_layers, figsize=figsize)
-        for layer in range(0, n_layers):
+        for layer in layers:
             # Compute UMAP
             self.adata.obsm[f"X_{self.layer_names[layer]}factors_log"] = np.log(
                 self.adata.obsm[f"X_{self.layer_names[layer]}factors"]
