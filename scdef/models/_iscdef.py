@@ -106,9 +106,9 @@ class iscDEF(scDEF):
             if "layer_rates" not in kwargs:
                 kwargs["layer_rates"] = [0.3] * (self.n_layers - 1) + [1.0]
             if "factor_shapes" not in kwargs:
-                kwargs["factor_shapes"] = [0.3] * (self.n_layers - 1) + [1.0]
+                kwargs["factor_shapes"] = [0.3] + (self.n_layers - 1) * [1.0]
             if "factor_rates" not in kwargs:
-                kwargs["factor_rates"] = [0.3] * (self.n_layers - 1) + [1.0]
+                kwargs["factor_rates"] = [0.3] + (self.n_layers - 1) * [1.0]
 
             if "use_brd" not in kwargs:
                 kwargs["use_brd"] = False

@@ -113,9 +113,9 @@ class scDEF(object):
 
         if factor_shapes is None:
             if self.use_brd:
-                factor_shapes = [1.0] + [0.3] * (self.n_layers - 2) + [1.0]
+                factor_rates = [1.0] * self.n_layers
             else:
-                factor_shapes = [0.3] * (self.n_layers - 1) + [1.0]
+                factor_rates = [0.3] + [1.0] * self.n_layers
         elif isinstance(factor_shapes, float) or isinstance(factor_shapes, int):
             factor_shapes = [float(factor_shapes)] * self.n_layers
         elif len(factor_shapes) != self.n_layers:
@@ -124,9 +124,9 @@ class scDEF(object):
 
         if factor_rates is None:
             if self.use_brd:
-                factor_rates = [100.0] + [0.3] * (self.n_layers - 2) + [1.0]
+                factor_rates = [100.0] + [1.0] * (self.n_layers - 1)
             else:
-                factor_rates = [0.3] * (self.n_layers - 1) + [1.0]
+                factor_rates = [0.3] + [1.0] * (self.n_layers - 1)
         elif isinstance(factor_rates, float) or isinstance(factor_rates, int):
             factor_rates = [float(factor_rates)] * self.n_layers
         elif len(factor_rates) != self.n_layers:
@@ -565,50 +565,6 @@ class scDEF(object):
             )
             global_en += -gamma_logpdf(fscale_samples, fscale_shapes, fscale_rates)
 
-        # # Top layer
-        # idx = self.n_layers - 1
-        # start = np.sum(self.layer_sizes[:idx])
-        # end = start + self.layer_sizes[idx]
-        # # w
-        # _w_shape = jnp.maximum(jnp.exp(var_params[4 + idx][0]), min_shape)
-        # _w_rate = jnp.minimum(
-        #     jnp.maximum(jnp.exp(var_params[4 + idx][1]), min_rate), max_rate
-        # )
-        # _w_sample = gamma_sample(rng, _w_shape, _w_rate)
-        # global_pl += gamma_logpdf(
-        #     _w_sample, self.w_priors[idx][0], self.w_priors[idx][1]
-        # )
-        # global_en += -gamma_logpdf(_w_sample, _w_shape, _w_rate)
-        # # z
-        # _z_sample = z_samples[:, start:end]
-        # _z_shape = z_shapes[:, start:end]
-        # _z_rate = z_rates[:, start:end]
-        # local_pl += gamma_logpdf(
-        #     _z_sample, self.layer_shapes[idx], self.layer_rates[idx]
-        # )
-        # local_en += -gamma_logpdf(_z_sample, _z_shape, _z_rate)
-        #
-        # z_mean = jnp.einsum("nk,kp->np", _z_sample, _w_sample)
-        #
-        # _z_shape = jax.lax.cond(
-        #     stop_gradients[-1],
-        #     lambda: jax.lax.stop_gradient(_z_shape),
-        #     lambda: _z_shape,
-        # )
-        # _z_rate = jax.lax.cond(
-        #     stop_gradients[-1], lambda: jax.lax.stop_gradient(_z_rate), lambda: _z_rate
-        # )
-        # _w_shape = jax.lax.cond(
-        #     stop_gradients[-1],
-        #     lambda: jax.lax.stop_gradient(_w_shape),
-        #     lambda: _w_shape,
-        # )
-        # _w_rate = jax.lax.cond(
-        #     stop_gradients[-1], lambda: jax.lax.stop_gradient(_w_rate), lambda: _w_rate
-        # )
-        # z_mean = jax.lax.cond(
-        #     stop_gradients[-1], lambda: z_mean * 0.0 + 1, lambda: z_mean
-        # )
         z_mean = 1.0
         for idx in list(np.arange(0, self.n_layers)[::-1]):
             start = np.sum(self.layer_sizes[:idx]).astype(int)
