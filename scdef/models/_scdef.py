@@ -2081,7 +2081,7 @@ class scDEF(object):
     def plot_multilevel_paga(
         self,
         neighbors_rep: Optional[str] = "X_factors",
-        n_layers: Optional[int] = None,
+        layers: Optional[list] = None,
         figsize: Optional[tuple] = (16, 4),
         reuse_pos: Optional[bool] = True,
         show: Optional[bool] = True,
@@ -2091,29 +2091,34 @@ class scDEF(object):
 
         Args:
             neighbors_rep: the self.obsm key to use to compute the PAGA graphs
-            n_layers: number of layers to plot
+            layers: which layers to plot
             figsize: figure size
             reuse_pos: whether to initialize each PAGA graph with the graph from the layer above
             show: whether to show the plot
             **paga_kwargs: keyword arguments to adjust the PAGA layouts
         """
 
-        if n_layers is None:
-            n_layers = self.n_layers - 1
+        if layers is None:
+            layers = [
+                i
+                for i in range(self.n_layers - 1, -1, -1)
+                if len(self.factor_lists[i]) > 1
+            ]
+
+        n_layers = len(layers)
 
         fig, axes = plt.subplots(1, n_layers, figsize=figsize)
         sc.pp.neighbors(self.adata, use_rep=neighbors_rep)
         pos = None
-        for i, layer_idx in enumerate(range(n_layers - 1, -1, -1)):
-            if len(self.factor_lists[layer_idx]) <= 1:
-                break
+        for i, layer_idx in enumerate(layers):
+            print(i, layer_idx)
             ax = axes[layer_idx]
             new_layer_name = f"{self.layer_names[layer_idx]}factor"
 
             self.logger.info(f"Computing PAGA graph of layer {layer_idx}")
 
             # Use previous PAGA as initial positions for new PAGA
-            if layer_idx != n_layers - 1 and reuse_pos:
+            if i != layers[-1] and reuse_pos:
                 self.logger.info(
                     f"Re-using PAGA positions from layer {layer_idx+1} to init {layer_idx}"
                 )
