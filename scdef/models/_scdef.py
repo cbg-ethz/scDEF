@@ -2450,7 +2450,7 @@ class scDEF(object):
             layer_factor_orders = self.get_layer_factor_orders()
         else:
             layer_factor_orders = [
-                np.arange(len(self.factor_lists[i])) for i in self.n_layers
+                np.arange(len(self.factor_lists[i])) for i in range(self.n_layers)
             ]
 
         n_factors = [len(self.factor_lists[idx]) for idx in layers]
