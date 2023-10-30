@@ -103,12 +103,10 @@ class iscDEF(scDEF):
 
             if "layer_shapes" not in kwargs:
                 kwargs["layer_shapes"] = [0.3] * (self.n_layers - 1) + [1.0]
-            if "layer_rates" not in kwargs:
-                kwargs["layer_rates"] = [0.3] * (self.n_layers - 1) + [1.0]
             if "factor_shapes" not in kwargs:
-                kwargs["factor_shapes"] = [0.3] + (self.n_layers - 1) * [1.0]
+                kwargs["factor_shapes"] = [1.0] * self.n_layers
             if "factor_rates" not in kwargs:
-                kwargs["factor_rates"] = [0.3] + (self.n_layers - 1) * [1.0]
+                kwargs["factor_rates"] = [1.0] * self.n_layers
 
             if "use_brd" not in kwargs:
                 kwargs["use_brd"] = False
@@ -129,12 +127,10 @@ class iscDEF(scDEF):
 
             if "layer_shapes" not in kwargs:
                 kwargs["layer_shapes"] = 0.3
-            if "layer_rates" not in kwargs:
-                kwargs["layer_rates"] = 0.3
             if "factor_shapes" not in kwargs:
-                kwargs["factor_shapes"] = 0.3
+                kwargs["factor_shapes"] = 1.0
             if "factor_rates" not in kwargs:
-                kwargs["factor_rates"] = 0.3
+                kwargs["factor_rates"] = 1.0
 
         super(iscDEF, self).__init__(adata, layer_sizes=layer_sizes, **kwargs)
 
