@@ -2111,7 +2111,6 @@ class scDEF(object):
         sc.pp.neighbors(self.adata, use_rep=neighbors_rep)
         pos = None
         for i, layer_idx in enumerate(layers):
-            print(i, layer_idx)
             ax = axes[layer_idx]
             new_layer_name = f"{self.layer_names[layer_idx]}factor"
 

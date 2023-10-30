@@ -281,7 +281,6 @@ class iscDEF(scDEF):
             if self.markers_layer != 0:
                 factors_start = i * self.n_factors_per_set * (self.n_layers - 1)
                 factors_end = (i + 1) * self.n_factors_per_set * (self.n_layers - 1)
-                print(i, cellgroup, factors_start, factors_end)
 
             if cellgroup != "other":
                 for gene in self.markers_dict[cellgroup]:
@@ -300,7 +299,6 @@ class iscDEF(scDEF):
                     for gene in self.markers_dict[group]:
                         if cellgroup != "other":
                             if gene not in self.markers_dict[cellgroup]:
-                                # print(f"Setting strength for {gene} from {group} in {cellgroup}")
                                 loc = np.where(self.adata.var.index == gene)[0]
                                 self.gene_sets[factors_start:factors_end, loc] = (
                                     gs_small_scale / 100.0
