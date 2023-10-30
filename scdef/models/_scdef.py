@@ -113,9 +113,9 @@ class scDEF(object):
 
         if factor_shapes is None:
             if self.use_brd:
-                factor_rates = [1.0] * self.n_layers
+                factor_shapes = [1.0] * self.n_layers
             else:
-                factor_rates = [0.3] + [1.0] * self.n_layers
+                factor_shapes = [0.3] + [1.0] * (self.n_layers - 1)
         elif isinstance(factor_shapes, float) or isinstance(factor_shapes, int):
             factor_shapes = [float(factor_shapes)] * self.n_layers
         elif len(factor_shapes) != self.n_layers:
