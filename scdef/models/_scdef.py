@@ -1036,10 +1036,10 @@ class scDEF(object):
                     np.where(counts >= min_cells)[0]
                 ]
                 if filter_up:
-                    mat = self.pmeans[f"{layer_name}W"]
+                    mat = self.pmeans[f"{layer_name}W"][keep]
                     assignments = []
                     for factor in self.factor_lists[i - 1]:
-                        assignments.append(np.argmax(mat[:, factor]))
+                        assignments.append(keep[np.argmax(mat[:, factor])])
 
                     keep = np.unique(
                         list(set(np.unique(assignments)).intersection(keep))
