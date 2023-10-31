@@ -46,7 +46,7 @@ nav:
   - Examples:
     - Basic usage: examples/basicusage.md
     - Getting started with 3k PBMCs: examples/scdef-pbmcs3k.ipynb
-    - Integrating two batches of PBMCs: examples/scdef-pbmcs2batches.ipynb
+    - Integrating two batches of PBMCs: examples/scdef-pbmcs-2batches.ipynb
   - API Reference: api.md
 
 repo_name: scDEF
