@@ -32,6 +32,7 @@ To get started with scDEF, please see the example notebooks:
 
 - [Introduction to scDEF on 3k PBMCs](http://cbg-ethz.github.io/scDEF/examples/scdef-pbmcs3k/)
 
+- [Integration of two batches of PBMCs](http://cbg-ethz.github.io/scDEF/examples/scdef-pbmcs2batches/)
 
 ## Contributors
 Pedro Falé Ferreira [@pedrofale](https://github.com/pedrofale)
