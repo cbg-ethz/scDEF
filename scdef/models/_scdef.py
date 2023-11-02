@@ -1052,16 +1052,19 @@ class scDEF(object):
                 for i in range(len(self.factor_lists[idx]))
             ]
 
-            self.adata.obs[f"{layer_name}factor"] = pd.Categorical(
-                self.adata.obs[f"{layer_name}factor"]
-            )
-            sorted_factors = self.adata.obs_vector(f"{layer_name}factor")
-            sorted_colors = []
-            for fac in sorted_factors.categories:
-                pos = np.where(np.array(self.factor_names[idx]) == fac)[0][0]
-                col = factor_colors[pos]
-                sorted_colors.append(col)
-                self.adata.uns[f"{layer_name}factor_colors"] = sorted_colors
+            if layer_name == "marker":
+                self.adata.obs[f"{layer_name}factor"] = pd.Categorical(
+                    self.adata.obs[f"{layer_name}factor"]
+                )
+                sorted_factors = self.adata.obs_vector(f"{layer_name}factor")
+                sorted_colors = []
+                for fac in sorted_factors.categories:
+                    pos = np.where(np.array(self.factor_names[idx]) == fac)[0][0]
+                    col = factor_colors[pos]
+                    sorted_colors.append(col)
+                    self.adata.uns[f"{layer_name}factor_colors"] = sorted_colors
+            else:
+                self.adata.uns[f"{layer_name}factor_colors"] = factor_colors
 
             scores_names = [f + "_score" for f in self.factor_names[idx]]
             df = pd.DataFrame(
