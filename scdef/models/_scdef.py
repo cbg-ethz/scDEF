@@ -2507,6 +2507,8 @@ class scDEF(object):
         figsize=(16, 4),
         fontsize=12,
         legend_fontsize=10,
+        use_log=True,
+        metric="cosine",
         show=True,
     ):
         if layers is None:
@@ -2534,10 +2536,17 @@ class scDEF(object):
             self.adata.obsm[f"X_{self.layer_names[layer]}factors_log"] = np.log(
                 self.adata.obsm[f"X_{self.layer_names[layer]}factors"]
             )
-            sc.pp.neighbors(
-                self.adata, use_rep=f"X_{self.layer_names[layer]}factors_log"
-            )
-            sc.tl.umap(self.adata)
+            if use_log:
+                sc.pp.neighbors(
+                    self.adata, use_rep=f"X_{self.layer_names[layer]}factors_log"
+                )
+            else:
+                sc.pp.neighbors(
+                    self.adata,
+                    use_rep=f"X_{self.layer_names[layer]}factors",
+                    metric=metric,
+                )
+            sc.tl.umap(self.adata, min_dist=min_dist)
 
             for row in range(len(color)):
                 if n_rows > 1:
