@@ -2615,7 +2615,7 @@ class scDEF(object):
                     use_rep=f"X_{self.layer_names[layer]}factors",
                     metric=metric,
                 )
-            sc.tl.umap(self.adata, min_dist=min_dist)
+            sc.tl.umap(self.adata)
 
             for row in range(len(color)):
                 if n_rows > 1:
