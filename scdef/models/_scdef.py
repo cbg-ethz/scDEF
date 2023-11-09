@@ -99,11 +99,9 @@ class scDEF(object):
         self.layer_shapes = layer_shapes
 
         if layer_rates is None:
-            layer_rates = [self.layer_shapes[0], (self.n_cells / 1_000)] + [
-                (self.n_cells / 1_000)
-                * (i + 2)
-                * (self.layer_sizes[i] / self.layer_sizes[i + 1])
-                for i in range(self.n_layers - 2)
+            kcells = min(float(self.n_cells / 1_000), 10.0)
+            layer_rates = [self.layer_shapes[0], kcells] + [
+                kcells * (i + 2) for i in range(self.n_layers - 2)
             ]
         elif isinstance(layer_rates, float) or isinstance(layer_rates, int):
             layer_rates = [float(layer_rates)] * self.n_layers
