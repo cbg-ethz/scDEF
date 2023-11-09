@@ -57,7 +57,8 @@ class iscDEF(scDEF):
         markers_layer: Optional[
             int
         ] = 0,  # by default, use lower layer and learn a hierarchy
-        n_factors_per_set: Optional[int] = 2,
+        n_factors_per_set: Optional[int] = 3,
+        n_sets_per_factor: Optional[int] = 1.5,
         n_layers: Optional[int] = 4,
         cn_small_mean: Optional[float] = 0.01,
         cn_big_mean: Optional[float] = 10.0,
@@ -75,6 +76,7 @@ class iscDEF(scDEF):
         self.markers_layer = markers_layer
         self.n_layers = n_layers
         self.n_factors_per_set = n_factors_per_set
+        self.n_sets_per_factor = n_sets_per_factor
         self.gs_big_scale = gs_big_scale
         self.cn_big_strength = cn_big_strength
 
@@ -90,7 +92,7 @@ class iscDEF(scDEF):
                     name = "marker"
                 else:
                     size = int(
-                        np.ceil(self.n_markers / (self.n_factors_per_set * layer))
+                        np.ceil(self.n_markers / (self.n_sets_per_factor * layer))
                     )
                     name = "h" * layer
                     if size <= 1:
