@@ -2048,6 +2048,7 @@ class scDEF(object):
         layers: Optional[list] = None,
         figsize: Optional[tuple] = (16, 4),
         reuse_pos: Optional[bool] = True,
+        fontsize: Optional[int] = 12,
         show: Optional[bool] = True,
         **paga_kwargs,
     ):
@@ -2104,10 +2105,10 @@ class scDEF(object):
                 init_pos=pos,
                 layout="fa",
                 ax=ax,
-                title=f"Layer {layer_idx} PAGA",
                 show=False,
                 **paga_kwargs,
             )
+            ax.set_title(f"Layer {layer_idx} PAGA", fontsize=fontsize)
 
             old_layer_name = new_layer_name
         if show:
