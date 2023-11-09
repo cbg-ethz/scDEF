@@ -29,7 +29,7 @@ import scanpy as sc
 from scipy.cluster.hierarchy import ward, leaves_list
 from scipy.spatial.distance import pdist
 
-from typing import Optional, Union, Sequence, Mapping
+from typing import Optional, Union, Sequence, Mapping, Literal
 
 
 class scDEF(object):
@@ -2256,6 +2256,49 @@ class scDEF(object):
                 layers.append(layer_idx)
         return scores, factors, layers
 
+    def compute_factor_obs_weight_score(self, layer_idx, factor_name, obs_key, obs_val):
+        layer_name = self.layer_names[layer_idx]
+
+        # Cells from obs_val
+        adata_cells_from_obs = self.adata[
+            np.where(self.adata.obs[obs_key] == obs_val)[0]
+        ]
+        adata_cells_not_from_obs = self.adata[
+            np.where(self.adata.obs[obs_key] != obs_val)[0]
+        ]
+
+        # Weight of cells from obs in factor
+        avg_in = np.mean(adata_cells_from_obs.obs[f"{factor_name}"])
+
+        # Weight of cells not from obs in factor
+        avg_out = np.mean(adata_cells_not_from_obs.obs[f"{factor_name}"])
+
+        score = avg_in / np.sum(avg_in + avg_out)
+
+        return score
+
+    def get_factor_obs_weight_scores(self, obs_key, obs_val):
+        scores = []
+        factors = []
+        layers = []
+        for layer_idx in range(self.n_layers):
+            n_factors = len(self.factor_lists[layer_idx])
+            for factor in range(n_factors):
+                factor_name = self.factor_names[layer_idx][factor]
+                score = self.compute_factor_obs_weight_score(
+                    layer_idx, factor_name, obs_key, obs_val
+                )
+                scores.append(score)
+                factors.append(factor_name)
+                layers.append(layer_idx)
+        return scores, factors, layers
+
+    def compute_factor_obs_entropies(self, obs_key):
+        mats = self._get_weight_scores(obs_key, self.adata.obs[obs_key].unique())
+        mat = np.concatenate(mats, axis=1)
+        entropies = scipy.stats.entropy(mat, axis=0)
+        return entropies
+
     def assign_obs_to_factors(self, obs_keys, factor_names=[]):
         if not isinstance(obs_keys, list):
             obs_keys = [obs_keys]
@@ -2317,6 +2360,20 @@ class scDEF(object):
             scores, factors, layers = self.get_factor_obs_association_scores(
                 obs_key, obs
             )
+            for j in range(self.n_layers):
+                indices = np.where(np.array(layers) == j)[0]
+                mats[j][i] = np.array(scores)[indices]
+        return mats
+
+    def _get_weight_scores(self, obs_key, obs_vals):
+        signatures_dict = self.get_signatures_dict()
+        n_obs = len(obs_vals)
+        mats = [
+            np.zeros((n_obs, len(self.factor_names[idx])))
+            for idx in range(self.n_layers)
+        ]
+        for i, obs in enumerate(obs_vals):
+            scores, factors, layers = self.get_factor_obs_weight_scores(obs_key, obs)
             for j in range(self.n_layers):
                 indices = np.where(np.array(layers) == j)[0]
                 mats[j][i] = np.array(scores)[indices]
@@ -2484,18 +2541,30 @@ class scDEF(object):
         self.plot_layers_obs(obs_keys, obs_mats, obs_clusters, obs_vals_dict, **kwargs)
 
     def plot_obs_scores(
-        self, obs_keys: Sequence[str], hierarchy: Optional[dict] = None, **kwargs
+        self,
+        obs_keys: Sequence[str],
+        hierarchy: Optional[dict] = None,
+        mode: Literal["assignments", "weights"] = "assignments",
+        **kwargs,
     ):
         """Plot the association between a set of cell annotations and the learned factor assignments.
 
         Args:
             obs_keys: the keys in self.adata.obs to use
             hierarchy: the polytree to restrict the associations to
+            mode: whether to compute scores based on assignments or weights
             **kwargs: plotting keyword arguments
         """
+        if mode == "assignments":
+            f = self._get_assignment_scores
+        elif mode == "weights":
+            f = self._get_weight_scores
+        else:
+            raise ValueError("`mode` must be one of ['assignments', 'weights']")
+
         obs_mats, obs_clusters, obs_vals_dict = self._prepare_obs_factor_scores(
             obs_keys,
-            self._get_assignment_scores,
+            f,
             hierarchy=hierarchy,
         )
         self.plot_layers_obs(obs_keys, obs_mats, obs_clusters, obs_vals_dict, **kwargs)
