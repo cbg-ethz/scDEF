@@ -2268,10 +2268,10 @@ class scDEF(object):
         ]
 
         # Weight of cells from obs in factor
-        avg_in = np.mean(adata_cells_from_obs.obs[f"{factor_name}"])
+        avg_in = np.mean(adata_cells_from_obs.obs[f"{factor_name}_score"])
 
         # Weight of cells not from obs in factor
-        avg_out = np.mean(adata_cells_not_from_obs.obs[f"{factor_name}"])
+        avg_out = np.mean(adata_cells_not_from_obs.obs[f"{factor_name}_score"])
 
         score = avg_in / np.sum(avg_in + avg_out)
 
@@ -2296,8 +2296,10 @@ class scDEF(object):
     def compute_factor_obs_entropies(self, obs_key):
         mats = self._get_weight_scores(obs_key, self.adata.obs[obs_key].unique())
         mat = np.concatenate(mats, axis=1)
+        factors = [self.factor_names[idx] for idx in range(self.n_layers)]
+        flat_list = [item for sublist in factors for item in sublist]
         entropies = scipy.stats.entropy(mat, axis=0)
-        return entropies
+        return dict(zip(flat_list, entropies))
 
     def assign_obs_to_factors(self, obs_keys, factor_names=[]):
         if not isinstance(obs_keys, list):
