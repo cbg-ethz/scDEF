@@ -121,9 +121,9 @@ def run_unintegrated(
 
 def run_nmf(
     ad,
-    k_range=[5, 15],
+    k_extra=2,
     layer="counts",
-    resolution=1.0,
+    resolution=10.0,
     return_signatures=True,
     return_cluster_assignments=True,
     **kwargs,
@@ -136,9 +136,10 @@ def run_nmf(
         )
     ad = ad.copy()
     X = ad.layers[layer]
+    X = np.log(1e4 * X / np.sum(X, axis=1)[:, None] + 1)
     nmfs = []
     n_modules = []
-    k_range = (np.array(k_range) * resolution).astype(int)
+    k_range = (np.arange(resolution - k_extra, resolution + k_extra + 1)).astype(int)
     for k in k_range:
         # Run NMF
         nmf = NMF(n_components=k, max_iter=5000)
@@ -185,9 +186,9 @@ def run_nmf(
 
 def run_schpf(
     ad,
-    k_range=[5, 15],
+    k_extra=2,
     layer="counts",
-    resolution=1.0,
+    resolution=10.0,
     return_signatures=True,
     return_cluster_assignments=True,
     **kwargs,
@@ -203,7 +204,7 @@ def run_schpf(
     X = scipy.sparse.coo_matrix(X)
     models = []
     losses = []
-    k_range = (np.array(k_range) * resolution).astype(int)
+    k_range = (np.arange(resolution - k_extra, resolution + k_extra + 1)).astype(int)
     for k in k_range:
         sch = schpf.scHPF(k)
         sch.fit(X)
