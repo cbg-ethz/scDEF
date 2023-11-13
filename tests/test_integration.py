@@ -100,6 +100,8 @@ def test_scdef():
 
     scd.learn(n_epoch=3)
 
+    scd.filter_factors(iqr_mult=0.0, min_cells=0)  # make sure we keep factors
+
     assert len(scd.elbos) == 1
     assert "factor" in scd.adata.obs.columns
     assert "hfactor" in scd.adata.obs.columns

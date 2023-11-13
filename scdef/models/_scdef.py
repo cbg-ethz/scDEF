@@ -72,7 +72,7 @@ class scDEF(object):
         layer_rates: Optional[list] = None,
         brd: Optional[float] = 1e3,
         use_brd: Optional[bool] = True,
-        cell_scale_shape: Optional[float] = 1.0,
+        cell_scale_shape: Optional[float] = 6.0,
         gene_scale_shape: Optional[float] = 1.0,
         factor_shapes: Optional[list] = None,
         factor_rates: Optional[list] = None,
@@ -94,9 +94,22 @@ class scDEF(object):
             layer_shapes = [0.3] * (self.n_layers - 1) + [1.0]
         elif isinstance(layer_shapes, float) or isinstance(layer_shapes, int):
             layer_shapes = [float(layer_shapes)] * self.n_layers
-        elif len(layer_shapes) != self.n_layers:
+        if len(layer_shapes) != self.n_layers:
             raise ValueError("layer_shapes list must be of size scDEF.n_layers")
         self.layer_shapes = layer_shapes
+
+        if layer_rates is None:
+            # Same proportion as layer sizes
+            mult = self.layer_shapes[0] * 10 / self.layer_sizes[-1]
+            layer_rates = [self.layer_shapes[0]] + [
+                mult * self.layer_sizes[i] / 10.0
+                for i in range(self.n_layers - 2, -1, -1)
+            ]
+        elif isinstance(layer_rates, float) or isinstance(layer_rates, int):
+            layer_rates = [float(layer_rates)] * self.n_layers
+        if len(layer_rates) != self.n_layers:
+            raise ValueError("layer_rates list must be of size scDEF.n_layers")
+        self.layer_rates = layer_rates
 
         if factor_shapes is None:
             if self.use_brd:
@@ -105,7 +118,7 @@ class scDEF(object):
                 factor_shapes = [0.3] + [1.0] * (self.n_layers - 1)
         elif isinstance(factor_shapes, float) or isinstance(factor_shapes, int):
             factor_shapes = [float(factor_shapes)] * self.n_layers
-        elif len(factor_shapes) != self.n_layers:
+        if len(factor_shapes) != self.n_layers:
             raise ValueError("factor_shapes list must be of size scDEF.n_layers")
         self.factor_shapes = factor_shapes
 
@@ -116,7 +129,7 @@ class scDEF(object):
                 factor_rates = [0.3] + [1.0] * (self.n_layers - 1)
         elif isinstance(factor_rates, float) or isinstance(factor_rates, int):
             factor_rates = [float(factor_rates)] * self.n_layers
-        elif len(factor_rates) != self.n_layers:
+        if len(factor_rates) != self.n_layers:
             raise ValueError("factor_rates list must be of size scDEF.n_layers")
         self.factor_rates = factor_rates
 
@@ -124,7 +137,7 @@ class scDEF(object):
             layer_diagonals = [1.0] * self.n_layers
         elif isinstance(layer_diagonals, float) or isinstance(layer_diagonals, int):
             layer_diagonals = [float(layer_diagonals)] * self.n_layers
-        elif len(layer_diagonals) != self.n_layers:
+        if len(layer_diagonals) != self.n_layers:
             raise ValueError("layer_diagonals list must be of size scDEF.n_layers")
         self.layer_diagonals = layer_diagonals
 
@@ -132,7 +145,7 @@ class scDEF(object):
             layer_cpal = ["Set1"] * self.n_layers
         elif isinstance(layer_cpal, str):
             layer_cpal = [layer_cpal] * self.n_layers
-        elif len(layer_cpal) != self.n_layers:
+        if len(layer_cpal) != self.n_layers:
             raise ValueError("layer_cpal list must be of size scDEF.n_layers")
 
         self.factor_lists = [np.arange(size) for size in self.layer_sizes]
@@ -169,17 +182,6 @@ class scDEF(object):
 
         self.load_adata(adata, layer=counts_layer, batch_key=batch_key)
         self.batch_key = batch_key
-
-        if layer_rates is None:
-            kcells = min(self.n_batches * float(self.n_cells / 1_000), 10.0)
-            layer_rates = [self.layer_shapes[0], kcells] + [
-                kcells * (i + 2) for i in range(self.n_layers - 2)
-            ]
-        elif isinstance(layer_rates, float) or isinstance(layer_rates, int):
-            layer_rates = [float(layer_rates)] * self.n_layers
-        elif len(layer_rates) != self.n_layers:
-            raise ValueError("layer_rates list must be of size scDEF.n_layers")
-        self.layer_rates = layer_rates
 
         self.w_priors = []
         for idx in range(self.n_layers):
