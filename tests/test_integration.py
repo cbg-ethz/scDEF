@@ -84,7 +84,7 @@ def test_scdef():
     sc.pp.normalize_total(adata, target_sum=1e4)
     sc.pp.log1p(adata)
     sc.pp.highly_variable_genes(
-        adata, min_mean=0.0125, max_mean=3, min_disp=0.5, n_top_genes=100
+        adata, min_mean=0.0125, max_mean=3, min_disp=0.5, n_top_genes=200
     )
     raw_adata = raw_adata[:, adata.var.highly_variable]
     adata = adata[:, adata.var.highly_variable]
@@ -162,9 +162,9 @@ def test_scdef():
                 [1.0, 0.6],
                 [1.0, 0.6],
                 [1.0, 0.6],
-                [10, 1],
-                [10, 1],
-                [10, 1],
+                [10, 5],
+                [10, 5],
+                [10, 5],
             ],
         )
     )
