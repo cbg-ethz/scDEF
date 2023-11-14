@@ -2572,7 +2572,7 @@ class scDEF(object):
 
                 # Compute z-scores
                 den = np.std(factor_vals, axis=0)
-                den[den == 0] = 1.0
+                den[den == 0] = 1e6
                 factor_vals = (factor_vals - np.mean(factor_vals, axis=0)) / den[
                     None, :
                 ]
