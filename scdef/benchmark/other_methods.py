@@ -199,6 +199,8 @@ def run_schpf(
         raise ImportError(
             "Please install schpf by following the instructions in https://github.com/simslab/scHPF."
         )
+    import scipy
+
     ad = ad.copy()
     X = ad.layers[layer]
     X = scipy.sparse.coo_matrix(X)
