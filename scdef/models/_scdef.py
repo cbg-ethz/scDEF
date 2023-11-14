@@ -100,11 +100,14 @@ class scDEF(object):
 
         if layer_rates is None:
             layer_rates = [self.layer_shapes[0]]
-            start = 2
+            start = 1
             if layer_sizes[-1] == 1:
                 start = 2
             schedule = self.layer_sizes[::-1][start:]
-            schedule = (np.array(schedule) / 10.0).tolist() + schedule
+            if self.layer_sizes[0] >= 10:
+                schedule = (np.array(schedule) / 10.0).tolist() + schedule
+            else:
+                schedule = schedule + (np.array(schedule) * 10.0).tolist()
             for i in range(self.n_layers - 1):
                 layer_rates.append(float(schedule[i]))
         elif isinstance(layer_rates, float) or isinstance(layer_rates, int):
