@@ -11,10 +11,6 @@ from sklearn.model_selection import train_test_split
 counts = pd.read_csv(snakemake.input["counts_fname"], index_col=0)
 meta = pd.read_csv(snakemake.input["meta_fname"])
 markers = pd.read_csv(snakemake.input["markers_fname"])
-k_min = snakemake.params["k_min"]
-k_max = snakemake.params["k_max"]
-n_top_genes = snakemake.params["n_top_genes"]
-chc_reps = snakemake.params["chc_reps"]
 true_hierarchy = snakemake.params["true_hrc"]
 
 groups = markers["cluster"].unique()
@@ -35,16 +31,13 @@ sc.pp.log1p(adata)
 sc.pp.highly_variable_genes(
     adata,
     n_top_genes=2000,
-    subset=False,
+    subset=True,
     layer="counts",
     flavor="seurat_v3",
     batch_key="Batch",
 )
-adata = raw_adata[:, adata.var.highly_variable]
-X = scipy.sparse.coo_matrix(adata.X)
 
-
-methods_list = ["Harmony"]
+methods_list = ["scHPF"]
 methods_results = scdef.benchmark.run_methods(adata, methods_list, batch_key="Batch")
 
 metrics_list = [

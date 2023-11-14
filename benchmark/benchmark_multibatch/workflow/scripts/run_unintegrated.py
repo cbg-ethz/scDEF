@@ -7,7 +7,6 @@ import anndata
 counts = pd.read_csv(snakemake.input["counts_fname"], index_col=0)
 meta = pd.read_csv(snakemake.input["meta_fname"])
 markers = pd.read_csv(snakemake.input["markers_fname"])
-n_top_genes = snakemake.params["n_top_genes"]
 true_hierarchy = snakemake.params["true_hrc"]
 
 groups = markers["cluster"].unique()

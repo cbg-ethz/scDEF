@@ -37,7 +37,7 @@ adata = raw_adata[:, adata.var.highly_variable]
 
 # Run scDEF
 scd = scdef.scDEF(adata, batch_key="")
-scd.learn(n_epoch=10)
+scd.learn(n_epoch=1000)
 
 metrics_list = [
     "Cell Type ARI",

@@ -36,7 +36,7 @@ sc.pp.highly_variable_genes(
 
 # Run scDEF
 scd = scdef.scDEF(adata, batch_key="Batch")
-scd.learn(n_epoch=10)
+scd.learn(n_epoch=1000)
 
 metrics_list = [
     "Cell Type ARI",

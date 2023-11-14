@@ -8,8 +8,6 @@ from sklearn.decomposition import NMF
 counts = pd.read_csv(snakemake.input["counts_fname"], index_col=0)
 meta = pd.read_csv(snakemake.input["meta_fname"])
 markers = pd.read_csv(snakemake.input["markers_fname"])
-k_min = snakemake.params["k_min"]
-k_max = snakemake.params["k_max"]
 true_hierarchy = snakemake.params["true_hrc"]
 
 groups = markers["cluster"].unique()

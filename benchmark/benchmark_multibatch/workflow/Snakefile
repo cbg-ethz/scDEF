@@ -20,7 +20,8 @@ rule all:
 
 rule generate_data:
     resources:
-        time = "00:20:00",
+        mem_per_cpu=10000,
+        threads=10,
     params:
         de_prob = "{separability}",
         batch_facscale = config["batch_facscale"],
