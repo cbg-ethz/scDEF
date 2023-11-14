@@ -46,7 +46,9 @@ nav:
   - Examples:
     - Basic usage: examples/basicusage.md
     - Getting started with 3k PBMCs: examples/scdef-pbmcs3k.ipynb
+    - Cell type hierarchies in a whole adult animal: examples/scdef-planaria.ipynb
     - Integrating two batches of PBMCs: examples/scdef-pbmcs-2batches.ipynb
+    - Identifying interferon-response between two batches of PBMCs: examples/scdef-ifn.ipynb
   - API Reference: api.md
 
 repo_name: scDEF

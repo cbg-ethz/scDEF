@@ -32,7 +32,12 @@ To get started with scDEF, please see the example notebooks:
 
 - [Introduction to scDEF on 3k PBMCs](http://cbg-ethz.github.io/scDEF/examples/scdef-pbmcs3k/)
 
+- [Identifying cell type hierarchies in a whole adult animal](http://cbg-ethz.github.io/scDEF/examples/scdef-planaria/)
+
 - [Integration of two batches of PBMCs](http://cbg-ethz.github.io/scDEF/examples/scdef-pbmcs-2batches/)
+
+- [Identifying signatures of interferon-response in PBMCs](http://cbg-ethz.github.io/scDEF/examples/scdef-ifn/)
+
 
 ## Contributors
 Pedro Falé Ferreira [@pedrofale](https://github.com/pedrofale)
