@@ -751,7 +751,7 @@ class scDEF(object):
 
     def learn(
         self,
-        n_epoch: Optional[Union[int, list]] = [1000],
+        n_epoch: Optional[Union[int, list]] = [1000, 1000],
         lr: Optional[Union[float, list]] = 0.1,
         annealing: Optional[Union[float, list]] = 1.0,
         num_samples: Optional[int] = 10,
