@@ -25,6 +25,7 @@ import numpy as np
 import pandas as pd
 from anndata import AnnData
 import scanpy as sc
+import decoupler
 
 from scipy.cluster.hierarchy import ward, leaves_list
 from scipy.spatial.distance import pdist
@@ -2522,6 +2523,100 @@ class scDEF(object):
         cb.ax.set_title(cb_title, fontsize=cb_title_fontsize)
         if show:
             plt.show()
+
+    def _prepare_pathway_factor_scores(
+        self,
+        pathways,
+        top_genes=20,
+        source="source",
+        target="target",
+        score="Combined score",
+    ):
+        factors = [self.factor_names[idx] for idx in range(self.n_layers)]
+        flat_list = [item for sublist in factors for item in sublist]
+        n_factors = len(flat_list)
+
+        obs_mats = dict()
+        obs_joined_mats = dict()
+        obs_clusters = dict()
+        obs_vals_dict = dict()
+        obs_vals_dict["Pathway"] = pathways[source].unique().tolist()
+
+        n_pathways = len(obs_vals_dict["Pathway"])
+
+        mats = []
+        for layer in range(len(self.factor_names)):
+            _n_factors = len(self.factor_names[layer])
+            factor_vals = np.zeros((n_pathways, _n_factors))
+            for i, factor in enumerate(self.factor_names[layer]):
+                df = sc.get.rank_genes_groups_df(
+                    self.adata,
+                    group=factor,
+                    key=f"{self.layer_names[layer]}factor_signatures",
+                )
+                df = df.set_index("names")
+                df = df.iloc[:top_genes]
+                res = decoupler.get_ora_df(
+                    df, net=pathways, source=source, target=target, verbose=False
+                )
+                for term in res["Term"]:
+                    term_idx = np.where(np.array(obs_vals_dict["Pathway"]) == term)[0]
+                    factor_vals[term_idx, i] = res.loc[res["Term"] == term][
+                        score
+                    ].values[0]
+
+                # Compute z-scores
+                den = np.std(factor_vals, axis=0)
+                den[den == 0] = 1.0
+                factor_vals = (factor_vals - np.mean(factor_vals, axis=0)) / den[
+                    None, :
+                ]
+            mats.append(factor_vals)
+
+        # Cluster rows across columns in all mats
+        joined_mats = np.hstack(mats)
+        Z = ward(pdist(joined_mats))
+        hclust_index = leaves_list(Z)
+
+        obs_mats["Pathway"] = mats
+        obs_joined_mats["Pathway"] = joined_mats
+        obs_clusters["Pathway"] = hclust_index
+        return obs_mats, obs_clusters, obs_vals_dict, joined_mats
+
+    def plot_pathway_scores(
+        self,
+        pathways: pd.DataFrame,
+        top_genes: Optional[int] = 20,
+        **kwargs,
+    ):
+        """Plot the association between a set of cell annotations and a set of gene signatures.
+
+        Args:
+            obs_keys: the keys in self.adata.obs to use
+            pathways: a pandas DataFrame containing PROGENy pathways
+            **kwargs: plotting keyword arguments
+        """
+        (
+            obs_mats,
+            obs_clusters,
+            obs_vals_dict,
+            joined_mats,
+        ) = self._prepare_pathway_factor_scores(
+            pathways,
+            top_genes=top_genes,
+        )
+
+        vmax = joined_mats.max()
+        vmin = joined_mats.min()
+        self.plot_layers_obs(
+            ["Pathway"],
+            obs_mats,
+            obs_clusters,
+            obs_vals_dict,
+            vmax=vmax,
+            vmin=vmin,
+            **kwargs,
+        )
 
     def plot_signatures_scores(
         self,
