@@ -2433,6 +2433,10 @@ class scDEF(object):
 
             mats = get_scores_func(obs_key, obs_vals, **kwargs)
 
+            if np.max(mats[-1]) > 1.0:
+                for i in range(len(mats)):
+                    mats[i] = mats[i] / np.max(mats[i])
+
             # Cluster rows across columns in all mats
             joined_mats = np.hstack(mats)
             Z = ward(pdist(joined_mats))
@@ -2451,14 +2455,15 @@ class scDEF(object):
         obs_vals_dict,
         sort_layer_factors=True,
         layers=None,
-        vmax=1.0,
-        vmin=0.0,
+        vmax=None,
+        vmin=None,
         cb_title="",
         cb_title_fontsize=10,
         pad=0.1,
         shrink=0.7,
         figsize=(10, 4),
         xticks_rotation=90.0,
+        cmap=None,
         show=True,
     ):
         if not isinstance(obs_keys, list):
@@ -2493,7 +2498,7 @@ class scDEF(object):
                 ax = axs[j][i]
                 mat = obs_mats[obs_key][i]
                 mat = mat[obs_clusters[obs_key]][:, layer_factor_orders[i]]
-                axplt = ax.pcolormesh(mat, vmax=vmax, vmin=vmin)
+                axplt = ax.pcolormesh(mat, vmax=vmax, vmin=vmin, cmap=cmap)
 
                 if j == len(obs_keys) - 1:
                     xlabels = self.factor_names[i]
@@ -2671,7 +2676,21 @@ class scDEF(object):
             f,
             hierarchy=hierarchy,
         )
-        self.plot_layers_obs(obs_keys, obs_mats, obs_clusters, obs_vals_dict, **kwargs)
+        vmax = None
+        vmin = None
+        if mode == "assignments":
+            vmax = 1.0
+            vmin = 0.0
+
+        self.plot_layers_obs(
+            obs_keys,
+            obs_mats,
+            obs_clusters,
+            obs_vals_dict,
+            vmax=vmax,
+            vmin=vmin,
+            **kwargs,
+        )
 
     def plot_umaps(
         self,
