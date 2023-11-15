@@ -1,0 +1,42 @@
+configfile: "config/config.yaml"
+
+N_REPS = config["n_reps"]
+SEPARABILITY = config["de_prob"]
+FRACS_SHARED = config["frac_shared"]
+METHODS = config["methods"]
+SINGLE_METHODS = config["singlebatch_methods"]
+
+TRUE_HRC = {'Group1': ['Group1Group1', 'Group1Group2'],
+            'Group1Group1': ['Group1Group1Group1', 'Group1Group1Group2'],
+            'Group1Group2': ['Group1Group2Group3', 'Group1Group2Group4'],
+            'Group2': ['Group2Group3', 'Group2Group4'],
+            'Group2Group3': ['Group2Group3Group5', 'Group2Group3Group6'],
+            'Group2Group4': ['Group2Group4Group7', 'Group2Group4Group8']
+            }
+
+include: "rules/multibatch.smk"
+include: "rules/singlebatch.smk"
+
+rule all:
+    input:
+        fname = f'results/scores.csv'
+
+rule gather_scores:
+    resources:
+        time = "00:40:00",
+        mem_per_cpu = 12000,
+    input:
+        singlebatch_scores = 'results/singlebatch_scores.csv',
+        multibatch_scores = 'results/multibatch_scores.csv'
+    output:
+        'results/scores.csv'
+    script:
+        'scripts/gather_scores.py'
+
+rule plot_benchmark:
+    input:
+        'results/scores.csv'
+    output:
+        'results/benchmark_figure.png',
+    script:
+        "scripts/plot_benchmark.py"

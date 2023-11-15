@@ -1,24 +1,4 @@
-import os
-
-configfile: "config/config.yaml"
-
-N_REPS = config["n_reps"]
-SEPARABILITY = config["de_prob"]
-FRACS_SHARED = config["frac_shared"]
-METHODS = config["methods"]
-
-TRUE_HRC = {'Group1': ['Group1Group1', 'Group1Group2'],
-            'Group1Group1': ['Group1Group1Group1', 'Group1Group1Group2'],
-            'Group1Group2': ['Group1Group2Group3', 'Group1Group2Group4'],
-            'Group2': ['Group2Group3', 'Group2Group4'],
-            'Group2Group3': ['Group2Group3Group5', 'Group2Group3Group6'],
-            'Group2Group4': ['Group2Group4Group7', 'Group2Group4Group8']
-            }
-rule all:
-    input:
-        fname = f'results/scores.csv'
-
-rule generate_data:
+rule generate_multibatch_data:
     resources:
         mem_per_cpu=10000,
         threads=10,
@@ -38,9 +18,26 @@ rule generate_data:
     script:
         "scripts/splatter_hierarchical.R"
 
+rule gather_multibatch_scores:
+    resources:
+        time = "00:40:00",
+        mem_per_cpu = 12000,
+    input:
+        fname_list = expand(
+            'results/{method}/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_scores.csv',
+            method=METHODS,
+            frac_shared=FRACS_SHARED, separability=SEPARABILITY,
+            rep_id=[r for r in range(N_REPS)],)
+    output:
+        'results/multibatch_scores.csv'
+    script:
+        'scripts/gather_multibatch_scores.py'
+
 rule run_scdef:
     resources:
-        slurm_extra="--gpus=1 --ntasks-per-node=10",
+        mem_per_cpu=10000,
+        threads=10,
+        slurm="gpus=1 ntasks-per-node=10",
     params:
         seed = "{rep_id}",
         true_hrc = TRUE_HRC,
@@ -56,7 +53,9 @@ rule run_scdef:
 
 rule run_scdef_un:
     resources:
-        slurm_extra="--gpus=1 --ntasks-per-node=10",
+        mem_per_cpu=10000,
+        threads=10,
+        slurm="gpus=1 ntasks-per-node=10",
     params:
         seed = "{rep_id}",
         true_hrc = TRUE_HRC,
@@ -88,7 +87,8 @@ rule run_unintegrated:
 rule run_nmf:
     resources:
         time = "00:40:00",
-        mem = 12000,
+        mem_per_cpu=10000,
+        threads=10,
     params:
         seed = "{rep_id}",
         true_hrc = TRUE_HRC,
@@ -104,7 +104,8 @@ rule run_nmf:
 rule run_schpf:
     resources:
         time = "00:40:00",
-        mem = 12000,
+        mem_per_cpu=10000,
+        threads=10,
     params:
         seed = "{rep_id}",
         true_hrc = TRUE_HRC,
@@ -119,7 +120,9 @@ rule run_schpf:
 
 rule run_scvi:
     resources:
-        slurm_extra="--gpus=1 --ntasks-per-node=10",
+        mem_per_cpu=10000,
+        threads=10,
+        slurm="gpus=1 ntasks-per-node=10",
     params:
         seed = "{rep_id}",
         true_hrc = TRUE_HRC,
@@ -135,7 +138,8 @@ rule run_scvi:
 rule run_harmony:
     resources:
         time = "00:40:00",
-        mem = 12000,
+        mem_per_cpu=10000,
+        threads=10,
     params:
         seed = "{rep_id}",
         true_hrc = TRUE_HRC,
@@ -151,7 +155,8 @@ rule run_harmony:
 rule run_scanorama:
     resources:
         time = "00:40:00",
-        mem = 12000,
+        mem_per_cpu=10000,
+        threads=10,
     params:
         seed = "{rep_id}",
         true_hrc = TRUE_HRC,
@@ -163,26 +168,3 @@ rule run_scanorama:
         scores_fname = 'results/Scanorama/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_scores.csv',
     script:
         "scripts/run_scanorama.py"
-
-rule gather_scores:
-    resources:
-        time = "00:40:00",
-        mem = 12000,
-    input:
-        fname_list = expand(
-            'results/{method}/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_scores.csv',
-            method=METHODS,
-            frac_shared=FRACS_SHARED, separability=SEPARABILITY,
-            rep_id=[r for r in range(N_REPS)],)
-    output:
-        'results/scores.csv'
-    script:
-        'scripts/gather_scores.py'
-
-rule plot_benchmark:
-    input:
-        'results/scores.csv'
-    output:
-        'results/multibatch_benchmark_figure.png',
-    script:
-        "scripts/plot_benchmark.py"

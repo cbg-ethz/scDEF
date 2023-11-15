@@ -64,7 +64,7 @@ scores = pd.melt(
     scores,
     id_vars=[
         "method",
-        "n_batches",
+        "separability",
         "frac_shared",
         "rep_id",
         "score",
