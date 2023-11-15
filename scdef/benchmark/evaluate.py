@@ -55,7 +55,7 @@ def evaluate_methods(
                     scdef_signatures,
                     scdef_scores,
                     scdef_sizes,
-                    top_genes=10,
+                    top_genes=20,
                 )
             else:
                 score = evaluate_hierarchical_signatures_consistency(
@@ -64,7 +64,7 @@ def evaluate_methods(
                     method_outs["signatures"],
                     method_outs["scores"],
                     method_outs["sizes"],
-                    top_genes=10,
+                    top_genes=20,
                 )
             df.loc["Hierarchical signature consistency"][method] = score
 
@@ -207,7 +207,13 @@ def evaluate_hierarchy_from_cluster_levels(
 
 
 def evaluate_cluster_signatures(
-    adata, clusters_levels, signatures, obs_keys, markers, cluster_names=[]
+    adata,
+    clusters_levels,
+    signatures,
+    obs_keys,
+    markers,
+    cluster_names=[],
+    top_genes=20,
 ):
     layer_names = ["h" * level for level in range(len(clusters_levels))]
 
@@ -220,7 +226,7 @@ def evaluate_cluster_signatures(
     signature_scores = []
     for celltype in markers:
         cluster_name = assignments[celltype]
-        signature = signatures[cluster_name]
+        signature = signatures[cluster_name][:top_genes]
         markers_type = markers[celltype]
         nonmarkers_type = [m for m in markers if m not in markers_type]
         signature_scores.append(
@@ -229,7 +235,7 @@ def evaluate_cluster_signatures(
     return signature_scores
 
 
-def evaluate_scdef_signatures(scd, obs_keys, markers):
+def evaluate_scdef_signatures(scd, obs_keys, markers, top_genes=20):
     # Assign factors to obs
     assignments, matches = scd.assign_obs_to_factors(obs_keys)
     signatures_dict = scd.get_signatures_dict()
@@ -237,7 +243,7 @@ def evaluate_scdef_signatures(scd, obs_keys, markers):
     signature_scores = []
     for celltype in markers:
         factor_name = assignments[celltype]
-        signature = signatures_dict[factor_name]
+        signature = signatures_dict[factor_name][:top_genes]
         markers_type = markers[celltype]
         nonmarkers_type = [m for m in markers if m not in markers_type]
         signature_scores.append(
@@ -247,7 +253,7 @@ def evaluate_scdef_signatures(scd, obs_keys, markers):
 
 
 def evaluate_hierarchical_signatures_consistency(
-    var_names, hierarchy, signatures, scores, sizes, top_genes=10
+    var_names, hierarchy, signatures, scores, sizes, top_genes=20
 ):
     # sizes is a dict with the population sizes
     def get_consensus_signature(var_names, gene_scores_array, sizes_array):
