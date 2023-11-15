@@ -16,7 +16,7 @@ rule generate_multibatch_data:
         umap_fname = 'results/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_umap.png',
         umap_nobatch_fname = 'results/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_umap_nobatch.png',
     script:
-        "scripts/splatter_hierarchical.R"
+        "../scripts/splatter_hierarchical.R"
 
 rule gather_multibatch_scores:
     resources:
@@ -48,7 +48,7 @@ rule run_scdef:
     output:
         scores_fname = 'results/scDEF/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_scores.csv',
     script:
-        "scripts/run_scdef.py"
+        "../scripts/run_scdef.py"
 
 
 rule run_scdef_un:
@@ -66,7 +66,7 @@ rule run_scdef_un:
     output:
         scores_fname = 'results/scDEF_un/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_scores.csv',
     script:
-        "scripts/run_scdef_un.py"
+        "../scripts/run_scdef_un.py"
 
 rule run_unintegrated:
     resources:
@@ -82,7 +82,7 @@ rule run_unintegrated:
     output:
         scores_fname = 'results/Unintegrated/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_scores.csv',
     script:
-        "scripts/run_unintegrated.py"
+        "../scripts/run_unintegrated.py"
 
 rule run_nmf:
     resources:
@@ -99,7 +99,7 @@ rule run_nmf:
     output:
         scores_fname = 'results/NMF/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_scores.csv',
     script:
-        "scripts/run_nmf.py"
+        "../scripts/run_nmf.py"
 
 rule run_schpf:
     resources:
@@ -116,7 +116,7 @@ rule run_schpf:
     output:
         scores_fname = 'results/scHPF/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_scores.csv',
     script:
-        "scripts/run_schpf.py"
+        "../scripts/run_schpf.py"
 
 rule run_scvi:
     resources:
@@ -133,7 +133,7 @@ rule run_scvi:
     output:
         scores_fname = 'results/scVI/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_scores.csv',
     script:
-        "scripts/run_scvi.py"
+        "../scripts/run_scvi.py"
 
 rule run_harmony:
     resources:
@@ -150,7 +150,7 @@ rule run_harmony:
     output:
         scores_fname = 'results/Harmony/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_scores.csv',
     script:
-        "scripts/run_harmony.py"
+        "../scripts/run_harmony.py"
 
 rule run_scanorama:
     resources:
@@ -167,4 +167,4 @@ rule run_scanorama:
     output:
         scores_fname = 'results/Scanorama/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_scores.csv',
     script:
-        "scripts/run_scanorama.py"
+        "../scripts/run_scanorama.py"

@@ -15,7 +15,7 @@ rule generate_singlebatch_data:
         umap_fname = 'results/data/sep_{separability}/singlebatch/rep_{rep_id}_umap.png',
         umap_nobatch_fname = 'results/data/sep_{separability}/singlebatch/rep_{rep_id}_umap_nobatch.png',
     script:
-        "scripts/splatter_hierarchical.R"
+        "../scripts/splatter_hierarchical.R"
 
 rule gather_singlebatch_scores:
     resources:
@@ -46,7 +46,7 @@ rule run_scdef_singlebatch:
     output:
         scores_fname = 'results/scDEF/sep_{separability}/singlebatch/rep_{rep_id}_scores.csv',
     script:
-        "scripts/run_scdef.py"
+        "../scripts/run_scdef.py"
 
 rule run_unintegrated_singlebatch:
     resources:
@@ -62,7 +62,7 @@ rule run_unintegrated_singlebatch:
     output:
         scores_fname = 'results/Unintegrated/sep_{separability}/singlebatch/rep_{rep_id}_scores.csv',
     script:
-        "scripts/run_unintegrated.py"
+        "../scripts/run_unintegrated.py"
 
 rule run_nmf_singlebatch:
     resources:
@@ -79,7 +79,7 @@ rule run_nmf_singlebatch:
     output:
         scores_fname = 'results/NMF/sep_{separability}/singlebatch/rep_{rep_id}_scores.csv',
     script:
-        "scripts/run_nmf.py"
+        "../scripts/run_nmf.py"
 
 rule run_schpf_singlebatch:
     resources:
@@ -96,4 +96,4 @@ rule run_schpf_singlebatch:
     output:
         scores_fname = 'results/scHPF/sep_{separability}/singlebatch/rep_{rep_id}_scores.csv',
     script:
-        "scripts/run_schpf.py"
+        "../scripts/run_schpf.py"
