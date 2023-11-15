@@ -5,4 +5,4 @@ n_reps: 5
 n_batches: 4
 frac_shared: [.5, 1.]
 methods: ["scDEF", "scDEF_un", "Unintegrated", "NMF", "scHPF", "scVI", "Harmony", "Scanorama"]
-single_methods: ["scDEF", "Unintegrated", "NMF", "scHPF"]
+singlebatch_methods: ["scDEF", "Unintegrated", "NMF", "scHPF"]
