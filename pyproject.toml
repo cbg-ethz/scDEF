@@ -43,6 +43,3 @@ mkdocs-material = "^9.1.18"
 mkdocs-jupyter = "^0.24.2 "
 notebook = "~6.0.0"
 jupyter_contrib_nbextensions = "^0.7.0"
-
-[tool.poetry.scripts]
-scdef = "scdef:main"

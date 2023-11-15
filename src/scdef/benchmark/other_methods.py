@@ -350,7 +350,7 @@ def run_scvi(
         batch_key=batch_key,
     )
     model = scvi.model.SCVI(ad)
-    model.train(max_epochs=10)
+    model.train()
     latent = model.get_latent_representation()
     ad.obsm["X_scVI"] = latent
     # Cluster
