@@ -1,4 +1,5 @@
 from scdef.utils import score_utils, hierarchy_utils
+from scdef import scDEF
 
 import pandas as pd
 import numpy as np
@@ -26,7 +27,7 @@ def evaluate_methods(
 
         # Hierarchy
         if "Hierarchy accuracy" in metrics_list:
-            if method == "scDEF":
+            if isinstance(method_outs, scDEF):
                 score = evaluate_scdef_hierarchy(
                     method_outs,
                     hierarchy_obs_keys,
@@ -42,7 +43,7 @@ def evaluate_methods(
             df.loc["Hierarchy accuracy"][method] = score
 
         if "Hierarchical signature consistency" in metrics_list:
-            if method == "scDEF":
+            if isinstance(method_outs, scDEF):
                 method_simplified_hierarchy = method_outs.get_hierarchy(simplified=True)
                 scdef_signatures, scdef_scores = method_outs.get_signatures_dict(
                     scores=True
@@ -69,7 +70,7 @@ def evaluate_methods(
 
         # Signatures
         if "Signature accuracy" in metrics_list:
-            if method == "scDEF":
+            if isinstance(method_outs, scDEF):
                 score = evaluate_scdef_signatures(
                     method_outs, hierarchy_obs_keys, markers
                 )
@@ -85,7 +86,7 @@ def evaluate_methods(
 
         if "Signature sparsity" in metrics_list:
             ginis = []
-            if method == "scDEF":
+            if isinstance(method_outs, scDEF):
                 _, signature_scores = method_outs.get_signatures_dict(scores=True)
                 for node in signature_scores:
                     ginis.append(score_utils.gini(signature_scores[node]))
@@ -102,7 +103,7 @@ def evaluate_methods(
 
         # Cell type clustering
         if "Cell Type ARI" in metrics_list:
-            if method == "scDEF":
+            if isinstance(method_outs, scDEF):
                 score = adjusted_rand_score(
                     method_outs.adata.obs[celltype_obs_key],
                     method_outs.adata.obs["factor"],
@@ -114,7 +115,7 @@ def evaluate_methods(
             df.loc["Cell Type ARI"][method] = score
 
         if "Cell Type ASW" in metrics_list:
-            if method == "scDEF":
+            if isinstance(method_outs, scDEF):
                 score = silhouette_score(
                     method_outs.adata.obsm["X_factors"],
                     method_outs.adata.obs[celltype_obs_key],
@@ -128,7 +129,7 @@ def evaluate_methods(
 
         # Batch clustering
         if "Batch ARI" in metrics_list:
-            if method == "scDEF":
+            if isinstance(method_outs, scDEF):
                 score = adjusted_rand_score(
                     method_outs.adata.obs[batch_obs_key],
                     method_outs.adata.obs["factor"],
@@ -140,7 +141,7 @@ def evaluate_methods(
             df.loc["Batch ARI"][method] = score
 
         if "Batch ASW" in metrics_list:
-            if method == "scDEF":
+            if isinstance(method_outs, scDEF):
                 score = silhouette_score(
                     method_outs.adata.obsm["X_factors"],
                     method_outs.adata.obs[batch_obs_key],
