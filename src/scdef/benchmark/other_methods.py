@@ -350,7 +350,7 @@ def run_scvi(
         batch_key=batch_key,
     )
     model = scvi.model.SCVI(ad)
-    model.train()
+    model.train(max_epochs=10)
     latent = model.get_latent_representation()
     ad.obsm["X_scVI"] = latent
     # Cluster
@@ -434,6 +434,7 @@ OTHERS_FUNCS = dict(
 )
 
 
+# TODO: parallelize across methods
 def run_methods(adata, methods_list, res_sweeps=None, **kwargs):
     methods_outs = dict()
     for method in methods_list:

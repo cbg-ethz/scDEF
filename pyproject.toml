@@ -6,6 +6,7 @@ license = "MIT"
 authors = ["pedrofale <pedro.miguel.ferreira.pf@gmail.com>"]
 readme = "README.md"
 repository = "https://github.com/cbg-ethz/scdef"
+packages = [{include = "scdef", from = "src"}]
 
 [tool.poetry.dependencies]
 python = ">=3.8,<4.0"
