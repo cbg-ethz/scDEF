@@ -20,7 +20,7 @@ rule generate_multibatch_data:
 
 rule gather_multibatch_scores:
     resources:
-        time = "00:40:00",
+        time = "03:40:00",
         mem_per_cpu = 12000,
     input:
         fname_list = expand(
@@ -70,7 +70,7 @@ rule run_scdef_un:
 
 rule run_unintegrated:
     resources:
-        time = "00:40:00",
+        time = "03:40:00",
         mem = 12000,
     params:
         seed = "{rep_id}",
@@ -86,7 +86,7 @@ rule run_unintegrated:
 
 rule run_nmf:
     resources:
-        time = "00:40:00",
+        time = "03:40:00",
         mem_per_cpu=10000,
         threads=10,
     params:
@@ -103,7 +103,7 @@ rule run_nmf:
 
 rule run_schpf:
     resources:
-        time = "00:40:00",
+        time = "03:40:00",
         mem_per_cpu=10000,
         threads=10,
     params:
@@ -137,7 +137,7 @@ rule run_scvi:
 
 rule run_harmony:
     resources:
-        time = "00:40:00",
+        time = "03:40:00",
         mem_per_cpu=10000,
         threads=10,
     params:
@@ -154,7 +154,7 @@ rule run_harmony:
 
 rule run_scanorama:
     resources:
-        time = "00:40:00",
+        time = "03:40:00",
         mem_per_cpu=10000,
         threads=10,
     params:
