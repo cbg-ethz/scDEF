@@ -1,6 +1,6 @@
 de_prob: [0.3, 0.7]
 batch_facscale: 0.4
-n_cells: 2000
+n_cells: 1000
 n_reps: 5
 n_batches: 4
 frac_shared: [.5, 1.]
