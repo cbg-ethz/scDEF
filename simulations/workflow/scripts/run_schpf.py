@@ -22,7 +22,8 @@ adata = anndata.AnnData(X=counts.values.T, obs=meta)
 adata.var_names = [f"Gene{i+1}" for i in range(adata.shape[1])]
 
 adata.layers["counts"] = adata.X.copy()  # preserve counts
-sc.pp.filter_genes(adata, min_counts=3)
+sc.pp.filter_cells(adata, min_genes=200)
+sc.pp.filter_genes(adata, min_cells=3)
 adata.raw = adata
 raw_adata = adata.raw
 raw_adata = raw_adata.to_adata()
