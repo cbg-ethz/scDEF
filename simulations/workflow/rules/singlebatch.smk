@@ -46,7 +46,7 @@ rule run_scdef_singlebatch:
     output:
         scores_fname = 'results/scDEF/sep_{separability}/singlebatch/rep_{rep_id}_scores.csv',
     script:
-        "../scripts/run_scdef.py"
+        "../scripts/run_scdef_un.py"
 
 rule run_unintegrated_singlebatch:
     resources:
