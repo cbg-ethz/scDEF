@@ -102,101 +102,141 @@ possibleGroups <- c(rep("Group1Group1Group1", n_total_cells/8),
 sim <- sim[,colData(sim)$Group == possibleGroups]
 sim_nobatch <- sim_nobatch[,colData(sim_nobatch)$Group == possibleGroups]
 print("Sim done!")
-# Drop some cell groups from some batches
-group_list <- as.character(as.list(unique(sim$Group)))
-n_shared <- round(frac_shared*n_groups)
-if (n_shared > 0)
-  shared <- group_list[1:n_shared]
-specific <- group_list[(n_shared+1):n_groups]
-if (n_shared < n_groups) {
-  # Now sample non-shared groups on each batch
-  sub_sim <- sim[,sim$Batch == ""]
-  sub_sim_nobatch <- sim_nobatch[,sim_nobatch$Batch == ""]
-  batches <- unique(sim$Batch)
-  tokeep_per_batch <- setNames(rep(list(list()), length(batches)), batches)
-  while(length(specific) > 0) {
-    for (b in batches) {
-      if (length(specific) > 0) {
-        # Select specific groups to keep
-        batch_groups <- sample(specific, 1, replace=FALSE)
-        specific <- specific[!specific %in% batch_groups]
-        tokeep_per_batch[[b]] <- append(tokeep_per_batch[[b]], batch_groups)
+
+if (n_batches > 1) {
+  # Drop some cell groups from some batches
+  group_list <- as.character(as.list(unique(sim$Group)))
+  n_shared <- round(frac_shared*n_groups)
+  if (n_shared > 0)
+    shared <- group_list[1:n_shared]
+  specific <- group_list[(n_shared+1):n_groups]
+  if (n_shared < n_groups) {
+    # Now sample non-shared groups on each batch
+    sub_sim <- sim[,sim$Batch == ""]
+    sub_sim_nobatch <- sim_nobatch[,sim_nobatch$Batch == ""]
+    batches <- unique(sim$Batch)
+    tokeep_per_batch <- setNames(rep(list(list()), length(batches)), batches)
+    while(length(specific) > 0) {
+      for (b in batches) {
+        if (length(specific) > 0) {
+          # Select specific groups to keep
+          batch_groups <- sample(specific, 1, replace=FALSE)
+          specific <- specific[!specific %in% batch_groups]
+          tokeep_per_batch[[b]] <- append(tokeep_per_batch[[b]], batch_groups)
+        }
       }
     }
-  }
-  for (b in batches) {
-    # Get batch
-    if (n_shared > 0) {
-      tokeep <- c(shared, unlist(tokeep_per_batch[[b]]))
-    } else {
-      tokeep <- tokeep_per_batch[[b]]
+    for (b in batches) {
+      # Get batch
+      if (n_shared > 0) {
+        tokeep <- c(shared, unlist(tokeep_per_batch[[b]]))
+      } else {
+        tokeep <- tokeep_per_batch[[b]]
+      }
+      batch_sce <- sim[,sim$Batch == b]
+      batch_sce <- batch_sce[,batch_sce$Group %in% tokeep]
+
+      batch_sce_nobatch <- sim_nobatch[,sim_nobatch$Batch == b]
+      batch_sce_nobatch <- batch_sce_nobatch[,batch_sce_nobatch$Group %in% tokeep]
+
+      # Append to new SCE
+      sub_sim <- cbind(sub_sim, batch_sce)
+      sub_sim_nobatch <- cbind(sub_sim_nobatch, batch_sce_nobatch)
     }
-    batch_sce <- sim[,sim$Batch == b]
-    batch_sce <- batch_sce[,batch_sce$Group %in% tokeep]
-
-    batch_sce_nobatch <- sim_nobatch[,sim_nobatch$Batch == b]
-    batch_sce_nobatch <- batch_sce_nobatch[,batch_sce_nobatch$Group %in% tokeep]
-
-    # Append to new SCE
-    sub_sim <- cbind(sub_sim, batch_sce)
-    sub_sim_nobatch <- cbind(sub_sim_nobatch, batch_sce_nobatch)
+  } else {
+    sub_sim <- sim
+    sub_sim_nobatch <- sim_nobatch
   }
+  # Make Seurat object
+  sub_sim <- logNormCounts(sub_sim)
+  sub_sim_nobatch <- logNormCounts(sub_sim_nobatch)
+  sub_sim.seurat <- as.Seurat(sub_sim, counts = "counts", logcounts = "logcounts")
+  sub_sim_nobatch.seurat <- as.Seurat(sub_sim_nobatch, counts = "counts", logcounts = "logcounts")
+
+  # Save group signatures from non-batch data
+  Idents(object = sub_sim_nobatch.seurat) <- "GroupC"
+  sub_sim_nobatch.seurat.markers <- FindAllMarkers(sub_sim_nobatch.seurat, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+  markers <- sub_sim_nobatch.seurat.markers %>%
+      group_by(cluster) %>%
+      slice_max(n = 10, order_by = avg_log2FC) %>%
+      filter(p_val_adj < 0.05)
+  write.csv(markers,snakemake@output[["markers_fname"]])
+
+  # Save the data
+  counts = data.frame(counts(sub_sim))
+  meta = data.frame(colData(sub_sim))
+  write.csv(counts,snakemake@output[["counts_fname"]])
+  write.csv(meta,snakemake@output[["meta_fname"]])
+
+  # Save the UMAP of the data
+  sub_sim.seurat <- NormalizeData(sub_sim.seurat, verbose = FALSE)
+  sub_sim.seurat <- FindVariableFeatures(sub_sim.seurat, selection.method = "vst", nfeatures = 1000)
+  sub_sim.seurat <- ScaleData(sub_sim.seurat, verbose = FALSE)
+  sub_sim.seurat <- RunPCA(sub_sim.seurat, npcs = 30, verbose = FALSE)
+  sub_sim.seurat <- RunUMAP(sub_sim.seurat, reduction = "pca", dims = 1:20)
+  sub_sim.seurat <- FindNeighbors(sub_sim.seurat, reduction = "pca", dims = 1:20)
+  sub_sim.seurat <- FindClusters(sub_sim.seurat, resolution = 0.5)
+  p1 <- DimPlot(sub_sim.seurat, reduction = "umap", group.by = "GroupA", label = TRUE)
+  p2 <- DimPlot(sub_sim.seurat, reduction = "umap", group.by = "GroupB", label = TRUE)
+  p3 <- DimPlot(sub_sim.seurat, reduction = "umap", group.by = "GroupC", label = TRUE)
+  p4 <- DimPlot(sub_sim.seurat, reduction = "umap", group.by = "Batch", label = TRUE)
+  p5 <- DimPlot(sub_sim.seurat, reduction = "umap", group.by = "Group", label = TRUE)
+  p6 <- DimPlot(sub_sim.seurat, reduction = "umap", label = TRUE)
+  p <- plot_grid(p1, p2, p3, p4, p5, p6, ncol = 3)
+  ggsave(snakemake@output[["umap_fname"]])
+
+  sub_sim_nobatch.seurat <- NormalizeData(sub_sim_nobatch.seurat, verbose = FALSE)
+  sub_sim_nobatch.seurat <- FindVariableFeatures(sub_sim_nobatch.seurat, selection.method = "vst", nfeatures = 1000)
+  sub_sim_nobatch.seurat <- ScaleData(sub_sim_nobatch.seurat, verbose = FALSE)
+  sub_sim_nobatch.seurat <- RunPCA(sub_sim_nobatch.seurat, npcs = 30, verbose = FALSE)
+  sub_sim_nobatch.seurat <- RunUMAP(sub_sim_nobatch.seurat, reduction = "pca", dims = 1:20)
+  sub_sim_nobatch.seurat <- FindNeighbors(sub_sim_nobatch.seurat, reduction = "pca", dims = 1:20)
+  sub_sim_nobatch.seurat <- FindClusters(sub_sim_nobatch.seurat, resolution = 0.5)
+  p1 <- DimPlot(sub_sim_nobatch.seurat, reduction = "umap", group.by = "GroupA", label = TRUE)
+  p2 <- DimPlot(sub_sim_nobatch.seurat, reduction = "umap", group.by = "GroupB", label = TRUE)
+  p3 <- DimPlot(sub_sim_nobatch.seurat, reduction = "umap", group.by = "GroupC", label = TRUE)
+  p4 <- DimPlot(sub_sim_nobatch.seurat, reduction = "umap", group.by = "Batch", label = TRUE)
+  p5 <- DimPlot(sub_sim_nobatch.seurat, reduction = "umap", group.by = "Group", label = TRUE)
+  p6 <- DimPlot(sub_sim_nobatch.seurat, reduction = "umap", label = TRUE)
+  p <- plot_grid(p1, p2, p3, p4, p5, p6, ncol = 3)
+  ggsave(snakemake@output[["umap_nobatch_fname"]])
+
+  print("Batch subsets done!")
 } else {
   sub_sim <- sim
-  sub_sim_nobatch <- sim_nobatch
+
+  # Make Seurat object
+  sub_sim <- logNormCounts(sub_sim)
+  sub_sim.seurat <- as.Seurat(sub_sim, counts = "counts", logcounts = "logcounts")
+
+  # Save group signatures from non-batch data
+  Idents(object = sub_sim.seurat) <- "GroupC"
+  sub_sim.seurat.markers <- FindAllMarkers(sub_sim.seurat, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+  markers <- sub_sim.seurat.markers %>%
+      group_by(cluster) %>%
+      slice_max(n = 10, order_by = avg_log2FC) %>%
+      filter(p_val_adj < 0.05)
+  write.csv(markers,snakemake@output[["markers_fname"]])
+
+  # Save the data
+  counts = data.frame(counts(sub_sim))
+  meta = data.frame(colData(sub_sim))
+  write.csv(counts,snakemake@output[["counts_fname"]])
+  write.csv(meta,snakemake@output[["meta_fname"]])
+
+  # Save the UMAP of the data
+  sub_sim.seurat <- NormalizeData(sub_sim.seurat, verbose = FALSE)
+  sub_sim.seurat <- FindVariableFeatures(sub_sim.seurat, selection.method = "vst", nfeatures = 1000)
+  sub_sim.seurat <- ScaleData(sub_sim.seurat, verbose = FALSE)
+  sub_sim.seurat <- RunPCA(sub_sim.seurat, npcs = 30, verbose = FALSE)
+  sub_sim.seurat <- RunUMAP(sub_sim.seurat, reduction = "pca", dims = 1:20)
+  sub_sim.seurat <- FindNeighbors(sub_sim.seurat, reduction = "pca", dims = 1:20)
+  sub_sim.seurat <- FindClusters(sub_sim.seurat, resolution = 0.5)
+  p1 <- DimPlot(sub_sim.seurat, reduction = "umap", group.by = "GroupA", label = TRUE)
+  p2 <- DimPlot(sub_sim.seurat, reduction = "umap", group.by = "GroupB", label = TRUE)
+  p3 <- DimPlot(sub_sim.seurat, reduction = "umap", group.by = "GroupC", label = TRUE)
+  p4 <- DimPlot(sub_sim.seurat, reduction = "umap", group.by = "Group", label = TRUE)
+  p5 <- DimPlot(sub_sim.seurat, reduction = "umap", label = TRUE)
+  p <- plot_grid(p1, p2, p3, p4, p5, ncol = 3)
+  ggsave(snakemake@output[["umap_fname"]])
 }
-print("Batch subsets done!")
-
-# Make Seurat object
-sub_sim <- logNormCounts(sub_sim)
-sub_sim_nobatch <- logNormCounts(sub_sim_nobatch)
-sub_sim.seurat <- as.Seurat(sub_sim, counts = "counts", logcounts = "logcounts")
-sub_sim_nobatch.seurat <- as.Seurat(sub_sim_nobatch, counts = "counts", logcounts = "logcounts")
-
-# Save group signatures from non-batch data
-Idents(object = sub_sim_nobatch.seurat) <- "GroupC"
-sub_sim_nobatch.seurat.markers <- FindAllMarkers(sub_sim_nobatch.seurat, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
-markers <- sub_sim_nobatch.seurat.markers %>%
-    group_by(cluster) %>%
-    slice_max(n = 10, order_by = avg_log2FC) %>%
-    filter(p_val_adj < 0.05)
-write.csv(markers,snakemake@output[["markers_fname"]])
-
-# Save the data
-counts = data.frame(counts(sub_sim))
-meta = data.frame(colData(sub_sim))
-write.csv(counts,snakemake@output[["counts_fname"]])
-write.csv(meta,snakemake@output[["meta_fname"]])
-
-# Save the UMAP of the data
-sub_sim.seurat <- NormalizeData(sub_sim.seurat, verbose = FALSE)
-sub_sim.seurat <- FindVariableFeatures(sub_sim.seurat, selection.method = "vst", nfeatures = 1000)
-sub_sim.seurat <- ScaleData(sub_sim.seurat, verbose = FALSE)
-sub_sim.seurat <- RunPCA(sub_sim.seurat, npcs = 30, verbose = FALSE)
-sub_sim.seurat <- RunUMAP(sub_sim.seurat, reduction = "pca", dims = 1:20)
-sub_sim.seurat <- FindNeighbors(sub_sim.seurat, reduction = "pca", dims = 1:20)
-sub_sim.seurat <- FindClusters(sub_sim.seurat, resolution = 0.5)
-p1 <- DimPlot(sub_sim.seurat, reduction = "umap", group.by = "GroupA", label = TRUE)
-p2 <- DimPlot(sub_sim.seurat, reduction = "umap", group.by = "GroupB", label = TRUE)
-p3 <- DimPlot(sub_sim.seurat, reduction = "umap", group.by = "GroupC", label = TRUE)
-p4 <- DimPlot(sub_sim.seurat, reduction = "umap", group.by = "Batch", label = TRUE)
-p5 <- DimPlot(sub_sim.seurat, reduction = "umap", group.by = "Group", label = TRUE)
-p6 <- DimPlot(sub_sim.seurat, reduction = "umap", label = TRUE)
-p <- plot_grid(p1, p2, p3, p4, p5, p6, ncol = 3)
-ggsave(snakemake@output[["umap_fname"]])
-
-sub_sim_nobatch.seurat <- NormalizeData(sub_sim_nobatch.seurat, verbose = FALSE)
-sub_sim_nobatch.seurat <- FindVariableFeatures(sub_sim_nobatch.seurat, selection.method = "vst", nfeatures = 1000)
-sub_sim_nobatch.seurat <- ScaleData(sub_sim_nobatch.seurat, verbose = FALSE)
-sub_sim_nobatch.seurat <- RunPCA(sub_sim_nobatch.seurat, npcs = 30, verbose = FALSE)
-sub_sim_nobatch.seurat <- RunUMAP(sub_sim_nobatch.seurat, reduction = "pca", dims = 1:20)
-sub_sim_nobatch.seurat <- FindNeighbors(sub_sim_nobatch.seurat, reduction = "pca", dims = 1:20)
-sub_sim_nobatch.seurat <- FindClusters(sub_sim_nobatch.seurat, resolution = 0.5)
-p1 <- DimPlot(sub_sim_nobatch.seurat, reduction = "umap", group.by = "GroupA", label = TRUE)
-p2 <- DimPlot(sub_sim_nobatch.seurat, reduction = "umap", group.by = "GroupB", label = TRUE)
-p3 <- DimPlot(sub_sim_nobatch.seurat, reduction = "umap", group.by = "GroupC", label = TRUE)
-p4 <- DimPlot(sub_sim_nobatch.seurat, reduction = "umap", group.by = "Batch", label = TRUE)
-p5 <- DimPlot(sub_sim_nobatch.seurat, reduction = "umap", group.by = "Group", label = TRUE)
-p6 <- DimPlot(sub_sim_nobatch.seurat, reduction = "umap", label = TRUE)
-p <- plot_grid(p1, p2, p3, p4, p5, p6, ncol = 3)
-ggsave(snakemake@output[["umap_nobatch_fname"]])

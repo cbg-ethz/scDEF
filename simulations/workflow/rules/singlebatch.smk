@@ -4,9 +4,10 @@ rule generate_singlebatch_data:
         threads=10,
     params:
         de_prob = "{separability}",
-        batch_facscale = config["batch_facscale"],
+        batch_facscale = 0.,
         n_cells = config["n_cells"],
         n_batches = 1,
+        frac_shared = 0.,
         seed = "{rep_id}",
     output:
         counts_fname = 'results/data/sep_{separability}/singlebatch/rep_{rep_id}_counts.csv',
