@@ -129,27 +129,35 @@ def evaluate_methods(
 
         # Batch clustering
         if "Batch ARI" in metrics_list:
-            if isinstance(method_outs, scDEF):
-                score = adjusted_rand_score(
-                    method_outs.adata.obs[batch_obs_key],
-                    method_outs.adata.obs["factor"],
-                )
-            else:
-                score = adjusted_rand_score(
-                    adata.obs[batch_obs_key], method_outs["assignments"][0]
-                )
+            if batch_obs_key in adata.obs.columns:
+                if len(adata.obs[batch_obs_key].unique()) == 1:
+                    score = 0.0
+                else:
+                    if isinstance(method_outs, scDEF):
+                        score = adjusted_rand_score(
+                            method_outs.adata.obs[batch_obs_key],
+                            method_outs.adata.obs["factor"],
+                        )
+                    else:
+                        score = adjusted_rand_score(
+                            adata.obs[batch_obs_key], method_outs["assignments"][0]
+                        )
             df.loc["Batch ARI"][method] = score
 
         if "Batch ASW" in metrics_list:
-            if isinstance(method_outs, scDEF):
-                score = silhouette_score(
-                    method_outs.adata.obsm["X_factors"],
-                    method_outs.adata.obs[batch_obs_key],
-                )
-            else:
-                score = silhouette_score(
-                    method_outs["latents"][0], adata.obs[batch_obs_key]
-                )
+            if batch_obs_key in adata.obs.columns:
+                if len(adata.obs[batch_obs_key].unique()) == 1:
+                    score = 0.0
+                else:
+                    if isinstance(method_outs, scDEF):
+                        score = silhouette_score(
+                            method_outs.adata.obsm["X_factors"],
+                            method_outs.adata.obs[batch_obs_key],
+                        )
+                    else:
+                        score = silhouette_score(
+                            method_outs["latents"][0], adata.obs[batch_obs_key]
+                        )
             df.loc["Batch ASW"][method] = score
 
     return df
