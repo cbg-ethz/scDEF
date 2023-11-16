@@ -14,7 +14,6 @@ rule generate_singlebatch_data:
         meta_fname = 'results/data/sep_{separability}/singlebatch/rep_{rep_id}_meta.csv',
         markers_fname = 'results/data/sep_{separability}/singlebatch/rep_{rep_id}_markers.csv',
         umap_fname = 'results/data/sep_{separability}/singlebatch/rep_{rep_id}_umap.png',
-        umap_nobatch_fname = 'results/data/sep_{separability}/singlebatch/rep_{rep_id}_umap_nobatch.png',
     script:
         "../scripts/splatter_hierarchical.R"
 
