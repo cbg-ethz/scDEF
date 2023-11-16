@@ -55,4 +55,4 @@ repo_name: scDEF
 repo_url: https://github.com/cbg-ethz/scDEF
 
 watch:
-  - scdef
+  - src/scdef
