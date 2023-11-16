@@ -29,16 +29,16 @@ sc.pp.log1p(adata)
 sc.pp.highly_variable_genes(
     adata,
     n_top_genes=2000,
-    subset=False,
+    subset=True,
     layer="counts",
     flavor="seurat_v3",
     batch_key="Batch",
 )
-adata = raw_adata[:, adata.var.highly_variable]
 
 # Run scDEF
 scd = scdef.scDEF(adata, batch_key="")
 scd.learn(n_epoch=1000)
+scd.filter(iqr_mult=0.)
 
 metrics_list = [
     "Cell Type ARI",
