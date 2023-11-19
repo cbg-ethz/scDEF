@@ -62,36 +62,6 @@ true_hierarchy = scdef.hierarchy_utils.get_hierarchy_from_clusters(
     use_names=True,
 )
 
-print(true_hierarchy)
-
-obs_keys = ["GroupA", "GroupB", "GroupC"]
-
-simplified = scd.get_hierarchy(simplified=True)
-assignments, matches = scd.assign_obs_to_factors(
-    obs_keys, scdef.hierarchy_utils.get_nodes_from_hierarchy(simplified)
-)
-annotated = scdef.hierarchy_utils.annotate_hierarchy(simplified, matches)
-
-obs_vals = [
-    scd.adata.obs[obs_key].astype("category").cat.categories for obs_key in obs_keys
-]
-obs_vals = list(set([item for sublist in obs_vals for item in sublist]))
-
-completed_annotated = scdef.hierarchy_utils.complete_hierarchy(annotated, obs_vals)
-completed_true_hierarchy = scdef.hierarchy_utils.complete_hierarchy(
-    true_hierarchy, obs_vals
-)
-
-print(annotated)
-print()
-print(completed_annotated)
-
-flattened_inferred = scdef.hierarchy_utils.flatten_hierarchy(completed_annotated)
-
-print(flattened_inferred)
-
-flattened_true = scdef.hierarchy_utils.flatten_hierarchy(completed_true_hierarchy)
-
 df = scdef.benchmark.evaluate_methods(
     adata,
     metrics_list,
