@@ -961,7 +961,7 @@ class scDEF(object):
             ard = 0.0
 
         if min_cells < 1.0:
-            min_cells = min_cells * self.adata.shape[0]
+            min_cells = max(min_cells * self.adata.shape[0], 10)
 
         self.factor_lists = []
         for i, layer_name in enumerate(self.layer_names):
