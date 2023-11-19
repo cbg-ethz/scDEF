@@ -38,7 +38,7 @@ adata.obs["GroupA"] = adata.obs["GroupA"].apply(lambda row: f"hh{row}")
 adata.obs["GroupB"] = adata.obs["GroupB"].apply(lambda row: f"h{row}")
 
 # Run scDEF
-scd = scdef.scDEF(adata, batch_key="Batch")
+scd = scdef.scDEF(adata, counts_layer="counts", batch_key="Batch")
 scd.learn()
 scd.filter_factors(iqr_mult=0.0)
 
