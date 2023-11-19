@@ -52,7 +52,7 @@ adata.obs["GroupC"] = (
 
 # Run scDEF
 scd = scdef.scDEF(adata, batch_key="Batch")
-scd.learn(n_epoch=1000)
+scd.learn()
 scd.filter_factors(iqr_mult=0.0)
 
 metrics_list = [

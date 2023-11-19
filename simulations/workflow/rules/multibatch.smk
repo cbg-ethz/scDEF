@@ -3,7 +3,7 @@ rule generate_multibatch_data:
         mem_per_cpu=10000,
         threads=10,
     params:
-        de_prob = "{separability}",
+        de_fscale = "{separability}",
         batch_facscale = config["batch_facscale"],
         n_cells = 1000,
         n_batches = config["n_batches"],
