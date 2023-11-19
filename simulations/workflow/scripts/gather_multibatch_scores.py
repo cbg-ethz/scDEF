@@ -19,18 +19,21 @@ fileList = glob.glob(pattern, recursive=False)
 
 rows = []
 for filename in fileList:
+    print(filename)
+
     # Parse filename
     l = filename.split("/")
     method = l[1]
     separability = l[2].split("_")[1]
+    if l[3] == "singlebatch":
+        continue
     frac_shared = l[3].split("_")[1]
     rep_id = l[4].split("_")[1]
-
-    print(filename)
 
     # Parse scores
     df = pd.read_csv(filename, index_col=0)
     print(df)
+
     for idx, score in enumerate(df.index):
         value = df.values[idx]
         value = value[0]

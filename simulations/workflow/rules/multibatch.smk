@@ -5,7 +5,7 @@ rule generate_multibatch_data:
     params:
         de_prob = "{separability}",
         batch_facscale = config["batch_facscale"],
-        n_cells = config["n_cells"],
+        n_cells = 1000,
         n_batches = config["n_batches"],
         frac_shared = "{frac_shared}",
         seed = "{rep_id}",
@@ -40,7 +40,6 @@ rule run_scdef:
         slurm="gpus=1 ntasks-per-node=10",
     params:
         seed = "{rep_id}",
-        true_hrc = TRUE_HRC,
     input:
         counts_fname = 'results/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_counts.csv',
         meta_fname = 'results/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_meta.csv',
@@ -58,7 +57,6 @@ rule run_scdef_un:
         slurm="gpus=1 ntasks-per-node=10",
     params:
         seed = "{rep_id}",
-        true_hrc = TRUE_HRC,
     input:
         counts_fname = 'results/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_counts.csv',
         meta_fname = 'results/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_meta.csv',
@@ -74,7 +72,6 @@ rule run_unintegrated:
         mem = 12000,
     params:
         seed = "{rep_id}",
-        true_hrc = TRUE_HRC,
     input:
         counts_fname = 'results/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_counts.csv',
         meta_fname = 'results/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_meta.csv',
@@ -91,7 +88,6 @@ rule run_nmf:
         threads=10,
     params:
         seed = "{rep_id}",
-        true_hrc = TRUE_HRC,
     input:
         counts_fname = 'results/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_counts.csv',
         meta_fname = 'results/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_meta.csv',
@@ -108,7 +104,6 @@ rule run_schpf:
         threads=10,
     params:
         seed = "{rep_id}",
-        true_hrc = TRUE_HRC,
     input:
         counts_fname = 'results/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_counts.csv',
         meta_fname = 'results/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_meta.csv',
@@ -125,7 +120,6 @@ rule run_scvi:
         slurm="gpus=1 ntasks-per-node=10",
     params:
         seed = "{rep_id}",
-        true_hrc = TRUE_HRC,
     input:
         counts_fname = 'results/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_counts.csv',
         meta_fname = 'results/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_meta.csv',
@@ -142,7 +136,6 @@ rule run_harmony:
         threads=10,
     params:
         seed = "{rep_id}",
-        true_hrc = TRUE_HRC,
     input:
         counts_fname = 'results/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_counts.csv',
         meta_fname = 'results/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_meta.csv',
@@ -159,7 +152,6 @@ rule run_scanorama:
         threads=10,
     params:
         seed = "{rep_id}",
-        true_hrc = TRUE_HRC,
     input:
         counts_fname = 'results/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_counts.csv',
         meta_fname = 'results/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_meta.csv',

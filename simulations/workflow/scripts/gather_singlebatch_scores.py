@@ -25,6 +25,9 @@ for filename in fileList:
     separability = l[2].split("_")[1]
     rep_id = l[4].split("_")[1]
 
+    if l[3] != "singlebatch":
+        continue
+
     print(filename)
 
     # Parse scores

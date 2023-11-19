@@ -4,62 +4,75 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 
-df = pd.read_csv(snakemake.input[0])
-df = df.rename(
-    columns={
-        "frac_shared": "Fraction of shared cell groups",
-        "value": "Entropy of factor-cell group association",
-        "method": "Method",
-    }
-)
-df = df.replace({"scVI": "LDVAE"})
+df1 = pd.read_csv(snakemake.input[0])
+df2 = pd.read_csv(snakemake.input[1])
 
-axx = sns.catplot(
-    data=df,
-    x="Fraction of shared cell groups",
-    y="Entropy of factor-cell group association",
-    hue="Method",
-    col="n_batches",
-    kind="box",
-    boxprops=dict(alpha=0.3),
-)
-colors = []
-box_patches = [
-    patch for patch in axx.axes[0][0].patches if type(patch) == mpl.patches.PathPatch
-]
-for i, box in enumerate(box_patches):
-    colors.append(box.get_facecolor())
+# Merge batches
+df1["name"] = "Single batch"
 
-lines_per_boxplot = 6
-for ax in axx.axes[0]:
-    box_patches = [
-        patch for patch in ax.patches if type(patch) == mpl.patches.PathPatch
-    ]
-    for i, box in enumerate(box_patches):
-        color = box.get_facecolor()
-        box.set_color(color)
-        for lin in ax.lines[i * lines_per_boxplot : (i + 1) * lines_per_boxplot]:
-            lin.set_color(color)
-            lin.set_markerfacecolor(color)
-            lin.set_markeredgecolor(color)
 
-n_batches = np.unique(df["n_batches"])
-axes = axx.axes.flatten()
-for i, ax in enumerate(axes):
-    print(i)
-    ax.set_title(f"{n_batches[i]} batches")
+def translate(l):
+    if "1" in l[0]:
+        return "Four similar batches"
+    else:
+        return "Four distinct batches"
 
-axx2 = axx.map_dataframe(
-    sns.swarmplot,
-    x="Fraction of shared cell groups",
-    y="Entropy of factor-cell group association",
-    hue="Method",
-    dodge=True,
-    palette=colors,
-)
-axes = axx2.axes.flatten()
-for i, ax in enumerate(axes):
-    print(i)
-    ax.set_title(f"{n_batches[i]} batches")
 
-axx2.savefig(snakemake.output[0])
+df2 = df2.assign(name=df2[["frac_shared"]].apply(lambda row: translate(row), axis=1))
+df = pd.concat([df1, df2], axis=0)
+
+df = df.replace({"Unintegrated": "Leiden"})
+
+annots = {
+    "scDEF": "True",
+    "scDEF_un": "False",
+    "NMF": "False",
+    "scHPF": "False",
+    "Unintegrated": "False",
+    "scVI": "True",
+    "Harmony": "True",
+    "Scanorama": "True",
+}
+
+colordict = {
+    "scDEF": "green",
+    "scDEF (-)": "lightgreen",
+    "NMF": "blue",
+    "scHPF": "darkblue",
+    "Leiden": "violet",
+    "scVI": "orange",
+    "Harmony": "red",
+    "Scanorama": "darkred",
+}
+
+for metric in [
+    "Cell Type ARI",
+    "Signature accuracy",
+    "Hierarchy accuracy",
+    "Hierarchical signature consistency",
+]:
+    ax = sns.catplot(
+        data=df,
+        kind="box",
+        x="Separability",
+        y=metric,
+        hue="Method",
+        col="name",
+        style="Annotations",
+        palette=colordict,
+        hue_order=[
+            "scDEF",
+            "scDEF_un",
+            "scVI",
+            "Harmony",
+            "Scanorama",
+            "Leiden",
+            "scHPF",
+            "NMF",
+        ],
+        aspect=0.5,
+        dodge=True,
+    )
+    ax.set_titles(name)
+    ax.fig.set_size_inches(12, 4)
+    plt.savefig(f"{metric_fname[metric]}.pdf")

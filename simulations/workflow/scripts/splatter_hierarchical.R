@@ -13,7 +13,7 @@ n_batches <- snakemake@params[["n_batches"]]
 n_cells <- rep(n_cells_per_batch, n_batches)
 n_total_cells <- as.integer(n_cells_per_batch) * as.integer(n_batches)
 frac_shared <- as.numeric(snakemake@params[["frac_shared"]])
-de_prob <- as.numeric(snakemake@params[["de_prob"]])
+de_fscale <- as.numeric(snakemake@params[["de_fscale"]])
 batch_facscale <- as.numeric(snakemake@params[["batch_facscale"]])
 seed <- as.numeric(snakemake@params[["seed"]])
 
@@ -25,50 +25,53 @@ params <- splatEstimate(c)
 
 # Generate 4000 cells with 1000 genes separated in 2 groups
 params <- setParam(params, "nGenes", 1000)
-params <- setParam(params, "batchCells", n_total_cells)
-params <- setParam(params, "de.prob", de_prob)
+params <- setParam(params, "batchCells", n_cells)
+params <- setParam(params, "de.prob", 0.2)
+params <- setParam(params, "de.facScale", de_fscale)
 params <- setParam(params, "seed", seed)
 params <- setParam(params, "group.prob", rep(1/2, 2))
-sim <- splatSimulate(params, method="groups", verbose=FALSE)
+sim1 <- splatSimulate(params, method="groups", verbose=FALSE)
 # sort cells by groups
-sim <- sim[,order(colData(sim)$Group)]
+# sim1 <- sim1[,order(colData(sim)$Group)]
 # rename cells
-colData(sim)$Cell <- paste0("Cell", seq(n_total_cells))
-colnames(sim) <- colData(sim)$Cell
+colData(sim1)$Cell <- paste0("Cell", seq(n_total_cells))
+colnames(sim1) <- colData(sim1)$Cell
 # name group column according to hierarchy level
-colData(sim)$GroupA <- colData(sim)$Group
-colData(sim) <- subset(colData(sim), select = -c(Group, ExpLibSize, Batch))
+colData(sim1)$GroupA <- colData(sim1)$Group
+colData(sim1) <- subset(colData(sim1), select = -c(Group, ExpLibSize))
 print("First splatter done!")
 
 # Add 500 genes separated in 4 groups
 params <- setParam(params, "nGenes", 500)
-params <- setParam(params, "batchCells", n_total_cells)
-params <- setParam(params, "de.prob", de_prob)
+params <- setParam(params, "batchCells", n_cells)
+params <- setParam(params, "de.prob", 0.2)
+params <- setParam(params, "de.facScale", de_fscale)
 params <- setParam(params, "seed", seed)
 params <- setParam(params, "group.prob", rep(1/4, 4))
 sim2 <- splatSimulate(params, method="groups", verbose=FALSE)
-# sort cells by groups
-sim2 <- sim2[,order(colData(sim2)$Group)]
+# # sort cells by groups
+# sim2 <- sim2[,order(colData(sim2)$Group)]
 # rename cells
 colData(sim2)$Cell <- paste0("Cell", seq(n_total_cells))
 colnames(sim2) <- colData(sim2)$Cell
 # name group column according to hierarchy level
 colData(sim2)$GroupB <- colData(sim2)$Group
-colData(sim2) <- subset(colData(sim2), select = -c(Group, ExpLibSize, Batch))
+colData(sim2) <- subset(colData(sim2), select = -c(Group, ExpLibSize))
 print("Second splatter done!")
 
 # Add 250 genes separated in 8 groups
-params <- setParam(params, "nGenes", 500)
+params <- setParam(params, "nGenes", 250)
 params <- setParam(params, "batchCells", n_cells)
-params <- setParam(params, "de.prob", de_prob)
+params <- setParam(params, "de.prob", 0.2)
+params <- setParam(params, "de.facScale", de_fscale)
 params <- setParam(params, "seed", seed)
 params <- setParam(params, "group.prob", rep(1/8, 8))
 params <- setParam(params, "batch.facScale", batch_facscale)
 sim3 <- splatSimulate(params, method="groups", verbose=FALSE)
 sim3_nobatch <- splatSimulate(params, method="groups", verbose=FALSE, batch.rmEffect = TRUE,)
 # sort cells by groups
-sim3 <- sim3[,order(colData(sim3)$Group)]
-sim3_nobatch <- sim3_nobatch[,order(colData(sim3_nobatch)$Group)]
+# sim3 <- sim3[,order(colData(sim3)$Group)]
+# sim3_nobatch <- sim3_nobatch[,order(colData(sim3_nobatch)$Group)]
 # rename cells
 colData(sim3)$Cell <- paste0("Cell", seq(n_total_cells))
 colData(sim3_nobatch)$Cell <- paste0("Cell", seq(n_total_cells))
@@ -82,10 +85,10 @@ colData(sim3_nobatch) <- subset(colData(sim3_nobatch), select = -c(Group,ExpLibS
 print("Third splatter done!")
 
 # Append all genes
-sim_nobatch <- rbind(sim,sim2,sim3_nobatch)
-sim <- rbind(sim,sim2,sim3)
-rownames(sim) <- paste0("Gene", seq(2000))
-rownames(sim_nobatch) <- paste0("Gene", seq(2000))
+sim_nobatch <- rbind(sim1,sim2,sim3_nobatch)
+sim <- rbind(sim1,sim2,sim3)
+rownames(sim) <- paste0("Gene", seq(1750))
+rownames(sim_nobatch) <- paste0("Gene", seq(1750))
 # Make groups
 colData(sim)$Group <- paste0(colData(sim)$GroupA,colData(sim)$GroupB,colData(sim)$GroupC)
 colData(sim_nobatch)$Group <- paste0(colData(sim_nobatch)$GroupA,colData(sim_nobatch)$GroupB,colData(sim_nobatch)$GroupC)
@@ -99,8 +102,11 @@ possibleGroups <- c(rep("Group1Group1Group1", n_total_cells/8),
                     rep("Group2Group4Group7", n_total_cells/8),
                     rep("Group2Group4Group8", n_total_cells/8)
                     )
-sim <- sim[,colData(sim)$Group == possibleGroups]
-sim_nobatch <- sim_nobatch[,colData(sim_nobatch)$Group == possibleGroups]
+# sim <- sim[,colData(sim)$Group == possibleGroups]
+# sim_nobatch <- sim_nobatch[,colData(sim_nobatch)$Group == possibleGroups]
+# Sort groups
+sim <- sim[,order(colData(sim)$Group)]
+sim_nobatch <- sim_nobatch[,order(colData(sim_nobatch)$Group)]
 print("Sim done!")
 
 if (n_batches > 1) {

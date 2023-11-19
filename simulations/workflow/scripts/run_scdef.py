@@ -9,7 +9,6 @@ from sklearn.model_selection import train_test_split
 counts = pd.read_csv(snakemake.input["counts_fname"], index_col=0)
 meta = pd.read_csv(snakemake.input["meta_fname"])
 markers = pd.read_csv(snakemake.input["markers_fname"])
-true_hierarchy = snakemake.params["true_hrc"]
 
 groups = markers["cluster"].unique()
 markers = dict(
@@ -35,6 +34,22 @@ sc.pp.highly_variable_genes(
     batch_key="Batch",
 )
 
+adata.obs["GroupA"] = (
+    (adata.obs["GroupA"].apply(lambda row: row.split("Group")[1]).astype(int) - 1)
+    .astype("str")
+    .astype("category")
+)
+adata.obs["GroupB"] = (
+    (adata.obs["GroupB"].apply(lambda row: row.split("Group")[1]).astype(int) - 1)
+    .astype("str")
+    .astype("category")
+)
+adata.obs["GroupC"] = (
+    (adata.obs["GroupC"].apply(lambda row: row.split("Group")[1]).astype(int) - 1)
+    .astype("str")
+    .astype("category")
+)
+
 # Run scDEF
 scd = scdef.scDEF(adata, batch_key="Batch")
 scd.learn(n_epoch=1000)
@@ -49,6 +64,10 @@ metrics_list = [
     "Signature sparsity",
     "Signature accuracy",
 ]
+
+true_hierarchy = scdef.hierarchy_utils.get_hierarchy_from_clusters(
+    [adata.obs["GroupC"].values, adata.obs["GroupB"].values, adata.obs["GroupA"].values]
+)
 
 df = scdef.benchmark.evaluate_methods(
     adata,

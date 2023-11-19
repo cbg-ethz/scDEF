@@ -38,7 +38,6 @@ rule run_scdef_singlebatch:
         slurm="gpus=1 ntasks-per-node=10",
     params:
         seed = "{rep_id}",
-        true_hrc = TRUE_HRC,
     input:
         counts_fname = 'results/data/sep_{separability}/singlebatch/rep_{rep_id}_counts.csv',
         meta_fname = 'results/data/sep_{separability}/singlebatch/rep_{rep_id}_meta.csv',
@@ -54,7 +53,6 @@ rule run_unintegrated_singlebatch:
         mem = 12000,
     params:
         seed = "{rep_id}",
-        true_hrc = TRUE_HRC,
     input:
         counts_fname = 'results/data/sep_{separability}/singlebatch/rep_{rep_id}_counts.csv',
         meta_fname = 'results/data/sep_{separability}/singlebatch/rep_{rep_id}_meta.csv',
@@ -71,7 +69,6 @@ rule run_nmf_singlebatch:
         threads=10,
     params:
         seed = "{rep_id}",
-        true_hrc = TRUE_HRC,
     input:
         counts_fname = 'results/data/sep_{separability}/singlebatch/rep_{rep_id}_counts.csv',
         meta_fname = 'results/data/sep_{separability}/singlebatch/rep_{rep_id}_meta.csv',
@@ -88,7 +85,6 @@ rule run_schpf_singlebatch:
         threads=10,
     params:
         seed = "{rep_id}",
-        true_hrc = TRUE_HRC,
     input:
         counts_fname = 'results/data/sep_{separability}/singlebatch/rep_{rep_id}_counts.csv',
         meta_fname = 'results/data/sep_{separability}/singlebatch/rep_{rep_id}_meta.csv',
