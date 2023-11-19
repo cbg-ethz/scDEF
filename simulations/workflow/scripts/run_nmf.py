@@ -60,7 +60,7 @@ metrics_list = [
     "Cell Type ASW",
     "Batch ARI",
     "Batch ASW",
-    "Hierarchical accuracy",    
+    "Hierarchy accuracy",    
     "Hierarchical signature consistency",
     "Signature sparsity",
     "Signature accuracy",
