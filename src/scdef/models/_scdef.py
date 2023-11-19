@@ -940,7 +940,7 @@ class scDEF(object):
         self,
         thres: Optional[float] = None,
         iqr_mult: Optional[float] = 5.0,
-        min_cells: Optional[int] = 10,
+        min_cells: Optional[float] = 0.01,
         filter_up: Optional[bool] = True,
     ):
         """Filter our irrelevant factors based on the BRD posterior or the cell attachments.
@@ -948,7 +948,7 @@ class scDEF(object):
         Args:
             thres: minimum factor BRD value
             iqr_mult: multiplier of the difference between the third quartile and the median BRD values to set the threshold
-            min_cells: minimum number of cells that each factor must have attached to it for it to be kept
+            min_cells: minimum number of cells that each factor must have attached to it for it to be kept. If between 0 and 1, fraction. Otherwise, absolute value
             filter_up: whether to remove factors in upper layers via inter-layer attachments
         """
         ard = []
@@ -959,6 +959,9 @@ class scDEF(object):
 
         if not self.use_brd:
             ard = 0.0
+
+        if min_cells < 1.0:
+            min_cells = min_cells * self.adata.shape[0]
 
         self.factor_lists = []
         for i, layer_name in enumerate(self.layer_names):
