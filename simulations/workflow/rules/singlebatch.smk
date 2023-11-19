@@ -29,7 +29,7 @@ rule gather_singlebatch_scores:
     output:
         'results/singlebatch_scores.csv'
     script:
-        'scripts/gather_singlebatch_scores.py'
+        ../'scripts/gather_singlebatch_scores.py'
 
 rule run_scdef_singlebatch:
     resources:

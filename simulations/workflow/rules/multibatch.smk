@@ -31,7 +31,7 @@ rule gather_multibatch_scores:
     output:
         'results/multibatch_scores.csv'
     script:
-        'scripts/gather_multibatch_scores.py'
+        '../scripts/gather_multibatch_scores.py'
 
 rule run_scdef:
     resources:
