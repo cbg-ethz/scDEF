@@ -11,6 +11,7 @@ counts = pd.read_csv(snakemake.input["counts_fname"], index_col=0)
 meta = pd.read_csv(snakemake.input["meta_fname"])
 markers = pd.read_csv(snakemake.input["markers_fname"])
 
+markers['cluster'] = (markers['cluster'].apply(lambda row: row.split("Group")[1]).astype(int)-1).astype('str').astype('category')
 groups = markers["cluster"].unique()
 markers = dict(
     zip(groups, [markers.loc[markers["cluster"] == g]["gene"].tolist() for g in groups])
@@ -39,11 +40,13 @@ adata.obs["GroupA"] = (
     .astype("str")
     .astype("category")
 )
+adata.obs['GroupA'] = adata.obs['GroupA'].apply(lambda row: f'hh{row}')
 adata.obs["GroupB"] = (
     (adata.obs["GroupB"].apply(lambda row: row.split("Group")[1]).astype(int) - 1)
     .astype("str")
     .astype("category")
 )
+adata.obs['GroupB'] = adata.obs['GroupB'].apply(lambda row: f'h{row}')
 adata.obs["GroupC"] = (
     (adata.obs["GroupC"].apply(lambda row: row.split("Group")[1]).astype(int) - 1)
     .astype("str")
