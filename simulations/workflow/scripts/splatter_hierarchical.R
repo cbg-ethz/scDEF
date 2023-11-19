@@ -107,6 +107,13 @@ possibleGroups <- c(rep("Group1Group1Group1", n_total_cells/8),
 # Sort groups
 sim <- sim[,order(colData(sim)$Group)]
 sim_nobatch <- sim_nobatch[,order(colData(sim_nobatch)$Group)]
+
+if (n_batches == 1) {
+  colData(sim) <- subset(colData(sim), select = -c(Batch))
+  colData(sim_nobatch) <- subset(colData(sim_nobatch), select = -c(Batch))
+}
+
+
 print("Sim done!")
 
 if (n_batches > 1) {

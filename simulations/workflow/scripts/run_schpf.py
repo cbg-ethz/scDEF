@@ -12,11 +12,6 @@ counts = pd.read_csv(snakemake.input["counts_fname"], index_col=0)
 meta = pd.read_csv(snakemake.input["meta_fname"])
 markers = pd.read_csv(snakemake.input["markers_fname"])
 
-markers["cluster"] = (
-    (markers["cluster"].apply(lambda row: row.split("Group")[1]).astype(int) - 1)
-    .astype("str")
-    .astype("category")
-)
 groups = markers["cluster"].unique()
 markers = dict(
     zip(groups, [markers.loc[markers["cluster"] == g]["gene"].tolist() for g in groups])
@@ -42,23 +37,8 @@ sc.pp.highly_variable_genes(
     batch_key="Batch",
 )
 
-adata.obs["GroupA"] = (
-    (adata.obs["GroupA"].apply(lambda row: row.split("Group")[1]).astype(int) - 1)
-    .astype("str")
-    .astype("category")
-)
 adata.obs["GroupA"] = adata.obs["GroupA"].apply(lambda row: f"hh{row}")
-adata.obs["GroupB"] = (
-    (adata.obs["GroupB"].apply(lambda row: row.split("Group")[1]).astype(int) - 1)
-    .astype("str")
-    .astype("category")
-)
 adata.obs["GroupB"] = adata.obs["GroupB"].apply(lambda row: f"h{row}")
-adata.obs["GroupC"] = (
-    (adata.obs["GroupC"].apply(lambda row: row.split("Group")[1]).astype(int) - 1)
-    .astype("str")
-    .astype("category")
-)
 
 methods_list = ["scHPF"]
 methods_results = scdef.benchmark.run_methods(adata, methods_list, batch_key="Batch")
@@ -75,7 +55,12 @@ metrics_list = [
 ]
 
 true_hierarchy = scdef.hierarchy_utils.get_hierarchy_from_clusters(
-    [adata.obs["GroupC"].values, adata.obs["GroupB"].values, adata.obs["GroupA"].values]
+    [
+        adata.obs["GroupC"].values,
+        adata.obs["GroupB"].values,
+        adata.obs["GroupA"].values,
+    ],
+    use_names=True,
 )
 
 df = scdef.benchmark.evaluate_methods(

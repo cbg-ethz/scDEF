@@ -3,10 +3,7 @@ from scdef.utils.score_utils import *
 from collections import ChainMap
 
 
-def get_hierarchy_from_clusters(clusters_levels, level_prefix="h"):
-    # clusters_levels is a list of cell to cluster assignments in decreasing resolution
-    # we will assign each cluster from higher resolution a cluster with lower resolution
-    # by checking the cell assignment overlaps
+def get_hierarchy_from_clusters(clusters_levels, level_prefix="h", use_names=False):
     hierarchy = dict()
     level_prefixes = [level_prefix * level for level in range(len(clusters_levels))]
     for level, clusters in enumerate(clusters_levels[:-1]):
@@ -14,15 +11,23 @@ def get_hierarchy_from_clusters(clusters_levels, level_prefix="h"):
         unique_clusters = np.unique(clusters)
         unique_clusters_up = np.unique(clusters_up)
         for i, cluster in enumerate(unique_clusters):
-            name = f"{level_prefixes[level]}{i}"
+            if use_names:
+                name = f"{cluster}"
+            else:
+                name = f"{level_prefixes[level]}{i}"
+
             # Get all cells attached to this cluster
             cells_a = np.where(np.array(clusters) == cluster)[0]
             scores = []
             for j, cluster_up in enumerate(unique_clusters_up):
                 cells_b = np.where(np.array(clusters_up) == cluster_up)[0]
-
                 scores.append(jaccard_similarity([cells_a, cells_b]))
-            upper_level = f"{level_prefixes[level+1]}{np.argmax(scores)}"
+
+            if use_names:
+                upper_level = f"{unique_clusters_up[np.argmax(scores)]}"
+            else:
+                upper_level = f"{level_prefixes[level+1]}{np.argmax(scores)}"
+
             if upper_level in hierarchy:
                 hierarchy[upper_level].append(name)
             else:
