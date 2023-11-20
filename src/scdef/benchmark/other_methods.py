@@ -139,7 +139,9 @@ def run_nmf(
     X = np.log(1e4 * X / np.sum(X, axis=1)[:, None] + 1)
     nmfs = []
     n_modules = []
-    k_range = (np.arange(max(resolution - k_extra, 2), resolution + k_extra + 1)).astype(int)
+    k_range = (
+        np.arange(max(resolution - k_extra, 2), resolution + k_extra + 1)
+    ).astype(int)
     for k in k_range:
         # Run NMF
         nmf = NMF(n_components=k, max_iter=5000)
@@ -206,7 +208,9 @@ def run_schpf(
     X = scipy.sparse.coo_matrix(X)
     models = []
     losses = []
-    k_range = (np.arange(max(resolution - k_extra, 2), resolution + k_extra + 1)).astype(int)
+    k_range = (
+        np.arange(max(resolution - k_extra, 2), resolution + k_extra + 1)
+    ).astype(int)
     for k in k_range:
         sch = schpf.scHPF(k)
         sch.fit(X)
