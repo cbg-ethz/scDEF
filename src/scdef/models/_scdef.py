@@ -940,7 +940,7 @@ class scDEF(object):
         self,
         thres: Optional[float] = None,
         iqr_mult: Optional[float] = 5.0,
-        min_cells: Optional[float] = 0.01,
+        min_cells: Optional[float] = 0.005,
         filter_up: Optional[bool] = True,
     ):
         """Filter our irrelevant factors based on the BRD posterior or the cell attachments.
