@@ -939,7 +939,7 @@ class scDEF(object):
     def filter_factors(
         self,
         thres: Optional[float] = None,
-        iqr_mult: Optional[float] = 5.0,
+        iqr_mult: Optional[float] = 0.0,
         min_cells: Optional[float] = 0.005,
         filter_up: Optional[bool] = True,
     ):
@@ -2081,6 +2081,10 @@ class scDEF(object):
                 if len(self.factor_lists[i]) > 1
             ]
 
+        if len(layers) == 0:
+            self.logger.info("Cannot run PAGA on 0 layers.")
+            return
+
         n_layers = len(layers)
 
         fig, axes = plt.subplots(1, n_layers, figsize=figsize)
@@ -2462,6 +2466,8 @@ class scDEF(object):
         vmin=None,
         cb_title="",
         cb_title_fontsize=10,
+        fontsize=12,
+        title_fontsize=12,
         pad=0.1,
         shrink=0.7,
         figsize=(10, 4),
@@ -2496,7 +2502,7 @@ class scDEF(object):
         )
         axs = axs.reshape((len(obs_keys), n_layers))
         for i in layers:
-            axs[0][i].set_title(f"Layer {i}")
+            axs[0][i].set_title(f"Layer {i}", fontsize=title_fontsize)
             for j, obs_key in enumerate(obs_keys):
                 ax = axs[j][i]
                 mat = obs_mats[obs_key][i]
@@ -2507,7 +2513,10 @@ class scDEF(object):
                     xlabels = self.factor_names[i]
                     xlabels = np.array(xlabels)[layer_factor_orders[i]]
                     ax.set_xticks(
-                        np.arange(len(xlabels)) + 0.5, xlabels, rotation=xticks_rotation
+                        np.arange(len(xlabels)) + 0.5,
+                        xlabels,
+                        rotation=xticks_rotation,
+                        fontsize=fontsize,
                     )
                 else:
                     ax.set(xticks=[])
@@ -2516,13 +2525,18 @@ class scDEF(object):
                     ylabels = np.array(obs_vals_dict[obs_keys[j]])[
                         obs_clusters[obs_keys[j]]
                     ]
-                    ax.set(yticks=np.arange(len(ylabels)) + 0.5, yticklabels=ylabels)
+                    ax.set_yticks(
+                        np.arange(len(ylabels)) + 0.5,
+                        ylabels,
+                    )
                 else:
                     ax.set(yticks=[])
 
                 if i == n_layers - 1:
                     ax.yaxis.set_label_position("right")
-                    ax.set_ylabel(obs_key, rotation=270, labelpad=20.0)
+                    ax.set_ylabel(
+                        obs_key, rotation=270, labelpad=20.0, fontsize=fontsize
+                    )
 
         plt.subplots_adjust(wspace=0.05)
         plt.subplots_adjust(hspace=0.05)
