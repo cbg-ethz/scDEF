@@ -960,8 +960,9 @@ class scDEF(object):
         if not self.use_brd:
             ard = 0.0
 
-        if min_cells < 1.0:
-            min_cells = max(min_cells * self.adata.shape[0], 10)
+        if min_cells != 0:
+            if min_cells < 1.0:
+                min_cells = max(min_cells * self.adata.shape[0], 10)
 
         self.factor_lists = []
         for i, layer_name in enumerate(self.layer_names):
@@ -1340,7 +1341,9 @@ class scDEF(object):
                     sizes_dict[factor_name] = 0
         return sizes_dict
 
-    def get_signatures_dict(self, top_genes=None, scores=False, sorted_scores=False):
+    def get_signatures_dict(
+        self, top_genes=None, scores=False, sorted_scores=False, layer_normalize=False
+    ):
         signatures_dict = {}
         scores_dict = {}
         for layer_idx in range(self.n_layers):
@@ -1351,8 +1354,12 @@ class scDEF(object):
                 sorted_scores=sorted_scores,
             )
             for factor_idx, factor_name in enumerate(self.factor_names[layer_idx]):
+                val = np.array(layer_scores[factor_idx])
+                if layer_normalize:
+                    val = val - np.min(val)
+                    val = val / np.max(val)
                 signatures_dict[factor_name] = layer_signatures[factor_idx]
-                scores_dict[factor_name] = layer_scores[factor_idx]
+                scores_dict[factor_name] = val
 
         if scores:
             return signatures_dict, scores_dict
@@ -1456,6 +1463,8 @@ class scDEF(object):
         node_size_min: Optional[int] = 0.05,
         scale_level: Optional[bool] = False,
         show_label: Optional[bool] = True,
+        gene_score: Optional[str] = None,
+        gene_cmap: Optional[str] = "viridis",
         **fontsize_kwargs,
     ):
         """Make Graphviz-formatted scDEF graph.
@@ -1479,6 +1488,8 @@ class scDEF(object):
             node_size_min: minimum node size when scaled by cell numbers
             scale_level: wether to scale node sizes per level instead of across all levels
             show_label: wether to show labels on nodes
+            gene_score: color the nodes by the score they attribute to a gene, normalized by layer. Overrides filled and wedged
+            gene_cmap: colormap to use for gene_score
             **fontsize_kwargs: keyword arguments to adjust the fontsizes according to the gene scores
         """
         if top_genes is None:
@@ -1488,27 +1499,41 @@ class scDEF(object):
         elif len(top_genes) != self.n_layers:
             raise IndexError("top_genes list must be of size scDEF.n_layers")
 
-        if filled is None:
-            style = None
-        elif filled == "factor":
-            style = "filled"
-        else:
-            if filled not in self.adata.obs:
-                raise ValueError("filled must be factor or any `obs` in self.adata")
+        gene_cmap = matplotlib.colormaps["viridis"]
+        gene_scores = dict()
+        if gene_score is not None:
+            if gene_score not in self.adata.var_names:
+                raise ValueError("gene_score must be a gene name in self.adata")
             else:
                 style = "filled"
-
-        if style is None:
-            if wedged is None:
-                style = None
-            else:
-                if wedged not in self.adata.obs:
-                    raise ValueError("wedged must be any `obs` in self.adata")
-                else:
-                    style = "wedged"
+                gene_loc = np.where(self.adata.var_names == gene_score)[0][0]
+                scores_dict = self.get_signatures_dict(
+                    scores=True, layer_normalize=True
+                )[1]
+                for n in scores_dict:
+                    gene_scores[n] = scores_dict[n][gene_loc]
         else:
-            if wedged is not None:
-                self.logger.info("Filled style takes precedence over wedged")
+            if filled is None:
+                style = None
+            elif filled == "factor":
+                style = "filled"
+            else:
+                if filled not in self.adata.obs:
+                    raise ValueError("filled must be factor or any `obs` in self.adata")
+                else:
+                    style = "filled"
+
+            if style is None:
+                if wedged is None:
+                    style = None
+                else:
+                    if wedged not in self.adata.obs:
+                        raise ValueError("wedged must be any `obs` in self.adata")
+                    else:
+                        style = "wedged"
+            else:
+                if wedged is not None:
+                    self.logger.info("Filled style takes precedence over wedged")
 
         hierarchy_nodes = None
         if hierarchy is not None:
@@ -1593,6 +1618,10 @@ class scDEF(object):
                 if style == "filled":
                     if filled == "factor":
                         fillcolor = matplotlib.colors.to_hex(layer_colors[factor_idx])
+                    elif gene_score is not None:
+                        # Color by gene score
+                        rgba = gene_cmap(gene_scores[factor_name])
+                        fillcolor = matplotlib.colors.rgb2hex(rgba)
                     elif filled is not None:
                         # cells attached to this factor
                         original_factor_index = self.factor_lists[layer_idx][factor_idx]
@@ -1929,6 +1958,8 @@ class scDEF(object):
         self,
         obs_key,
         layer_idx,
+        cluster_rows=True,
+        cluster_cols=True,
         figsize=(8, 2),
         s_min=100,
         s_max=500,
@@ -1938,6 +1969,8 @@ class scDEF(object):
         legend_titlesize=12,
         cmap="viridis",
         logged=False,
+        width_ratios=[5, 1, 1],
+        show_ylabel=True,
         show=True,
     ):
         # For each obs, compute the average cell score on each factor among the cells that attach to that obs, use as color
@@ -1978,9 +2011,23 @@ class scDEF(object):
         ylabels = obs
         xlabels = self.factor_names[layer_idx]
 
+        if cluster_rows:
+            Z = ward(pdist(s))
+            hclust_index = leaves_list(Z)
+            s = s[hclust_index]
+            c = c[hclust_index]
+            ylabels = ylabels[hclust_index]
+
+        if cluster_cols:
+            Z = ward(pdist(s.T))
+            hclust_index = leaves_list(Z)
+            s = s[hclust_index]
+            c = c[hclust_index]
+            xlabels = xlabels[hclust_index]
+
         x, y = np.meshgrid(np.arange(len(xlabels)), np.arange(len(ylabels)))
 
-        fig, axes = plt.subplots(1, 3, figsize=figsize, width_ratios=[5, 1, 1])
+        fig, axes = plt.subplots(1, 3, figsize=figsize, width_ratios=width_ratios)
         plt.sca(axes[0])
         ax = plt.gca()
         s = s / np.max(s)
@@ -2002,6 +2049,8 @@ class scDEF(object):
         ax.grid(which="minor")
 
         plt.ylabel(obs_key, fontsize=labelsize)
+        if show_ylabel:
+            ax.set_ylabel(obs_key, rotation=270, labelpad=20.0, fontsize=fontsize)
         plt.xlabel("Factor", fontsize=labelsize)
         plt.title(f"Layer {layer_idx}\n", fontsize=titlesize)
 
@@ -2091,13 +2140,13 @@ class scDEF(object):
         sc.pp.neighbors(self.adata, use_rep=neighbors_rep)
         pos = None
         for i, layer_idx in enumerate(layers):
-            ax = axes[layer_idx]
+            ax = axes[i]
             new_layer_name = f"{self.layer_names[layer_idx]}factor"
 
             self.logger.info(f"Computing PAGA graph of layer {layer_idx}")
 
             # Use previous PAGA as initial positions for new PAGA
-            if i != layers[-1] and reuse_pos:
+            if layer_idx != layers[0] and reuse_pos:
                 self.logger.info(
                     f"Re-using PAGA positions from layer {layer_idx+1} to init {layer_idx}"
                 )
@@ -2106,7 +2155,7 @@ class scDEF(object):
                 )
                 pos = []
                 np.random.seed(0)
-                for i, c in enumerate(self.adata.obs[new_layer_name].cat.categories):
+                for c in self.adata.obs[new_layer_name].cat.categories:
                     pos_coarse = self.adata.uns["paga"]["pos"]  # previous PAGA
                     coarse_categories = self.adata.obs[old_layer_name].cat.categories
                     idx = coarse_categories.get_loc(matches[c][0])
@@ -2271,6 +2320,46 @@ class scDEF(object):
                 layers.append(layer_idx)
         return scores, factors, layers
 
+    def compute_factor_obs_assignment_fracs(
+        self, layer_idx, factor_name, obs_key, obs_val
+    ):
+        layer_name = self.layer_names[layer_idx]
+
+        # Cells attached to factor
+        adata_cells_in_factor = self.adata[
+            np.where(self.adata.obs[f"{layer_name}factor"] == factor_name)[0]
+        ]
+
+        # Cells from obs_val
+        adata_cells_from_obs = self.adata[
+            np.where(self.adata.obs[obs_key] == obs_val)[0]
+        ]
+
+        cells_from_obs = float(adata_cells_from_obs.shape[0])
+
+        # Cells from factor in obs
+        cells_in_factor_from_obs = float(
+            np.count_nonzero(adata_cells_in_factor.obs[obs_key] == obs_val)
+        )
+
+        return cells_in_factor_from_obs / cells_from_obs
+
+    def get_factor_obs_assignment_fracs(self, obs_key, obs_val):
+        scores = []
+        factors = []
+        layers = []
+        for layer_idx in range(self.n_layers):
+            n_factors = len(self.factor_lists[layer_idx])
+            for factor in range(n_factors):
+                factor_name = self.factor_names[layer_idx][factor]
+                score = self.compute_factor_obs_assignment_fracs(
+                    layer_idx, factor_name, obs_key, obs_val
+                )
+                scores.append(score)
+                factors.append(factor_name)
+                layers.append(layer_idx)
+        return scores, factors, layers
+
     def compute_factor_obs_weight_score(self, layer_idx, factor_name, obs_key, obs_val):
         layer_name = self.layer_names[layer_idx]
 
@@ -2365,6 +2454,20 @@ class scDEF(object):
         ]
         obs_vals = list(set([item for sublist in obs_vals for item in sublist]))
         return hierarchy_utils.complete_hierarchy(hierarchy, obs_vals)
+
+    def _get_assignment_fracs(self, obs_key, obs_vals):
+        signatures_dict = self.get_signatures_dict()
+        n_obs = len(obs_vals)
+        mats = [
+            np.zeros((n_obs, len(self.factor_names[idx])))
+            for idx in range(self.n_layers)
+        ]
+        for i, obs in enumerate(obs_vals):
+            scores, factors, layers = self.get_factor_obs_assignment_fracs(obs_key, obs)
+            for j in range(self.n_layers):
+                indices = np.where(np.array(layers) == j)[0]
+                mats[j][i] = np.array(scores)[indices]
+        return mats
 
     def _get_assignment_scores(self, obs_key, obs_vals):
         signatures_dict = self.get_signatures_dict()
@@ -2474,6 +2577,7 @@ class scDEF(object):
         xticks_rotation=90.0,
         cmap=None,
         show=True,
+        rasterized=False,
     ):
         if not isinstance(obs_keys, list):
             obs_keys = [obs_keys]
@@ -2507,7 +2611,9 @@ class scDEF(object):
                 ax = axs[j][i]
                 mat = obs_mats[obs_key][i]
                 mat = mat[obs_clusters[obs_key]][:, layer_factor_orders[i]]
-                axplt = ax.pcolormesh(mat, vmax=vmax, vmin=vmin, cmap=cmap)
+                axplt = ax.pcolormesh(
+                    mat, vmax=vmax, vmin=vmin, cmap=cmap, rasterized=rasterized
+                )
 
                 if j == len(obs_keys) - 1:
                     xlabels = self.factor_names[i]
@@ -2670,10 +2776,10 @@ class scDEF(object):
         self,
         obs_keys: Sequence[str],
         hierarchy: Optional[dict] = None,
-        mode: Literal["assignments", "weights"] = "assignments",
+        mode: Literal["f1", "fracs", "weights"] = "fracs",
         **kwargs,
     ):
-        """Plot the association between a set of cell annotations and the learned factor assignments.
+        """Plot the association between a set of cell annotations and factors.
 
         Args:
             obs_keys: the keys in self.adata.obs to use
@@ -2681,12 +2787,14 @@ class scDEF(object):
             mode: whether to compute scores based on assignments or weights
             **kwargs: plotting keyword arguments
         """
-        if mode == "assignments":
+        if mode == "f1":
             f = self._get_assignment_scores
+        elif mode == "fracs":
+            f = self._get_assignment_fracs
         elif mode == "weights":
             f = self._get_weight_scores
         else:
-            raise ValueError("`mode` must be one of ['assignments', 'weights']")
+            raise ValueError("`mode` must be one of ['f1', 'fracs', 'weights']")
 
         obs_mats, obs_clusters, obs_vals_dict = self._prepare_obs_factor_scores(
             obs_keys,
@@ -2695,7 +2803,7 @@ class scDEF(object):
         )
         vmax = None
         vmin = None
-        if mode == "assignments":
+        if mode == "f1" or mode == "fracs":
             vmax = 1.0
             vmin = 0.0
 
@@ -2716,8 +2824,9 @@ class scDEF(object):
         figsize=(16, 4),
         fontsize=12,
         legend_fontsize=10,
-        use_log=True,
-        metric="cosine",
+        use_log=False,
+        metric="euclidean",
+        rasterized=True,
         show=True,
     ):
         if layers is None:
@@ -2779,7 +2888,7 @@ class scDEF(object):
                     ax.set_title("")
 
                 if layer == n_layers - 1:
-                    ax.legend(
+                    leg = ax.legend(
                         loc="center left",
                         bbox_to_anchor=(1, 0.5),
                         frameon=False,
@@ -2787,6 +2896,7 @@ class scDEF(object):
                         fontsize=legend_fontsize,
                         title=color[row],
                     )
+                    leg._legend_box.align = "left"
 
         # Put the original one back
         if "X_umap_original" in self.adata.obsm:
