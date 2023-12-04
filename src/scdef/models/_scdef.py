@@ -1707,7 +1707,8 @@ class scDEF(object):
                             self.adata.obs[f"{layer_name}factor"].value_counts().max()
                         )
                     size = np.maximum(
-                        node_size_max * np.sqrt((node_num_cells / max_cells)), node_size_min
+                        node_size_max * np.sqrt((node_num_cells / max_cells)),
+                        node_size_min,
                     )
                     if len(self.factor_lists[layer_idx]) == 1:
                         size = node_size_min
