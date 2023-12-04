@@ -2903,3 +2903,121 @@ class scDEF(object):
 
         if show:
             plt.show()
+
+    def plot_factors_bars(
+        self,
+        obs_keys,
+        sort_layer_factors=True,
+        sharey=True,
+        layers=None,
+        vmax=None,
+        vmin=None,
+        fontsize=12,
+        title_fontsize=12,
+        legend_fontsize=8,
+        pad=0.1,
+        figsize=(10, 4),
+        xticks_rotation=90.0,
+        hspace=0.05,
+        wspace=0.05,
+        wbox_anchor=2.0,
+        show=True,
+    ):
+        if not isinstance(obs_keys, list):
+            obs_keys = [obs_keys]
+
+        if layers is None:
+            layers = [
+                i for i in range(0, self.n_layers) if len(self.factor_lists[i]) > 1
+            ]
+
+        n_layers = len(layers)
+
+        if sort_layer_factors:
+            layer_factor_orders = self.get_layer_factor_orders()
+        else:
+            layer_factor_orders = [
+                np.arange(len(self.factor_lists[i])) for i in range(self.n_layers)
+            ]
+
+        obs_mats, obs_clusters, obs_vals_dict = self._prepare_obs_factor_scores(
+            obs_keys,
+            self._get_assignment_fracs,
+        )
+
+        n_factors = [len(self.factor_lists[idx]) for idx in layers]
+        n_obs = [len(obs_clusters[obs_key]) for obs_key in obs_keys]
+
+        fig, axs = plt.subplots(
+            len(obs_keys),
+            n_layers,
+            figsize=figsize,
+            gridspec_kw={"width_ratios": n_factors},
+            sharey=sharey,
+        )
+
+        axs = axs.reshape((len(obs_keys), n_layers))
+        for i in layers:
+            axs[0][i].set_title(f"Layer {i}", fontsize=title_fontsize)
+            layer_sizes = []
+            for factor in self.factor_names[i]:
+                layer_sizes.append(
+                    len(
+                        np.where(
+                            self.adata.obs[f"{self.layer_names[i]}factor"] == factor
+                        )[0]
+                    )
+                )
+            layer_sizes = np.array(layer_sizes)[layer_factor_orders[i]]
+            xlabels = self.factor_names[i]
+            xlabels = np.array(xlabels)[layer_factor_orders[i]]
+            for j, obs_key in enumerate(obs_keys):
+                ax = axs[j][i]
+                plt.sca(ax)
+                mat = obs_mats[obs_key][i]
+                mat = mat[:, layer_factor_orders[i]]
+                for idx, obs in enumerate(obs_vals_dict[obs_key]):
+                    obs_idx = np.where(self.adata.obs[obs_key].cat.categories == obs)[
+                        0
+                    ][0]
+                    color = self.adata.uns[f"{obs_key}_colors"][obs_idx]
+                    y = mat[idx] * layer_sizes
+                    if idx == 0:
+                        plt.bar(xlabels, y, color=color, label=obs)
+                        y_ = y
+                    else:
+                        plt.bar(xlabels, y, bottom=y_, color=color, label=obs)
+                        y_ += y
+
+                if j == len(obs_keys) - 1:
+                    ax.set_xticks(
+                        np.arange(len(xlabels)),
+                        xlabels,
+                        rotation=xticks_rotation,
+                        fontsize=fontsize,
+                    )
+                else:
+                    ax.set(xticks=[])
+
+                if i == len(layers) - 1:
+                    leg = ax.legend(
+                        loc="center left",
+                        bbox_to_anchor=(wbox_anchor, 0.5),
+                        frameon=False,
+                        title_fontsize=title_fontsize,
+                        fontsize=legend_fontsize,
+                        title=obs_key,
+                    )
+                    leg._legend_box.align = "left"
+
+                if i == 0:
+                    ax.set_ylabel("Number of cells", fontsize=fontsize)
+
+                ax.spines["top"].set_visible(False)
+                ax.spines["right"].set_visible(False)
+
+        plt.subplots_adjust(wspace=wspace)
+        plt.subplots_adjust(hspace=hspace)
+
+        if show:
+            plt.show()
