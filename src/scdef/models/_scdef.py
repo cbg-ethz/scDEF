@@ -2021,8 +2021,8 @@ class scDEF(object):
         if cluster_cols:
             Z = ward(pdist(s.T))
             hclust_index = leaves_list(Z)
-            s = s[hclust_index]
-            c = c[hclust_index]
+            s = s[:, hclust_index]
+            c = c[:, hclust_index]
             xlabels = xlabels[hclust_index]
 
         x, y = np.meshgrid(np.arange(len(xlabels)), np.arange(len(ylabels)))
@@ -2048,9 +2048,8 @@ class scDEF(object):
         ax.set_yticks(np.arange(n_obs + 1) - 0.5, minor=True)
         ax.grid(which="minor")
 
-        plt.ylabel(obs_key, fontsize=labelsize)
         if show_ylabel:
-            ax.set_ylabel(obs_key, rotation=270, labelpad=20.0, fontsize=fontsize)
+            ax.set_ylabel(obs_key, rotation=270, labelpad=20.0, fontsize=labelsize)
         plt.xlabel("Factor", fontsize=labelsize)
         plt.title(f"Layer {layer_idx}\n", fontsize=titlesize)
 
@@ -2330,19 +2329,19 @@ class scDEF(object):
             np.where(self.adata.obs[f"{layer_name}factor"] == factor_name)[0]
         ]
 
-        # Cells from obs_val
-        adata_cells_from_obs = self.adata[
-            np.where(self.adata.obs[obs_key] == obs_val)[0]
-        ]
-
-        cells_from_obs = float(adata_cells_from_obs.shape[0])
+        # Cells in factor
+        cells_in_factor = float(adata_cells_in_factor.shape[0])
 
         # Cells from factor in obs
         cells_in_factor_from_obs = float(
             np.count_nonzero(adata_cells_in_factor.obs[obs_key] == obs_val)
         )
 
-        return cells_in_factor_from_obs / cells_from_obs
+        score = 0.0
+        if cells_in_factor != 0:
+            score = cells_in_factor_from_obs / cells_in_factor
+
+        return score
 
     def get_factor_obs_assignment_fracs(self, obs_key, obs_val):
         scores = []
