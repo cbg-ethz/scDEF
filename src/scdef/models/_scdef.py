@@ -73,7 +73,7 @@ class scDEF(object):
         layer_rates: Optional[list] = None,
         brd: Optional[float] = 1e3,
         use_brd: Optional[bool] = True,
-        cell_scale_shape: Optional[float] = 6.0,
+        cell_scale_shape: Optional[float] = 1.0,
         gene_scale_shape: Optional[float] = 1.0,
         factor_shapes: Optional[list] = None,
         factor_rates: Optional[list] = None,
@@ -83,6 +83,8 @@ class scDEF(object):
         lightness_mult: Optional[float] = 0.15,
     ):
         self.n_cells, self.n_genes = adata.shape
+
+        self.load_adata(adata, layer=counts_layer, batch_key=batch_key)
 
         self.layer_sizes = [int(x) for x in layer_sizes]
         self.n_layers = len(self.layer_sizes)
@@ -109,6 +111,11 @@ class scDEF(object):
                 schedule = (np.array(schedule) / 10.0).tolist() + schedule
             else:
                 schedule = schedule + (np.array(schedule) * 10.0).tolist()
+
+            avg_n_genes = np.mean(np.sum(self.X > 0, axis=1))
+            if avg_n_genes < 1_000:
+                schedule = schedule[1:]
+
             for i in range(self.n_layers - 1):
                 layer_rates.append(float(schedule[i]))
         elif isinstance(layer_rates, float) or isinstance(layer_rates, int):
@@ -186,7 +193,6 @@ class scDEF(object):
                         col, amount=1.0 + lightness_mult * layer_idx
                     )
 
-        self.load_adata(adata, layer=counts_layer, batch_key=batch_key)
         self.batch_key = batch_key
 
         self.w_priors = []
