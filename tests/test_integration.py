@@ -146,7 +146,9 @@ def test_scdef():
         scd.adata.var_names, simplified, signatures, scores, sizes, top_genes=10
     )
 
-    scd.plot_umaps(color=["celltypes"], fontsize=16, legend_fontsize=14, show=False)
+    scd.plot_umaps(color=["celltypes", "celltypes_coarse"], fontsize=16, legend_fontsize=14, show=False)
+
+    scd.plot_factors_bars(["celltypes", "celltypes_coarse"], show=False)
 
     # Evaluate methods
     methods_list = ["Leiden", "Harmony", "NMF"]
