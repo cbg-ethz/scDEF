@@ -2570,6 +2570,7 @@ class scDEF(object):
         obs_clusters,
         obs_vals_dict,
         sort_layer_factors=True,
+        orders=None,
         layers=None,
         vmax=None,
         vmin=None,
@@ -2598,9 +2599,12 @@ class scDEF(object):
         if sort_layer_factors:
             layer_factor_orders = self.get_layer_factor_orders()
         else:
-            layer_factor_orders = [
-                np.arange(len(self.factor_lists[i])) for i in range(self.n_layers)
-            ]
+            if orders is not None:
+                layer_factor_orders = orders
+            else:
+                layer_factor_orders = [
+                    np.arange(len(self.factor_lists[i])) for i in range(self.n_layers)
+                ]
 
         n_factors = [len(self.factor_lists[idx]) for idx in layers]
         n_obs = [len(obs_clusters[obs_key]) for obs_key in obs_keys]
@@ -2915,6 +2919,7 @@ class scDEF(object):
         self,
         obs_keys,
         sort_layer_factors=True,
+        orders=None,
         sharey=True,
         layers=None,
         vmax=None,
@@ -2943,9 +2948,12 @@ class scDEF(object):
         if sort_layer_factors:
             layer_factor_orders = self.get_layer_factor_orders()
         else:
-            layer_factor_orders = [
-                np.arange(len(self.factor_lists[i])) for i in range(self.n_layers)
-            ]
+            if orders is not None:
+                layer_factor_orders = orders
+            else:
+                layer_factor_orders = [
+                    np.arange(len(self.factor_lists[i])) for i in range(self.n_layers)
+                ]
 
         obs_mats, obs_clusters, obs_vals_dict = self._prepare_obs_factor_scores(
             obs_keys,
