@@ -84,7 +84,8 @@ class scDEF(object):
     ):
         self.n_cells, self.n_genes = adata.shape
 
-        self.load_adata(adata, layer=counts_layer, batch_key=batch_key)
+        self.logger = logging.getLogger("scDEF")
+        self.logger.setLevel(logginglevel)
 
         self.layer_sizes = [int(x) for x in layer_sizes]
         self.n_layers = len(self.layer_sizes)
@@ -92,6 +93,42 @@ class scDEF(object):
 
         if self.n_layers < 2:
             raise ValueError("scDEF requires at least 2 layers")
+
+        if layer_cpal is None:
+            layer_cpal = ["Set1"] * self.n_layers
+        elif isinstance(layer_cpal, str):
+            layer_cpal = [layer_cpal] * self.n_layers
+        if len(layer_cpal) != self.n_layers:
+            raise ValueError("layer_cpal list must be of size scDEF.n_layers")
+
+        self.factor_lists = [np.arange(size) for size in self.layer_sizes]
+
+        self.n_batches = 1
+        self.batches = [""]
+
+        self.seed = seed
+        self.layer_names = ["h" * i for i in range(self.n_layers)]
+        self.layer_cpal = layer_cpal
+        self.batch_cpal = batch_cpal
+        self.layer_colorpalettes = [
+            sns.color_palette(layer_cpal[idx], n_colors=size)
+            for idx, size in enumerate(layer_sizes)
+        ]
+
+        if len(np.unique(layer_cpal)) == 1:
+            # Make the layers have different lightness
+            for layer_idx, size in enumerate(self.layer_sizes):
+                for factor_idx in range(size):
+                    col = self.layer_colorpalettes[layer_idx][factor_idx]
+                    self.layer_colorpalettes[layer_idx][
+                        factor_idx
+                    ] = color_utils.adjust_lightness(
+                        col, amount=1.0 + lightness_mult * layer_idx
+                    )
+
+        self.batch_key = batch_key
+
+        self.load_adata(adata, layer=counts_layer, batch_key=batch_key)
 
         if layer_shapes is None:
             layer_shapes = [0.3] * (self.n_layers - 1) + [1.0]
@@ -154,46 +191,9 @@ class scDEF(object):
             raise ValueError("layer_diagonals list must be of size scDEF.n_layers")
         self.layer_diagonals = layer_diagonals
 
-        if layer_cpal is None:
-            layer_cpal = ["Set1"] * self.n_layers
-        elif isinstance(layer_cpal, str):
-            layer_cpal = [layer_cpal] * self.n_layers
-        if len(layer_cpal) != self.n_layers:
-            raise ValueError("layer_cpal list must be of size scDEF.n_layers")
-
-        self.factor_lists = [np.arange(size) for size in self.layer_sizes]
-
         self.brd = brd
         self.cell_scale_shape = cell_scale_shape
         self.gene_scale_shape = gene_scale_shape
-
-        self.logger = logging.getLogger("scDEF")
-        self.logger.setLevel(logginglevel)
-
-        self.n_batches = 1
-        self.batches = [""]
-
-        self.seed = seed
-        self.layer_names = ["h" * i for i in range(self.n_layers)]
-        self.layer_cpal = layer_cpal
-        self.batch_cpal = batch_cpal
-        self.layer_colorpalettes = [
-            sns.color_palette(layer_cpal[idx], n_colors=size)
-            for idx, size in enumerate(layer_sizes)
-        ]
-
-        if len(np.unique(layer_cpal)) == 1:
-            # Make the layers have different lightness
-            for layer_idx, size in enumerate(self.layer_sizes):
-                for factor_idx in range(size):
-                    col = self.layer_colorpalettes[layer_idx][factor_idx]
-                    self.layer_colorpalettes[layer_idx][
-                        factor_idx
-                    ] = color_utils.adjust_lightness(
-                        col, amount=1.0 + lightness_mult * layer_idx
-                    )
-
-        self.batch_key = batch_key
 
         self.w_priors = []
         for idx in range(self.n_layers):
