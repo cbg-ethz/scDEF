@@ -219,12 +219,12 @@ def run_schpf(
     best = models[np.argmin(losses)]
 
     cscores = best.cell_score()
-    gene_scores = best.gene_score()
+    gene_scores = np.array(best.gene_score()).T
 
     outs = [cscores, gene_scores, ad]
     if return_signatures:
         signatures = []
-        for k in range(len(gene_scores)):
+        for k in range(gene_scores.shape[0]):
             signatures.append(ad.var_names[np.argsort(gene_scores[k])[::-1]])
         outs.append(signatures)
     if return_cluster_assignments:
