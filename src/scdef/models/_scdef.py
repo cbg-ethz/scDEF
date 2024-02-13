@@ -1454,6 +1454,7 @@ class scDEF(object):
     def make_graph(
         self,
         hierarchy: Optional[dict] = None,
+        show_all: Optional[bool] = False,
         factor_annotations: Optional[dict] = None,
         top_factor: Optional[str] = None,
         show_signatures: Optional[bool] = True,
@@ -1479,6 +1480,7 @@ class scDEF(object):
 
         Args:
             hierarchy: a dictionary containing the polytree to draw instead of the whole graph
+            show_all: whether to show all factors even post filtering
             factor_annotations: factor annotations to include in the node labels
             top_factor: only include factors below this factor
             show_signatures: whether to show the ranked gene signatures in the node labels
@@ -1553,13 +1555,19 @@ class scDEF(object):
 
         layer_factor_orders = []
         for layer_idx in np.arange(0, self.n_layers)[::-1]:  # Go top down
-            factors = self.factor_lists[layer_idx]
+            if show_all:
+                factors = np.arange(self.layer_sizes[layer_idx])
+            else:
+                factors = self.factor_lists[layer_idx]
             n_factors = len(factors)
-            if layer_idx < self.n_layers - 1:
+            if not show_all and layer_idx < self.n_layers - 1:
                 # Assign factors to upper factors to set the plotting order
-                mat = self.pmeans[f"{self.layer_names[layer_idx+1]}W"][
-                    self.factor_lists[layer_idx + 1]
-                ][:, self.factor_lists[layer_idx]]
+                if show_all:
+                    mat = self.pmeans[f"{self.layer_names[layer_idx+1]}W"]
+                else:
+                    mat = self.pmeans[f"{self.layer_names[layer_idx+1]}W"][
+                        self.factor_lists[layer_idx + 1]
+                    ][:, self.factor_lists[layer_idx]]
                 normalized_factor_weights = mat / np.sum(mat, axis=1).reshape(-1, 1)
                 assignments = []
                 for factor_idx in range(n_factors):
@@ -1588,13 +1596,24 @@ class scDEF(object):
 
         for layer_idx in range(self.n_layers):
             layer_name = self.layer_names[layer_idx]
-            factors = self.factor_lists[layer_idx]
+            if show_all:
+                factors = np.arange(self.layer_sizes[layer_idx])
+                layer_colors = []
+                f_idx = 0
+                for i in range(self.layer_sizes[layer_idx]):
+                    if i in self.factor_lists[layer_idx]:
+                        layer_colors.append(self.layer_colorpalettes[layer_idx][f_idx])
+                        f_idx += 1
+                    else:
+                        layer_colors.append("grey")
+            else:
+                factors = self.factor_lists[layer_idx]
+                layer_colors = self.layer_colorpalettes[layer_idx][:len(factors)]
             n_factors = len(factors)
-            layer_colors = self.layer_colorpalettes[layer_idx][:n_factors]
 
             if show_signatures:
                 gene_rankings, gene_scores = self.get_rankings(
-                    layer_idx=layer_idx, genes=True, return_scores=True
+                    layer_idx=layer_idx, genes=True, return_scores=True,
                 )
 
             factor_order = layer_factor_orders[layer_idx]
@@ -1602,7 +1621,10 @@ class scDEF(object):
                 factor_idx = int(factor_idx)
                 alpha = "FF"
                 color = None
-                factor_name = f"{self.factor_names[layer_idx][int(factor_idx)]}"
+                if show_all:
+                    factor_name = f"{self.layer_names[layer_idx]}{int(factor_idx)}"
+                else:
+                    factor_name = f"{self.factor_names[layer_idx][int(factor_idx)]}"
 
                 if hierarchy is not None and factor_name not in hierarchy_nodes:
                     continue
@@ -1679,28 +1701,31 @@ class scDEF(object):
                         ]
                     )
                 elif show_signatures:
-                    factor_gene_rankings = gene_rankings[factor_idx][
-                        : top_genes[layer_idx]
-                    ]
-                    factor_gene_scores = gene_scores[factor_idx][: top_genes[layer_idx]]
-                    fontsizes = map_scores_to_fontsizes(
-                        gene_scores[factor_idx], **fontsize_kwargs
-                    )[: top_genes[layer_idx]]
-                    gene_labels = []
-                    for j, gene in enumerate(factor_gene_rankings):
-                        gene_labels.append(
-                            f'<FONT POINT-SIZE="{fontsizes[j]}">{gene}</FONT>'
-                        )
-                    label += "<br/><br/>" + "<br/>".join(gene_labels)
+                    if factor_idx in self.factor_lists[layer_idx]:
+                        if not (show_all and len(self.factor_lists[layer_idx]) == 1):
+                            idx = np.where(factor_idx == np.array(self.factor_lists[layer_idx]))[0][0]
+                            factor_gene_rankings = gene_rankings[idx][
+                                : top_genes[layer_idx]
+                            ]
+                            factor_gene_scores = gene_scores[idx][: top_genes[layer_idx]]
+                            fontsizes = map_scores_to_fontsizes(
+                                gene_scores[idx], **fontsize_kwargs
+                            )[: top_genes[layer_idx]]
+                            gene_labels = []
+                            for j, gene in enumerate(factor_gene_rankings):
+                                gene_labels.append(
+                                    f'<FONT POINT-SIZE="{fontsizes[j]}">{gene}</FONT>'
+                                )
+                            label += "<br/><br/>" + "<br/>".join(gene_labels)
 
-                    if show_confidences:
-                        confidence_score = self.get_signature_confidence(
-                            factor_idx,
-                            layer_idx,
-                            top_genes=top_genes[layer_idx],
-                            mc_samples=mc_samples,
-                        )
-                        label += f"<br/><br/>({confidence_score:.3f})"
+                            if show_confidences:
+                                confidence_score = self.get_signature_confidence(
+                                    idx,
+                                    layer_idx,
+                                    top_genes=top_genes[layer_idx],
+                                    mc_samples=mc_samples,
+                                )
+                                label += f"<br/><br/>({confidence_score:.3f})"
 
                 elif filled is not None and filled != "factor":
                     label += "<br/><br/>" + ""
@@ -1721,6 +1746,14 @@ class scDEF(object):
                     if len(self.factor_lists[layer_idx]) == 1:
                         size = node_size_min
                     fixedsize = "true"
+                elif show_all:
+                    if factor_idx not in self.factor_lists[layer_idx] or len(self.factor_lists[layer_idx]) == 1:
+                        size = node_size_min
+                        fixedsize = "true"
+                        color = "gray"
+                        fillcolor = "gray"
+                        if len(self.factor_lists[layer_idx]) == 1:
+                            label = ""
 
                 if not show_label:
                     label = ""
@@ -1761,19 +1794,30 @@ class scDEF(object):
                                     color=color,
                                 )
                     else:
-                        mat = self.pmeans[f"{self.layer_names[layer_idx]}W"][
-                            self.factor_lists[layer_idx]
-                        ][:, self.factor_lists[layer_idx - 1]]
+                        if show_all:
+                            mat = self.pmeans[f"{self.layer_names[layer_idx]}W"]
+                        else:
+                            mat = self.pmeans[f"{self.layer_names[layer_idx]}W"][
+                                self.factor_lists[layer_idx]
+                            ][:, self.factor_lists[layer_idx - 1]]
                         normalized_factor_weights = mat / np.sum(mat, axis=1).reshape(
                             -1, 1
                         )
                         for lower_factor_idx in layer_factor_orders[layer_idx - 1]:
-                            lower_factor_name = self.factor_names[layer_idx - 1][
-                                lower_factor_idx
-                            ]
+                            if show_all:
+                                lower_factor_name = f"{self.layer_names[layer_idx-1]}{int(lower_factor_idx)}"
+                            else:
+                                lower_factor_name = self.factor_names[layer_idx - 1][
+                                    lower_factor_idx
+                                    ]
+
                             normalized_weight = normalized_factor_weights[
                                 factor_idx, lower_factor_idx
                             ]
+
+                            if factor_idx not in self.factor_lists[layer_idx] or (len(self.factor_lists[layer_idx]) == 1 and show_all):
+                                normalized_weight = normalized_weight / 5.
+
                             g.edge(
                                 factor_name,
                                 lower_factor_name,
@@ -1874,6 +1918,7 @@ class scDEF(object):
         xlabel="Factor",
         ylabel="Relevance",
         title="Biological relevance determination",
+        color=False,
         show=True,
         **kwargs,
     ):
@@ -1909,15 +1954,27 @@ class scDEF(object):
             plt.axhline(cutoff, color="red", ls="--")
             above = np.where(scales >= cutoff)[0]
             below = np.where(scales < cutoff)[0]
-        plt.bar(np.arange(layer_size)[above], scales[above], label="Kept")
-        if len(below) > 0:
-            plt.bar(
-                np.arange(layer_size)[below],
-                scales[below],
-                alpha=0.6,
-                color="gray",
-                label="Removed",
-            )
+
+        if color:
+            colors = []
+            f_idx = 0
+            for i in range(self.layer_sizes[0]):
+                if i in self.factor_lists[0]:
+                    colors.append(self.layer_colorpalettes[0][f_idx])
+                    f_idx += 1
+                else:
+                    colors.append("grey")
+            plt.bar(np.arange(layer_size), scales, color=colors)
+        else:
+            plt.bar(np.arange(layer_size)[above], scales[above], label="Kept")
+            if len(below) > 0:
+                plt.bar(
+                    np.arange(layer_size)[below],
+                    scales[below],
+                    alpha=0.6,
+                    color="gray",
+                    label="Removed",
+                )
         if len(scales) > 15:
             plt.xticks(np.arange(0, layer_size, 2))
         else:
@@ -1928,7 +1985,8 @@ class scDEF(object):
         plt.xlabel(xlabel, fontsize=fontsize)
         plt.yscale(scale)
         plt.ylabel(ylabel, fontsize=fontsize)
-        plt.legend(fontsize=legend_fontsize)
+        if not color:
+            plt.legend(fontsize=legend_fontsize)
         if show:
             plt.show()
 
@@ -2671,6 +2729,7 @@ class scDEF(object):
         source="source",
         target="target",
         score="Combined score",
+        z_score=True,
     ):
         factors = [self.factor_names[idx] for idx in range(self.n_layers)]
         flat_list = [item for sublist in factors for item in sublist]
@@ -2705,12 +2764,13 @@ class scDEF(object):
                         score
                     ].values[0]
 
-                # Compute z-scores
-                den = np.std(factor_vals, axis=0)
-                den[den == 0] = 1e6
-                factor_vals = (factor_vals - np.mean(factor_vals, axis=0)) / den[
-                    None, :
-                ]
+                if z_score:
+                    # Compute z-scores
+                    den = np.std(factor_vals, axis=0)
+                    den[den == 0] = 1e6
+                    factor_vals = (factor_vals - np.mean(factor_vals, axis=0)) / den[
+                        None, :
+                    ]
             mats.append(factor_vals)
 
         # Cluster rows across columns in all mats
@@ -2839,6 +2899,7 @@ class scDEF(object):
         use_log=False,
         metric="euclidean",
         rasterized=True,
+        n_legend_cols=1,
         show=True,
     ):
         if layers is None:
@@ -2907,6 +2968,7 @@ class scDEF(object):
                         title_fontsize=legend_fontsize,
                         fontsize=legend_fontsize,
                         title=color[row],
+                        ncols=n_legend_cols,
                     )
                     leg._legend_box.align = "left"
 
