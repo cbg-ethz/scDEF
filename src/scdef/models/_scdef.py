@@ -176,7 +176,7 @@ class scDEF(object):
 
         if factor_rates is None:
             if self.use_brd:
-                factor_rates = [1./brd_mean] + [1.0] * (self.n_layers - 1)
+                factor_rates = [1.0 / brd_mean] + [1.0] * (self.n_layers - 1)
             else:
                 factor_rates = [0.3] + [1.0] * (self.n_layers - 1)
         elif isinstance(factor_rates, float) or isinstance(factor_rates, int):
@@ -1608,12 +1608,14 @@ class scDEF(object):
                         layer_colors.append("grey")
             else:
                 factors = self.factor_lists[layer_idx]
-                layer_colors = self.layer_colorpalettes[layer_idx][:len(factors)]
+                layer_colors = self.layer_colorpalettes[layer_idx][: len(factors)]
             n_factors = len(factors)
 
             if show_signatures:
                 gene_rankings, gene_scores = self.get_rankings(
-                    layer_idx=layer_idx, genes=True, return_scores=True,
+                    layer_idx=layer_idx,
+                    genes=True,
+                    return_scores=True,
                 )
 
             factor_order = layer_factor_orders[layer_idx]
@@ -1703,11 +1705,15 @@ class scDEF(object):
                 elif show_signatures:
                     if factor_idx in self.factor_lists[layer_idx]:
                         if not (show_all and len(self.factor_lists[layer_idx]) == 1):
-                            idx = np.where(factor_idx == np.array(self.factor_lists[layer_idx]))[0][0]
+                            idx = np.where(
+                                factor_idx == np.array(self.factor_lists[layer_idx])
+                            )[0][0]
                             factor_gene_rankings = gene_rankings[idx][
                                 : top_genes[layer_idx]
                             ]
-                            factor_gene_scores = gene_scores[idx][: top_genes[layer_idx]]
+                            factor_gene_scores = gene_scores[idx][
+                                : top_genes[layer_idx]
+                            ]
                             fontsizes = map_scores_to_fontsizes(
                                 gene_scores[idx], **fontsize_kwargs
                             )[: top_genes[layer_idx]]
@@ -1747,7 +1753,10 @@ class scDEF(object):
                         size = node_size_min
                     fixedsize = "true"
                 elif show_all:
-                    if factor_idx not in self.factor_lists[layer_idx] or len(self.factor_lists[layer_idx]) == 1:
+                    if (
+                        factor_idx not in self.factor_lists[layer_idx]
+                        or len(self.factor_lists[layer_idx]) == 1
+                    ):
                         size = node_size_min
                         fixedsize = "true"
                         color = "gray"
@@ -1809,14 +1818,16 @@ class scDEF(object):
                             else:
                                 lower_factor_name = self.factor_names[layer_idx - 1][
                                     lower_factor_idx
-                                    ]
+                                ]
 
                             normalized_weight = normalized_factor_weights[
                                 factor_idx, lower_factor_idx
                             ]
 
-                            if factor_idx not in self.factor_lists[layer_idx] or (len(self.factor_lists[layer_idx]) == 1 and show_all):
-                                normalized_weight = normalized_weight / 5.
+                            if factor_idx not in self.factor_lists[layer_idx] or (
+                                len(self.factor_lists[layer_idx]) == 1 and show_all
+                            ):
+                                normalized_weight = normalized_weight / 5.0
 
                             g.edge(
                                 factor_name,
