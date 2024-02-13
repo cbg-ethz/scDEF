@@ -49,7 +49,8 @@ class scDEF(object):
         seed: random seed for JAX
         logginglevel: verbosity level for logger
         layer_shapes: prior parameters for the z shape to use in each scDEF layer
-        brd: BRD prior parameter
+        brd_strength: BRD prior concentration parameter
+        brd_mean: BRD prior mean parameter
         use_brd: whether to use the BRD prior for factor relevance estimation
         cell_scale_shape: concentration level in the cell scale prior
         gene_scale_shape: concentration level in the gene scale prior
@@ -71,7 +72,8 @@ class scDEF(object):
         logginglevel: Optional[int] = logging.INFO,
         layer_shapes: Optional[list] = None,
         layer_rates: Optional[list] = None,
-        brd: Optional[float] = 1e3,
+        brd_strength: Optional[float] = 1e3,
+        brd_mean: Optional[float] = 1e-2,
         use_brd: Optional[bool] = True,
         cell_scale_shape: Optional[float] = 1.0,
         gene_scale_shape: Optional[float] = 1.0,
@@ -174,7 +176,7 @@ class scDEF(object):
 
         if factor_rates is None:
             if self.use_brd:
-                factor_rates = [100.0] + [1.0] * (self.n_layers - 1)
+                factor_rates = [1./brd_mean] + [1.0] * (self.n_layers - 1)
             else:
                 factor_rates = [0.3] + [1.0] * (self.n_layers - 1)
         elif isinstance(factor_rates, float) or isinstance(factor_rates, int):
@@ -191,7 +193,7 @@ class scDEF(object):
             raise ValueError("layer_diagonals list must be of size scDEF.n_layers")
         self.layer_diagonals = layer_diagonals
 
-        self.brd = brd
+        self.brd = brd_strength
         self.cell_scale_shape = cell_scale_shape
         self.gene_scale_shape = gene_scale_shape
 
