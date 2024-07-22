@@ -1868,54 +1868,68 @@ class scDEF(object):
         self, figsize=(8, 4), alpha=0.6, fontsize=12, legend_fontsize=10, show=True
     ):
         fig, axes = plt.subplots(1, 2, figsize=figsize)
-        plt.sca(axes[0])
+        self.plot_scale("cell", figsize, alpha, fontsize, legend_fontsize, axes[0], False)
+        self.plot_scale("gene", figsize, alpha, fontsize, legend_fontsize, axes[1], False)
+        if show:
+            fig.tight_layout()
+            plt.show()
+        else:
+            return fig
+
+
+    def plot_scale(
+        self, scale_type, figsize=(4,4), alpha=0.6, fontsize=12,
+        legend_fontsize=10, ax=None, show=True
+    ):
+        if ax == None:
+            fig, ax = plt.subplots(1, 1, figsize=figsize)
+        else:
+            fig = ax.get_figure()
+        plt.sca(ax)
+
+        if scale_type == "cell":
+            x_data = self.batch_lib_sizes
+            x_label = "Observed gene scale"
+            def get_x_data_batch(b, b_cells):
+                return self.batch_lib_sizes[np.where(b_cells)[0]]
+            def get_y_data_batch(b, _, b_cells):
+                return 1.0 / self.pmeans["cell_scale"].ravel()[np.where(b_cells)[0]]
+            x_label = "Observed library size"
+        else:
+            x_data = np.sum(self.X, axis=0)
+            x_label = "Observed gene scale"
+            def get_x_data_batch(b, b_cells):
+                return np.sum(self.X[b_cells], axis=0)
+            def get_y_data_batch(b, b_id, _):
+                return 1.0 / self.pmeans["gene_scale"][b_id].ravel()
+
         if len(self.batches) > 1:
             for i, b in enumerate(self.batches):
-                cells = np.where(self.adata.obs[self.batch_key] == b)[0]
+                b_cells = self.adata.obs[self.batch_key] == b
                 plt.scatter(
-                    self.batch_lib_sizes[cells],
-                    1.0 / self.pmeans["cell_scale"].ravel()[cells],
+                    get_x_data_batch(b, b_cells),
+                    get_y_data_batch(b, b_id, b_cells),
                     label=b,
                     alpha=alpha,
                 )
-        else:
-            plt.scatter(
-                self.batch_lib_sizes,
-                1.0 / self.pmeans["cell_scale"].ravel(),
-                alpha=alpha,
-            )
-        plt.yscale("log")
-        plt.xscale("log")
-        plt.xlabel("Observed library size", fontsize=fontsize)
-        plt.ylabel("Learned cell size factor", fontsize=fontsize)
-
-        plt.sca(axes[1])
-        if len(self.batches) > 1:
-            for i, b in enumerate(self.batches):
-                plt.scatter(
-                    np.sum(self.X[self.adata.obs[self.batch_key] == b], axis=0),
-                    1.0 / self.pmeans["gene_scale"][i].ravel(),
-                    label=b,
-                    alpha=alpha,
-                )
-        else:
-            plt.scatter(
-                np.sum(self.X, axis=0),
-                1.0 / self.pmeans["gene_scale"].ravel(),
-                alpha=alpha,
-            )
-        plt.yscale("log")
-        plt.xscale("log")
-        plt.xlabel("Observed gene scale", fontsize=fontsize)
-        plt.ylabel("Learned gene size factor", fontsize=fontsize)
-
-        if len(self.batches) > 1:
             plt.legend(fontsize=legend_fontsize)
-
-        fig.tight_layout()
+        else:
+            plt.scatter(
+                x_data,
+                1.0 / self.pmeans[f"{scale_type}_scale"].ravel(),
+                alpha=alpha,
+            )
+        plt.yscale("log")
+        plt.xscale("log")
+        plt.xlabel(x_label, fontsize=fontsize)
+        plt.ylabel(f"Learned {scale_type} size factor", fontsize=fontsize)
 
         if show:
+            fig.tight_layout()
             plt.show()
+        else:
+            return ax
+
 
     def plot_brd(
         self,
