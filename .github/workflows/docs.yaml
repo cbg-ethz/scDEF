@@ -36,7 +36,7 @@ jobs:
         run: poetry install --with dev --no-interaction
 
       - name: Build site
-        run: poetry run mkdocs build --force
+        run: poetry run mkdocs build
 
       - name: Deploy to gh-pages
         if: github.event_name == 'push' && github.ref == 'refs/heads/master'
