@@ -37,3 +37,5 @@ jobs:
 
       - name: Generate the documentation
         run: poetry run mkdocs gh-deploy --force
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
