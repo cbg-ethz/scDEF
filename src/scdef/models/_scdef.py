@@ -11,6 +11,7 @@ import jax
 
 import matplotlib
 import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpec
 from matplotlib.lines import Line2D
 import seaborn as sns
 import gseapy as gp
@@ -122,10 +123,10 @@ class scDEF(object):
             for layer_idx, size in enumerate(self.layer_sizes):
                 for factor_idx in range(size):
                     col = self.layer_colorpalettes[layer_idx][factor_idx]
-                    self.layer_colorpalettes[layer_idx][
-                        factor_idx
-                    ] = color_utils.adjust_lightness(
-                        col, amount=1.0 + lightness_mult * layer_idx
+                    self.layer_colorpalettes[layer_idx][factor_idx] = (
+                        color_utils.adjust_lightness(
+                            col, amount=1.0 + lightness_mult * layer_idx
+                        )
                     )
 
         self.batch_key = batch_key
@@ -1890,11 +1891,10 @@ class scDEF(object):
         ax=None,
         show=True,
     ):
-        if ax == None:
+        if ax is None:
             fig, ax = plt.subplots(1, 1, figsize=figsize)
         else:
             fig = ax.get_figure()
-        plt.sca(ax)
 
         if scale_type == "cell":
             x_data = self.batch_lib_sizes
@@ -1920,23 +1920,23 @@ class scDEF(object):
         if len(self.batches) > 1:
             for i, b in enumerate(self.batches):
                 b_cells = self.adata.obs[self.batch_key] == b
-                plt.scatter(
+                ax.scatter(
                     get_x_data_batch(b, b_cells),
                     get_y_data_batch(b, b_id, b_cells),
                     label=b,
                     alpha=alpha,
                 )
-            plt.legend(fontsize=legend_fontsize)
+            ax.legend(fontsize=legend_fontsize)
         else:
-            plt.scatter(
+            ax.scatter(
                 x_data,
                 1.0 / self.pmeans[f"{scale_type}_scale"].ravel(),
                 alpha=alpha,
             )
-        plt.yscale("log")
-        plt.xscale("log")
-        plt.xlabel(x_label, fontsize=fontsize)
-        plt.ylabel(f"Learned {scale_type} size factor", fontsize=fontsize)
+        ax.set_yscale("log")
+        ax.set_xscale("log")
+        ax.set_xlabel(x_label, fontsize=fontsize)
+        ax.set_ylabel(f"Learned {scale_type} size factor", fontsize=fontsize)
 
         if show:
             fig.tight_layout()
@@ -1958,6 +1958,7 @@ class scDEF(object):
         title="Biological relevance determination",
         color=False,
         show=True,
+        ax=None,
         **kwargs,
     ):
         if not self.use_brd:
@@ -1982,7 +1983,11 @@ class scDEF(object):
         else:
             cutoff = ard
 
-        fig = plt.figure(**kwargs)
+        if ax is None:
+            fig, ax = plt.subplots(**kwargs)
+        else:
+            fig = ax.get_figure()
+
         below = []
         if thres is None and iqr_mult is None:
             l = np.arange(self.layer_sizes[0])
@@ -2002,11 +2007,11 @@ class scDEF(object):
                     f_idx += 1
                 else:
                     colors.append("grey")
-            plt.bar(np.arange(layer_size), scales, color=colors)
+            ax.bar(np.arange(layer_size), scales, color=colors)
         else:
-            plt.bar(np.arange(layer_size)[above], scales[above], label="Kept")
+            ax.bar(np.arange(layer_size)[above], scales[above], label="Kept")
             if len(below) > 0:
-                plt.bar(
+                ax.bar(
                     np.arange(layer_size)[below],
                     scales[below],
                     alpha=0.6,
@@ -2014,22 +2019,31 @@ class scDEF(object):
                     label="Removed",
                 )
         if len(scales) > 15:
-            plt.xticks(np.arange(0, layer_size, 2))
+            ax.set_xticks(np.arange(0, layer_size, 2))
         else:
-            plt.xticks(np.arange(layer_size))
+            ax.set_xticks(np.arange(layer_size))
         if not show_yticks:
-            plt.yticks([])
-        plt.title(title, fontsize=fontsize)
-        plt.xlabel(xlabel, fontsize=fontsize)
-        plt.yscale(scale)
-        plt.ylabel(ylabel, fontsize=fontsize)
+            ax.set_yticks([])
+        ax.set_title(title, fontsize=fontsize)
+        ax.set_xlabel(xlabel, fontsize=fontsize)
+        ax.set_yscale(scale)
+        ax.set_ylabel(ylabel, fontsize=fontsize)
         if not color:
-            plt.legend(fontsize=legend_fontsize)
+            ax.legend(fontsize=legend_fontsize)
+
         if show:
             plt.show()
+        else:
+            return ax
 
     def plot_gini_brd(
-        self, figsize=(4, 4), alpha=0.6, fontsize=12, legend_fontsize=10, show=True
+        self,
+        figsize=(4, 4),
+        alpha=0.6,
+        fontsize=12,
+        legend_fontsize=10,
+        show=True,
+        ax=None,
     ):
         brds = self.pmeans["brd"].ravel()
         brds = brds - np.min(brds)
@@ -2040,24 +2054,73 @@ class scDEF(object):
         is_kept = np.zeros((self.layer_sizes[0]))
         is_kept[self.factor_lists[0]] = 1
 
-        plt.figure(figsize=figsize)
+        if ax is None:
+            fig, ax = plt.subplots(figsize=figsize)
+
         for c in [1, 0]:
             label = "Kept" if c == 1 else "Removed"
             color = "C0" if c == 1 else "gray"
             _alpha = 1 if c == 1 else alpha
-            plt.scatter(
+            ax.scatter(
                 ginis[np.where(is_kept == c)[0]],
                 brds[np.where(is_kept == c)[0]],
                 label=label,
                 color=color,
                 alpha=_alpha,
             )
-        plt.xlabel("Gini index", fontsize=fontsize)
-        plt.ylabel("BRD posterior mean", fontsize=fontsize)
-        plt.legend(fontsize=legend_fontsize)
+        ax.set_xlabel("Gini index", fontsize=fontsize)
+        ax.set_ylabel("BRD posterior mean", fontsize=fontsize)
+        ax.legend(fontsize=legend_fontsize)
 
         if show:
             plt.show()
+        else:
+            return ax
+
+    def plot_likelihood(self, figsize=(4, 4), fontsize=12, ax=None, show=True):
+        if ax is None:
+            fig, ax = plt.subplots(figsize=figsize)
+        ax.plot(np.concatenate(self.elbos)[:])
+        ax.set_yscale("log")
+        ax.set_xlabel("# ELBO", fontsize=fontsize)
+        ax.set_ylabel("Likelihood [log]", fontsize=fontsize)
+        if show:
+            plt.show()
+        else:
+            return ax
+
+    def plot_qc(self, figsize=(8, 12), show=True):
+        """Plot QC metrics for scDEF run:
+            top left: log-likelihood vs. # ELBO
+            top right: Biological relevance det. (BRD) vs. gini coefficient
+            middle left: Learned cell scale vs. observed library size
+            middle right: Learned gene scale vs. observed gene scale
+            bottom:  Biological relevance determination
+
+        Args:
+            figsize (tuple(float, float)): Figure size in inches
+            show (bool): whether to show the plot
+
+        Returns:
+            fig object if show is False and None otherwise
+        """
+
+        fig = plt.figure(figsize=figsize)
+        gs = GridSpec(3, 2)
+        # First row
+        self.plot_likelihood(ax=fig.add_subplot(gs[0, 0]), show=False)
+        self.plot_gini_brd(ax=fig.add_subplot(gs[0, 1]), show=False)
+        # Second row
+        self.plot_scale("cell", ax=fig.add_subplot(gs[1, 0]), show=False)
+        self.plot_scale("gene", ax=fig.add_subplot(gs[1, 1]), show=False)
+        # Third row
+        self.plot_brd(ax=fig.add_subplot(gs[2, 0:2]), show=False)
+
+        fig.tight_layout()
+        if show:
+            plt.show()
+        else:
+            return fig
 
     def plot_obs_factor_dotplot(
         self,
