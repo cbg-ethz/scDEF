@@ -35,5 +35,9 @@ jobs:
       - name: Install the module
         run: poetry install --with dev --no-interaction
 
-      - name: Generate the documentation
+      - name: Build site
+        run: poetry run mkdocs build
+
+      - name: Deploy to gh-pages
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         run: poetry run mkdocs gh-deploy --force
