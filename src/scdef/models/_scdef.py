@@ -25,6 +25,7 @@ import pandas as pd
 from anndata import AnnData
 import scanpy as sc
 import decoupler
+import gseapy as gp
 
 from scipy.cluster.hierarchy import ward, leaves_list
 from scipy.spatial.distance import pdist
@@ -1408,8 +1409,6 @@ class scDEF(object):
         return summary
 
     def get_enrichments(self, libs=["KEGG_2019_Human"], gene_rankings=None):
-        import gseapy as gp
-        
         if gene_rankings is None:
             gene_rankings = self.get_rankings(layer_idx=0)
 
