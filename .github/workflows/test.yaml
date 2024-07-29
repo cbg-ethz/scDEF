@@ -59,7 +59,11 @@ jobs:
 
       - name: Build package
         run: |
-          poetry install
+          poetry export --with extras -o requirements.txt
+          poetry export --with extras -f constraints.txt -o constraints.txt 
+          PIP_CONSTRAINT=constraints.txt
+          poetry run pip install -r requirements.txt
+          poetry install 
           poetry build
       - name: Publish package to PyPi
         uses: pypa/gh-action-pypi-publish@master
