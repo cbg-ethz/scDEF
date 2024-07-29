@@ -21,7 +21,6 @@ tqdm = "^4.64.0"
 graphviz = "^0.14.2"
 igraph = "^0.10.4"
 numba = "^0.60.0"
-decoupler = "^1.7.0"
 
 [tool.poetry.group.extras]
 optional = true
