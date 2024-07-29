@@ -2077,13 +2077,14 @@ class scDEF(object):
         else:
             return ax
 
-    def plot_likelihood(self, figsize=(4, 4), fontsize=12, ax=None, show=True):
+    def plot_loss(self, figsize=(4, 4), fontsize=12, ax=None, show=True):
         if ax is None:
             fig, ax = plt.subplots(figsize=figsize)
         ax.plot(np.concatenate(self.elbos)[:])
+        ax.set_xlabel("Epoch", fontsize=fontsize)
         ax.set_yscale("log")
-        ax.set_xlabel("# ELBO", fontsize=fontsize)
-        ax.set_ylabel("Likelihood [log]", fontsize=fontsize)
+        ax.set_ylabel("Loss [log]", fontsize=fontsize)
+
         if show:
             plt.show()
         else:
@@ -2091,10 +2092,10 @@ class scDEF(object):
 
     def plot_qc(self, figsize=(8, 12), show=True):
         """Plot QC metrics for scDEF run:
-            top left: log-likelihood vs. # ELBO
-            top right: Biological relevance det. (BRD) vs. gini coefficient
-            middle left: Learned cell scale vs. observed library size
-            middle right: Learned gene scale vs. observed gene scale
+            top left: Loss (-1xELBO [log]) vs. Epoch
+            top right: Biological relevance det. (BRD) vs. Gini coefficient
+            middle left: Learned cell scale vs. Observed library size
+            middle right: Learned gene scale vs. Observed gene scale
             bottom:  Biological relevance determination
 
         Args:
@@ -2108,7 +2109,7 @@ class scDEF(object):
         fig = plt.figure(figsize=figsize)
         gs = GridSpec(3, 2)
         # First row
-        self.plot_likelihood(ax=fig.add_subplot(gs[0, 0]), show=False)
+        self.plot_loss(ax=fig.add_subplot(gs[0, 0]), show=False)
         self.plot_gini_brd(ax=fig.add_subplot(gs[0, 1]), show=False)
         # Second row
         self.plot_scale("cell", ax=fig.add_subplot(gs[1, 0]), show=False)
