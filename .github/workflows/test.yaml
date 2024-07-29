@@ -26,7 +26,9 @@ jobs:
       - name: Build package
         run: |
           poetry run pip install "setuptools<72"
-          poetry run pip install --no-build-isolation
+          poetry export -o req-docs.txt -E docs
+          export PIP_CONSTRAINT=constraints.txt
+          poetry run pip install -r req-docs.txt
           poetry build
 
       - name: Test package
