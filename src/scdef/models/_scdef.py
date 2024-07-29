@@ -1900,10 +1900,10 @@ class scDEF(object):
             x_data = self.batch_lib_sizes
             x_label = "Observed gene scale"
 
-            def get_x_data_batch(b, b_cells):
+            def get_x_data_batch(b_cells):
                 return self.batch_lib_sizes[np.where(b_cells)[0]]
 
-            def get_y_data_batch(b, _, b_cells):
+            def get_y_data_batch(_, b_cells):
                 return 1.0 / self.pmeans["cell_scale"].ravel()[np.where(b_cells)[0]]
 
             x_label = "Observed library size"
@@ -1911,18 +1911,18 @@ class scDEF(object):
             x_data = np.sum(self.X, axis=0)
             x_label = "Observed gene scale"
 
-            def get_x_data_batch(b, b_cells):
+            def get_x_data_batch(b_cells):
                 return np.sum(self.X[b_cells], axis=0)
 
-            def get_y_data_batch(b, b_id, _):
+            def get_y_data_batch(b_id, _):
                 return 1.0 / self.pmeans["gene_scale"][b_id].ravel()
 
         if len(self.batches) > 1:
-            for i, b in enumerate(self.batches):
+            for b_id, b in enumerate(self.batches):
                 b_cells = self.adata.obs[self.batch_key] == b
                 ax.scatter(
-                    get_x_data_batch(b, b_cells),
-                    get_y_data_batch(b, b_id, b_cells),
+                    get_x_data_batch(b_cells),
+                    get_y_data_batch(b_id, b_cells),
                     label=b,
                     alpha=alpha,
                 )
