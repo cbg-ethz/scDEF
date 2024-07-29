@@ -25,7 +25,8 @@ jobs:
 
       - name: Build package
         run: |
-          poetry install --with extras
+          poetry run pip install "setuptools<72"
+          poetry run pip install --no-build-isolation
           poetry build
 
       - name: Test package
