@@ -25,8 +25,8 @@ jobs:
 
       - name: Build package
         run: |
-          poetry export --with dev -o requirements.txt
-          poetry export --with dev -f constraints.txt -o constraints.txt 
+          poetry export --with extras -o requirements.txt
+          poetry export --with extras -f constraints.txt -o constraints.txt 
           PIP_CONSTRAINT=constraints.txt
           poetry run pip install -r requirements.txt
           poetry install 
