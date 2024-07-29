@@ -13,7 +13,6 @@ import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 import seaborn as sns
-import gseapy as gp
 from graphviz import Graph
 from tqdm import tqdm
 import time
@@ -1409,6 +1408,8 @@ class scDEF(object):
         return summary
 
     def get_enrichments(self, libs=["KEGG_2019_Human"], gene_rankings=None):
+        import gseapy as gp
+        
         if gene_rankings is None:
             gene_rankings = self.get_rankings(layer_idx=0)
 
