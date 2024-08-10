@@ -16,8 +16,12 @@ def evaluate_methods(
     markers=None,
     celltype_obs_key="celltype",
     batch_obs_key="batch",
+    scdef_max_layers=5,
 ):
     methods_list = list(methods_results.keys())
+
+    if not isinstance(celltype_obs_key, list):
+        celltype_obs_key = [celltype_obs_key]
 
     df = pd.DataFrame(index=metrics_list, columns=methods_list)
 
@@ -40,7 +44,7 @@ def evaluate_methods(
                     method_outs["assignments"],
                     true_hierarchy,
                 )
-            df.loc["Hierarchy accuracy"][method] = score
+            df.loc["Hierarchy accuracy", method] = score
 
         if "Hierarchical signature consistency" in metrics_list:
             if isinstance(method_outs, scDEF):
@@ -66,7 +70,7 @@ def evaluate_methods(
                     method_outs["sizes"],
                     top_genes=20,
                 )
-            df.loc["Hierarchical signature consistency"][method] = score
+            df.loc["Hierarchical signature consistency", method] = score
 
         # Signatures
         if "Signature accuracy" in metrics_list:
@@ -82,7 +86,7 @@ def evaluate_methods(
                     hierarchy_obs_keys,
                     markers,
                 )
-            df.loc["Signature accuracy"][method] = score
+            df.loc["Signature accuracy", method] = score
 
         if "Signature sparsity" in metrics_list:
             ginis = []
@@ -99,33 +103,44 @@ def evaluate_methods(
                         )
                     )
             sparsity = np.mean(ginis)
-            df.loc["Signature sparsity"][method] = sparsity
+            df.loc["Signature sparsity", method] = sparsity
 
         # Cell type clustering
         if "Cell Type ARI" in metrics_list:
             if isinstance(method_outs, scDEF):
                 score = adjusted_rand_score(
-                    method_outs.adata.obs[celltype_obs_key],
+                    method_outs.adata.obs[celltype_obs_key[0]],
                     method_outs.adata.obs["factor"],
                 )
             else:
                 score = adjusted_rand_score(
-                    adata.obs[celltype_obs_key], method_outs["assignments"][0]
-                )
-            df.loc["Cell Type ARI"][method] = score
+                    adata.obs[celltype_obs_key[0]], method_outs["assignments"][0]
+                )   
+            # Do for all layers too                                 
+            for j, obs in celltype_obs_key:
+                for i in range(scdef_max_layers):
+                    lscore = np.nan
+                    if method_outs.n_layers > i:
+                        layer_name = method_outs.layer_names[i]
+                        lscore = adjusted_rand_score(
+                            method_outs.adata.obs[obs],
+                            method_outs.adata.obs[layer_name],
+                        )
+                    df.loc[f"Learned{i}vsTrue{j}", method] = lscore
+            df.loc["Cell Type ARI", method] = score
 
         if "Cell Type ASW" in metrics_list:
             if isinstance(method_outs, scDEF):
                 score = silhouette_score(
                     method_outs.adata.obsm["X_factors"],
-                    method_outs.adata.obs[celltype_obs_key],
+                    method_outs.adata.obs[celltype_obs_key[0]],
                 )
             else:
                 score = silhouette_score(
                     method_outs["latents"][0],
-                    adata.obs[celltype_obs_key],
+                    adata.obs[celltype_obs_key[0]],
                 )
-            df.loc["Cell Type ASW"][method] = score
+            df.loc["Cell Type ASW", method] = score
 
         # Batch clustering
         if "Batch ARI" in metrics_list:
@@ -142,7 +157,17 @@ def evaluate_methods(
                         score = adjusted_rand_score(
                             adata.obs[batch_obs_key], method_outs["assignments"][0]
                         )
-            df.loc["Batch ARI"][method] = score
+                    # Do for all layers too                                 
+                    for i in range(scdef_max_layers):
+                        lscore = np.nan
+                        if method_outs.n_layers > i:
+                            layer_name = method_outs.layer_names[i]
+                            lscore = adjusted_rand_score(
+                                method_outs.adata.obs[batch_obs_key],
+                                method_outs.adata.obs[layer_name],
+                            )
+                            df.loc[f"Learned{i}vsBatch", method] = lscore                        
+            df.loc["Batch ARI", method] = score
 
         if "Batch ASW" in metrics_list:
             if batch_obs_key in adata.obs.columns:
@@ -158,7 +183,7 @@ def evaluate_methods(
                         score = silhouette_score(
                             method_outs["latents"][0], adata.obs[batch_obs_key]
                         )
-            df.loc["Batch ASW"][method] = score
+            df.loc["Batch ASW", method] = score
 
     return df
 
