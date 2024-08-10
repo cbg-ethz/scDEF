@@ -26,7 +26,6 @@ import pandas as pd
 from anndata import AnnData
 import scanpy as sc
 import decoupler
-import gseapy as gp
 
 from scipy.cluster.hierarchy import ward, leaves_list
 from scipy.spatial.distance import pdist
@@ -706,6 +705,9 @@ class scDEF(object):
         annealing_parameter=1.0,
         stop_gradients=None,
         seed=None,
+        min_epochs=100,
+        tolerance=1e-5,
+        patience=10,
     ):
         if seed is None:
             seed = self.seed
@@ -735,6 +737,9 @@ class scDEF(object):
         stop_gradients = jnp.array(stop_gradients)
         rng = random.PRNGKey(seed)
         t = 0
+        min_loss = np.inf
+        early_stop_counter = 0
+        stop_early = False
         pbar = tqdm(range(n_epochs))
         for epoch in pbar:
             epoch_losses = []
@@ -753,7 +758,32 @@ class scDEF(object):
                 )
                 epoch_losses.append(loss)
                 t += 1
-            losses.append(np.mean(epoch_losses))
+            current_loss = np.mean(epoch_losses)
+            losses.append(current_loss)
+
+            if epoch >= min_epochs:
+                if min_loss == np.inf:
+                    min_loss = current_loss
+                    stop_early = False
+        
+                relative_improvement = (min_loss - current_loss) / np.abs(min_loss)
+                min_loss = min(min_loss, current_loss)
+
+                if relative_improvement < tolerance:
+                    early_stop_counter += 1
+                else:
+                    early_stop_counter = 0
+                if early_stop_counter >= patience:
+                    stop_early = True
+
+            if stop_early:
+                self.logger.info(
+                    "Relative improvement of "
+                    f"{relative_improvement:0.4g} < {tolerance:0.4g} "
+                    f"for {patience} step(s) in a row, stopping early."
+                )
+                break
+
             epoch_time = time.time() - start_time
             pbar.set_postfix({"Loss": losses[-1]})
 
@@ -767,6 +797,7 @@ class scDEF(object):
         num_samples: Optional[int] = 10,
         batch_size: Optional[int] = None,
         layerwise: Optional[bool] = False,
+        **kwargs,
     ):
         """Fit a variational approximation to the posterior over scDEF parameters.
 
@@ -877,6 +908,7 @@ class scDEF(object):
                 batch_size=batch_size,
                 annealing_parameter=anneal_param,
                 stop_gradients=stop_gradients,
+                **kwargs,
             )
             params = get_params(opt_state)
             self.var_params = params
@@ -1410,6 +1442,8 @@ class scDEF(object):
         return summary
 
     def get_enrichments(self, libs=["KEGG_2019_Human"], gene_rankings=None):
+        import gseapy as gp
+
         if gene_rankings is None:
             gene_rankings = self.get_rankings(layer_idx=0)
 
