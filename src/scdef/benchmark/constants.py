@@ -6,7 +6,7 @@ OTHERS_LABELS = [
     "LDVAE",
     "NMF",
     "scHPF",
-    "MuVI"
+    "MuVI",
 ]
 
 OTHERS_RES_SWEEPS = dict(

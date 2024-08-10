@@ -115,8 +115,8 @@ def evaluate_methods(
             else:
                 score = adjusted_rand_score(
                     adata.obs[celltype_obs_key[0]], method_outs["assignments"][0]
-                )   
-            # Do for all layers too                                 
+                )
+            # Do for all layers too
             for j, obs in celltype_obs_key:
                 for i in range(scdef_max_layers):
                     lscore = np.nan
@@ -157,7 +157,7 @@ def evaluate_methods(
                         score = adjusted_rand_score(
                             adata.obs[batch_obs_key], method_outs["assignments"][0]
                         )
-                    # Do for all layers too                                 
+                    # Do for all layers too
                     for i in range(scdef_max_layers):
                         lscore = np.nan
                         if method_outs.n_layers > i:
@@ -166,7 +166,7 @@ def evaluate_methods(
                                 method_outs.adata.obs[batch_obs_key],
                                 method_outs.adata.obs[layer_name],
                             )
-                            df.loc[f"Learned{i}vsBatch", method] = lscore                        
+                            df.loc[f"Learned{i}vsBatch", method] = lscore
             df.loc["Batch ARI", method] = score
 
         if "Batch ASW" in metrics_list:

@@ -246,17 +246,11 @@ def run_muvi(
     try:
         import muvi
     except ImportError:
-        raise ImportError(
-            "Please install muvi: pip install muvi"
-        )
+        raise ImportError("Please install muvi: pip install muvi")
 
     ad = ad.copy()
 
-    model = muvi.tl.from_adata(
-        ad, 
-        prior_mask_key=None, 
-        n_factors=int(resolution)
-    )
+    model = muvi.tl.from_adata(ad, prior_mask_key=None, n_factors=int(resolution))
     model.fit(seed=0)
     muvi.tl.filter_factors(model, r2_thresh=0.95)
 
@@ -264,10 +258,9 @@ def run_muvi(
     muvi.tl.neighbors(model)
     muvi.tl.leiden(model)
 
-    
     # Obtain gene signatures
     muvi.tl.rank(model, "leiden", method="wilcoxon")
-    
+
     model_cache = muvi.tools.utils.setup_cache(model)
     factor_adata = model_cache.factor_adata
 
@@ -280,7 +273,7 @@ def run_muvi(
             .values
         )
     gene_scores = np.array(gene_scores)
-     
+
     latent = factor_adata.obsm[model_cache.use_rep]
 
     outs = [latent, gene_scores, factor_adata]
@@ -294,6 +287,7 @@ def run_muvi(
         outs.append(cluster_assignments)
 
     return outs
+
 
 def run_harmony(
     ad,
@@ -517,10 +511,11 @@ def run_methods(adata, methods_list, res_sweeps=None, **kwargs):
 
     return methods_outs
 
+
 def run_scdef_hclust(
     ad,
     n_epochs=10,
-    resolutions=[6,3,1],
+    resolutions=[6, 3, 1],
     layer_prefix="h",
     **kwargs,
 ):
@@ -528,9 +523,9 @@ def run_scdef_hclust(
 
     scd = scDEF(
         ad,
-        layer_sizes=[100,1],
-        layer_shapes=.3,
-        layer_rates=.3,
+        layer_sizes=[100, 1],
+        layer_shapes=0.3,
+        layer_rates=0.3,
         seed=1,
         batch_key="Experiment",
         counts_layer="counts",
@@ -543,36 +538,44 @@ def run_scdef_hclust(
     avgs = []
     cells = []
     scd.adata.obsm["avgs"] = np.zeros(latent.shape)
-    for cl in scd.adata.obs['factor'].unique():
-        cell_idx = np.where(scd.adata.obs['factor']==cl)[0]
+    for cl in scd.adata.obs["factor"].unique():
+        cell_idx = np.where(scd.adata.obs["factor"] == cl)[0]
         avg = np.mean(latent[cell_idx], axis=0)
         avgs.append(avg)
         cells.append(cell_idx)
         scd.adata.obsm["avgs"][cell_idx] = avg
     avgs = np.vstack(avgs)
     Z = cluster.hierarchy.ward(scd.adata.obsm["avgs"])
-    n_clusters = [avgs.shape[0]] + [max(avgs.shape[0]-avgs.shape[0]/res,1) for res in resolutions]
+    n_clusters = [avgs.shape[0]] + [
+        max(avgs.shape[0] - avgs.shape[0] / res, 1) for res in resolutions
+    ]
     cutree = cluster.hierarchy.cut_tree(Z, n_clusters=n_clusters)
 
     for level in range(len(resolutions) + 1):
-        ad.obs[f'level_{level}'] = cutree[:,level].astype(str)
+        ad.obs[f"level_{level}"] = cutree[:, level].astype(str)
 
     assignments_results = []
     signatures_dict = dict()
     scores_dict = dict()
     sizes_dict = dict()
-    latents_results = []            
+    latents_results = []
     for i, level in enumerate(range(len(resolutions) + 1)):
         # Get gene signatures for this level
         if i == 0:
             signatures, gene_scores = scd.get_signatures_dict(scores=True)
-            signatures = np.array([signatures[f] for f in scd.adata.obs['factor'].unique()])
-            gene_scores = np.array([gene_scores[f] for f in scd.adata.obs['factor'].unique()])
+            signatures = np.array(
+                [signatures[f] for f in scd.adata.obs["factor"].unique()]
+            )
+            gene_scores = np.array(
+                [gene_scores[f] for f in scd.adata.obs["factor"].unique()]
+            )
         else:
-            sc.tl.rank_genes_groups(ad, f'level_{level}', method="wilcoxon")
-            
+            sc.tl.rank_genes_groups(ad, f"level_{level}", method="wilcoxon")
+
             gene_scores = []
-            for leiden in range(np.max(ad.obs[f'level_{level}'].unique().astype(int)) + 1):
+            for leiden in range(
+                np.max(ad.obs[f"level_{level}"].unique().astype(int)) + 1
+            ):
                 gene_scores.append(
                     sc.get.rank_genes_groups_df(ad, str(leiden))
                     .set_index("names")
@@ -584,14 +587,14 @@ def run_scdef_hclust(
             for k in range(len(gene_scores)):
                 signatures.append(ad.var_names[np.argsort(gene_scores[k])[::-1]])
 
-        latent = scd.adata.obsm['X_factors']
+        latent = scd.adata.obsm["X_factors"]
 
         outs = [latent, gene_scores, ad]
         outs.append(signatures)
 
         cluster_assignments = ad.obs[f"level_{level}"].values.tolist()
         outs.append(cluster_assignments)
-        
+
         latents = outs[0]
         latents_results.append(latents)
         scores = outs[1]
@@ -626,9 +629,10 @@ def run_scdef_hclust(
     }
     return outs
 
+
 def run_unintegrated_hclust(
     ad,
-    resolutions=[6,3,1],
+    resolutions=[6, 3, 1],
     layer_prefix="h",
     **kwargs,
 ):
@@ -646,22 +650,23 @@ def run_unintegrated_hclust(
     # Cluster
     sc.pp.neighbors(ad)
     sc.tl.leiden(ad)
-    
+
     # Hierarchical clustering of factors: average per factor
     avgs = []
     cells = []
     ad.obsm["avgs"] = np.zeros(latent.shape)
-    for cl in ad.obs['leiden'].unique():
-        cell_idx = np.where(ad.obs['leiden']==cl)[0]
+    for cl in ad.obs["leiden"].unique():
+        cell_idx = np.where(ad.obs["leiden"] == cl)[0]
         avg = np.mean(latent[cell_idx], axis=0)
         avgs.append(avg)
         cells.append(cell_idx)
         ad.obsm["avgs"][cell_idx] = avg
     avgs = np.vstack(avgs)
     Z = cluster.hierarchy.ward(ad.obsm["avgs"])
-    n_clusters = [avgs.shape[0]] + [max(avgs.shape[0]-avgs.shape[0]/res,1) for res in resolutions]
+    n_clusters = [avgs.shape[0]] + [
+        max(avgs.shape[0] - avgs.shape[0] / res, 1) for res in resolutions
+    ]
     cutree = cluster.hierarchy.cut_tree(Z, n_clusters=n_clusters)
-
 
     # # Hierarchical clustering of Leiden groups: average per group
     # avgs = []
@@ -671,18 +676,18 @@ def run_unintegrated_hclust(
     # Z = cluster.hierarchy.ward(avgs)
     # cutree = cluster.hierarchy.cut_tree(Z, n_clusters=[avgs.shape[0]] + resolutions)
     for level in range(len(resolutions) + 1):
-        ad.obs[f'level_{level}'] = cutree[:,level].astype(str)
+        ad.obs[f"level_{level}"] = cutree[:, level].astype(str)
 
     assignments_results = []
     signatures_dict = dict()
     scores_dict = dict()
     sizes_dict = dict()
-    latents_results = []            
+    latents_results = []
     for i, level in enumerate(range(len(resolutions) + 1)):
         # Get gene signatures for this level
-        sc.tl.rank_genes_groups(ad, f'level_{level}', method="wilcoxon")
+        sc.tl.rank_genes_groups(ad, f"level_{level}", method="wilcoxon")
         gene_scores = []
-        for cl in range(np.max(ad.obs[f'level_{level}'].unique().astype(int)) + 1):
+        for cl in range(np.max(ad.obs[f"level_{level}"].unique().astype(int)) + 1):
             gene_scores.append(
                 sc.get.rank_genes_groups_df(ad, str(cl))
                 .set_index("names")
@@ -691,7 +696,7 @@ def run_unintegrated_hclust(
             )
         gene_scores = np.array(gene_scores)
 
-        latent = ad.obsm['X_pca']
+        latent = ad.obsm["X_pca"]
 
         outs = [latent, gene_scores, ad]
         signatures = []
@@ -701,7 +706,7 @@ def run_unintegrated_hclust(
 
         cluster_assignments = ad.obs[f"level_{level}"].values.tolist()
         outs.append(cluster_assignments)
-        
+
         latents = outs[0]
         latents_results.append(latents)
         scores = outs[1]
@@ -745,9 +750,7 @@ def run_nsbm(
     try:
         import schist as scs
     except ImportError:
-        raise ImportError(
-            "Please install schist: conda install -c conda-forge schist"
-        )
+        raise ImportError("Please install schist: conda install -c conda-forge schist")
     ad = ad.copy()
     # PCA
     sc.tl.pca(ad)
@@ -758,9 +761,9 @@ def run_nsbm(
 
     n_levels = len(ad.obs.filter(like="nsbm_level").columns)
     # Get good lowest resolution level for fairness
-    min_level = 0 
+    min_level = 0
     for level in range(n_levels):
-        avg_cluster_size = np.mean(ad.obs[f'nsbm_level_{level}'].value_counts())
+        avg_cluster_size = np.mean(ad.obs[f"nsbm_level_{level}"].value_counts())
         if avg_cluster_size > 50:
             min_level = level
 
@@ -768,12 +771,14 @@ def run_nsbm(
     signatures_dict = dict()
     scores_dict = dict()
     sizes_dict = dict()
-    latents_results = []            
+    latents_results = []
     for i, level in enumerate(range(min_level, n_levels)):
         # Get gene signatures for this level
-        sc.tl.rank_genes_groups(ad, f'nsbm_level_{level}', method="wilcoxon")
+        sc.tl.rank_genes_groups(ad, f"nsbm_level_{level}", method="wilcoxon")
         gene_scores = []
-        for leiden in range(np.max(ad.obs[f'nsbm_level_{level}'].unique().astype(int)) + 1):
+        for leiden in range(
+            np.max(ad.obs[f"nsbm_level_{level}"].unique().astype(int)) + 1
+        ):
             gene_scores.append(
                 sc.get.rank_genes_groups_df(ad, str(leiden))
                 .set_index("names")
@@ -782,7 +787,7 @@ def run_nsbm(
             )
         gene_scores = np.array(gene_scores)
 
-        latent = ad.obsm['X_pca']
+        latent = ad.obsm["X_pca"]
 
         outs = [latent, gene_scores, ad]
         signatures = []
@@ -790,9 +795,9 @@ def run_nsbm(
             signatures.append(ad.var_names[np.argsort(gene_scores[k])[::-1]])
         outs.append(signatures)
 
-        cluster_assignments = ad.obs[f'nsbm_level_{level}'].values.tolist()
+        cluster_assignments = ad.obs[f"nsbm_level_{level}"].values.tolist()
         outs.append(cluster_assignments)
-        
+
         latents = outs[0]
         latents_results.append(latents)
         scores = outs[1]
