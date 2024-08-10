@@ -765,7 +765,7 @@ class scDEF(object):
                 if min_loss == np.inf:
                     min_loss = current_loss
                     stop_early = False
-        
+
                 relative_improvement = (min_loss - current_loss) / np.abs(min_loss)
                 min_loss = min(min_loss, current_loss)
 
