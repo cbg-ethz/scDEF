@@ -112,21 +112,22 @@ def evaluate_methods(
                     method_outs.adata.obs[celltype_obs_key[0]],
                     method_outs.adata.obs["factor"],
                 )
+                # Do for all layers too
+                for j, obs in enumerate(celltype_obs_key):
+                    for i in range(scdef_max_layers):
+                        lscore = np.nan
+                        if method_outs.n_layers > i:
+                            layer_name = f"{method_outs.layer_names[i]}factor"
+                            lscore = adjusted_rand_score(
+                                method_outs.adata.obs[obs],
+                                method_outs.adata.obs[layer_name],
+                            )
+                        df.loc[f"Learned{i}vsTrue{j}", method] = lscore
             else:
                 score = adjusted_rand_score(
                     adata.obs[celltype_obs_key[0]], method_outs["assignments"][0]
                 )
-            # Do for all layers too
-            for j, obs in celltype_obs_key:
-                for i in range(scdef_max_layers):
-                    lscore = np.nan
-                    if method_outs.n_layers > i:
-                        layer_name = method_outs.layer_names[i]
-                        lscore = adjusted_rand_score(
-                            method_outs.adata.obs[obs],
-                            method_outs.adata.obs[layer_name],
-                        )
-                    df.loc[f"Learned{i}vsTrue{j}", method] = lscore
+
             df.loc["Cell Type ARI", method] = score
 
         if "Cell Type ASW" in metrics_list:
@@ -153,20 +154,21 @@ def evaluate_methods(
                             method_outs.adata.obs[batch_obs_key],
                             method_outs.adata.obs["factor"],
                         )
+
+                        # Do for all layers too
+                        for i in range(scdef_max_layers):
+                            lscore = np.nan
+                            if method_outs.n_layers > i:
+                                layer_name = f"{method_outs.layer_names[i]}factor"
+                                lscore = adjusted_rand_score(
+                                    method_outs.adata.obs[batch_obs_key],
+                                    method_outs.adata.obs[layer_name],
+                                )
+                                df.loc[f"Learned{i}vsBatch", method] = lscore
                     else:
                         score = adjusted_rand_score(
                             adata.obs[batch_obs_key], method_outs["assignments"][0]
                         )
-                    # Do for all layers too
-                    for i in range(scdef_max_layers):
-                        lscore = np.nan
-                        if method_outs.n_layers > i:
-                            layer_name = method_outs.layer_names[i]
-                            lscore = adjusted_rand_score(
-                                method_outs.adata.obs[batch_obs_key],
-                                method_outs.adata.obs[layer_name],
-                            )
-                            df.loc[f"Learned{i}vsBatch", method] = lscore
             df.loc["Batch ARI", method] = score
 
         if "Batch ASW" in metrics_list:
