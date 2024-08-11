@@ -5,6 +5,7 @@ import anndata
 import scdef
 from sklearn.metrics import adjusted_rand_score, silhouette_score, roc_auc_score
 from sklearn.model_selection import train_test_split
+import time
 
 counts = pd.read_csv(snakemake.input["counts_fname"], index_col=0)
 meta = pd.read_csv(snakemake.input["meta_fname"])
@@ -38,9 +39,11 @@ adata.obs["GroupA"] = adata.obs["GroupA"].apply(lambda row: f"hh{row}")
 adata.obs["GroupB"] = adata.obs["GroupB"].apply(lambda row: f"h{row}")
 
 # Run scDEF
+duration = time.time()
 scd = scdef.scDEF(adata, counts_layer="counts", batch_key="")
 scd.learn()
 scd.filter_factors(iqr_mult=0.0)
+duration = time.time() - duration
 
 metrics_list = [
     "Cell Type ARI",
@@ -72,4 +75,5 @@ df = scdef.benchmark.evaluate_methods(
     celltype_obs_key="GroupC",
     batch_obs_key="Batch",
 )
+df["scDEF", "Runtime"] = duration
 df.to_csv(snakemake.output["scores_fname"])

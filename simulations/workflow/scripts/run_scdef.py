@@ -5,6 +5,15 @@ import anndata
 import scdef
 from sklearn.metrics import adjusted_rand_score, silhouette_score, roc_auc_score
 from sklearn.model_selection import train_test_split
+import time
+
+tau = snakemake.params["tau"]
+mu = snakemake.params["mu"]
+kappa = snakemake.params["kappa"]
+layer_sizes = snakemake.params["layer_sizes"]
+seed = snakemake.params["seed"]
+
+model_params = dict(brd_strength=tau, brd_mean=mu, layer_rates=kappa)
 
 counts = pd.read_csv(snakemake.input["counts_fname"], index_col=0)
 meta = pd.read_csv(snakemake.input["meta_fname"])
@@ -38,9 +47,13 @@ adata.obs["GroupA"] = adata.obs["GroupA"].apply(lambda row: f"hh{row}")
 adata.obs["GroupB"] = adata.obs["GroupB"].apply(lambda row: f"h{row}")
 
 # Run scDEF
-scd = scdef.scDEF(adata, counts_layer="counts", batch_key="Batch")
+duration = time.time()
+scd = scdef.scDEF(adata, counts_layer="counts", batch_key="Batch",
+                  seed=seed,
+                  layer_sizes=layer_sizes, **model_params)
 scd.learn()
 scd.filter_factors(iqr_mult=0.0)
+duration = time.time() - duration
 
 metrics_list = [
     "Cell Type ARI",
@@ -69,7 +82,8 @@ df = scdef.benchmark.evaluate_methods(
     true_hierarchy=true_hierarchy,
     hierarchy_obs_keys=["GroupA", "GroupB", "GroupC"],
     markers=markers,
-    celltype_obs_key="GroupC",
+    celltype_obs_key=["GroupC", "GroupB", "GroupA"], # to compute every layer vs every layer
     batch_obs_key="Batch",
 )
+df["scDEF", "Runtime"] = duration
 df.to_csv(snakemake.output["scores_fname"])
