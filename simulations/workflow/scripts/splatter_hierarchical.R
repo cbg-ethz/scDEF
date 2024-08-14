@@ -1,7 +1,7 @@
 suppressMessages(library(splatter))
 suppressMessages(library(ggplot2))
 suppressMessages(library(cowplot))
-suppressMessages(library(scater))
+suppressMessages(library(SingleCellExperiment))
 suppressMessages(library(SeuratData))
 suppressMessages(library(Seurat))
 suppressMessages(library(dplyr))
@@ -165,10 +165,12 @@ if (n_batches > 1) {
     sub_sim_nobatch <- sim_nobatch
   }
   # Make Seurat object
-  sub_sim <- logNormCounts(sub_sim)
-  sub_sim_nobatch <- logNormCounts(sub_sim_nobatch)
-  sub_sim.seurat <- as.Seurat(sub_sim, counts = "counts", logcounts = "logcounts")
-  sub_sim_nobatch.seurat <- as.Seurat(sub_sim_nobatch, counts = "counts", logcounts = "logcounts")
+  # sub_sim <- logNormCounts(sub_sim)
+  # sub_sim_nobatch <- logNormCounts(sub_sim_nobatch)
+  sub_sim.seurat <- as.Seurat(sub_sim, counts = "counts", data=NULL)
+  sub_sim.seurat <- NormalizeData(sub_sim.seurat, verbose = FALSE)
+  sub_sim_nobatch.seurat <- as.Seurat(sub_sim_nobatch, counts = "counts", data=NULL)
+  sub_sim_nobatch.seurat <- NormalizeData(sub_sim_nobatch.seurat, verbose = FALSE)
 
   # Save group signatures from non-batch data
   Idents(object = sub_sim_nobatch.seurat) <- "GroupC"
@@ -202,7 +204,7 @@ if (n_batches > 1) {
   p <- plot_grid(p1, p2, p3, p4, p5, p6, ncol = 3)
   ggsave(snakemake@output[["umap_fname"]])
 
-  sub_sim_nobatch.seurat <- NormalizeData(sub_sim_nobatch.seurat, verbose = FALSE)
+  # sub_sim_nobatch.seurat <- NormalizeData(sub_sim_nobatch.seurat, verbose = FALSE)
   sub_sim_nobatch.seurat <- FindVariableFeatures(sub_sim_nobatch.seurat, selection.method = "vst", nfeatures = 1000)
   sub_sim_nobatch.seurat <- ScaleData(sub_sim_nobatch.seurat, verbose = FALSE)
   sub_sim_nobatch.seurat <- RunPCA(sub_sim_nobatch.seurat, npcs = 30, verbose = FALSE)
@@ -223,8 +225,9 @@ if (n_batches > 1) {
   sub_sim <- sim
 
   # Make Seurat object
-  sub_sim <- logNormCounts(sub_sim)
-  sub_sim.seurat <- as.Seurat(sub_sim, counts = "counts", logcounts = "logcounts")
+  # sub_sim <- logNormCounts(sub_sim)
+  sub_sim.seurat <- as.Seurat(sub_sim, counts = "counts", data=NULL)
+  sub_sim.seurat <- NormalizeData(sub_sim.seurat, verbose = FALSE)
 
   # Save group signatures from non-batch data
   Idents(object = sub_sim.seurat) <- "GroupC"
@@ -242,7 +245,7 @@ if (n_batches > 1) {
   write.csv(meta,snakemake@output[["meta_fname"]])
 
   # Save the UMAP of the data
-  sub_sim.seurat <- NormalizeData(sub_sim.seurat, verbose = FALSE)
+  # sub_sim.seurat <- NormalizeData(sub_sim.seurat, verbose = FALSE)
   sub_sim.seurat <- FindVariableFeatures(sub_sim.seurat, selection.method = "vst", nfeatures = 1000)
   sub_sim.seurat <- ScaleData(sub_sim.seurat, verbose = FALSE)
   sub_sim.seurat <- RunPCA(sub_sim.seurat, npcs = 30, verbose = FALSE)
