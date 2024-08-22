@@ -1916,7 +1916,7 @@ class scDEF(object):
         for layer, layer_name in enumerate(self.layer_names):
             layer_attachments = []
             for factor_idx in range(len(self.factor_lists[layer])):
-                factor_name = f"{self.factor_names[layer_idx][int(factor_idx)]}"
+                factor_name = f"{self.factor_names[layer][int(factor_idx)]}"
                 # cells attached to this factor
                 cells = np.where(self.adata.obs[f"{layer_name}factor"] == factor_name)[
                     0
