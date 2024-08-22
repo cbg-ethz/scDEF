@@ -334,8 +334,8 @@ class scDEF(object):
         self.batch_lib_ratio = jnp.array(self.batch_lib_ratio)
         self.gene_ratio = jnp.array(self.gene_ratio)
 
-    def init_var_params(self, minval=1.0, maxval=1.0):
-        rngs = random.split(random.PRNGKey(self.seed), 6 + 2 * 2 * self.n_layers)
+    def init_var_params(self, minval=0.5, maxval=1.5):
+        rngs = random.split(random.PRNGKey(self.seed), 6 + 2 * 4 * self.n_layers)
 
         self.var_params = [
             jnp.array(
@@ -343,8 +343,8 @@ class scDEF(object):
                     jnp.log(
                         random.uniform(
                             rngs[0],
-                            minval=minval,
-                            maxval=maxval,
+                            minval=1.0,
+                            maxval=1.0,
                             shape=[self.n_cells, 1],
                         )
                         * 10.0
@@ -365,8 +365,8 @@ class scDEF(object):
                     jnp.log(
                         random.uniform(
                             rngs[2],
-                            minval=minval,
-                            maxval=maxval,
+                            minval=1.0,
+                            maxval=1.0,
                             shape=[self.n_batches, self.n_genes],
                         )
                         * 10.0
@@ -390,8 +390,8 @@ class scDEF(object):
                     jnp.log(
                         random.uniform(
                             rngs[4],
-                            minval=minval,
-                            maxval=maxval,
+                            minval=1.0,
+                            maxval=1.0,
                             shape=[self.layer_sizes[0], 1],
                         )
                         * self.brd
@@ -420,8 +420,8 @@ class scDEF(object):
             z_shape = jnp.log(
                 random.uniform(
                     rngs[rng_cnt],
-                    minval=minval,
-                    maxval=maxval,
+                    minval=1.0,
+                    maxval=1.0,
                     shape=[self.n_cells, self.layer_sizes[layer_idx]],
                 )
                 * self.layer_shapes[layer_idx]
@@ -442,6 +442,8 @@ class scDEF(object):
 
         self.var_params.append(jnp.array((jnp.hstack(z_shapes), jnp.hstack(z_rates))))
 
+        w_shapes = []
+        w_rates = []
         for layer_idx in range(
             self.n_layers
         ):  # the w don't have a shared axis across all, so we can't vectorize
@@ -454,8 +456,8 @@ class scDEF(object):
             w_shape = jnp.log(
                 random.uniform(
                     rngs[rng_cnt],
-                    minval=minval,
-                    maxval=maxval,
+                    minval=1.0,
+                    maxval=1.0,
                     shape=[in_layer, out_layer],
                 )
                 * jnp.clip(self.w_priors[layer_idx][0], 1e-2, 1e2)
@@ -471,8 +473,15 @@ class scDEF(object):
                 * jnp.clip(self.w_priors[layer_idx][1], 1e-2, 1e2)
             )
             rng_cnt += 1
+            w_shapes.append(
+                jnp.hstack([w_shape, jnp.ones((in_layer, self.n_genes - out_layer))])
+            )
+            w_rates.append(
+                jnp.hstack([w_rate, jnp.ones((in_layer, self.n_genes - out_layer))])
+            )
 
-            self.var_params.append(jnp.array((w_shape, w_rate)))
+        self.var_params.append(jnp.vstack(w_shapes))
+        self.var_params.append(jnp.vstack(w_rates))
 
     def elbo(
         self,
@@ -551,8 +560,12 @@ class scDEF(object):
         gene_budget_sample = gamma_sample(rng, gene_budget_shape, gene_budget_rate)
         if self.use_brd:
             fscale_samples = gamma_sample(rng, fscale_shapes, fscale_rates)
-        # z_samples = gamma_sample(rng, z_shapes, z_rates)  # vectorized
-        # w will be sampled in a loop below because it cannot be vectorized
+        z_samples = gamma_sample(rng, z_shapes, z_rates)  # vectorized
+        _w_shapes = jnp.maximum(jnp.exp(var_params[4]), min_shape)
+        _w_rates = jnp.minimum(jnp.maximum(jnp.exp(var_params[5]), min_rate), max_rate)
+        _w_samples = gamma_sample(
+            rng, _w_shapes, _w_rates
+        )  # sum(layer_sizes) x n_genes
 
         # Compute ELBO
         global_pl = gamma_logpdf(
@@ -560,24 +573,20 @@ class scDEF(object):
             self.gene_scale_shape,
             self.gene_scale_shape * self.gene_ratio,
         )
-        global_en = -gamma_logpdf(
-            gene_budget_sample, gene_budget_shape, gene_budget_rate
-        )
+        global_en = gamma_entropy(gene_budget_shape, gene_budget_rate)
         local_pl = gamma_logpdf(
             cell_budget_sample,
             self.cell_scale_shape,
             self.cell_scale_shape * self.batch_lib_ratio[indices],
         )
-        local_en = -gamma_logpdf(
-            cell_budget_sample, cell_budget_shape, cell_budget_rate
-        )
+        local_en = gamma_entropy(cell_budget_shape, cell_budget_rate)
 
         # scale
         if self.use_brd:
             global_pl += gamma_logpdf(
                 fscale_samples, self.brd, self.brd * self.factor_rates[0]
             )
-            global_en += -gamma_logpdf(fscale_samples, fscale_shapes, fscale_rates)
+            global_en += gamma_entropy(fscale_shapes, fscale_rates)
 
         z_mean = 1.0
         for idx in list(np.arange(0, self.n_layers)[::-1]):
@@ -585,10 +594,14 @@ class scDEF(object):
             end = start + self.layer_sizes[idx]
 
             # w
-            _w_shape = jnp.maximum(jnp.exp(var_params[4 + idx][0]), min_shape)
-            _w_rate = jnp.minimum(
-                jnp.maximum(jnp.exp(var_params[4 + idx][1]), min_rate), max_rate
-            )
+            if idx == 0:
+                end_j = self.n_genes
+            else:
+                end_j = self.layer_sizes[idx - 1]
+
+            _w_sample = _w_samples[start:end, :end_j]
+            _w_shape = _w_shapes[start:end, :end_j]
+            _w_rate = _w_rates[start:end, :end_j]
 
             _w_shape = jax.lax.cond(
                 stop_gradients[idx],
@@ -601,7 +614,7 @@ class scDEF(object):
                 lambda: _w_rate,
             )
 
-            _w_sample = gamma_sample(rng, _w_shape, _w_rate)
+            # _w_sample = gamma_sample(rng, _w_shape, _w_rate)
             if idx == 0 and self.use_brd:
                 global_pl += gamma_logpdf(
                     _w_sample,
@@ -620,10 +633,10 @@ class scDEF(object):
                     self.w_priors[idx][0],
                     self.w_priors[idx][1],
                 )
-            global_en += -gamma_logpdf(_w_sample, _w_shape, _w_rate)
+            global_en += gamma_entropy(_w_shape, _w_rate)
 
             # z
-            # _z_sample = z_samples[:, start:end]
+            _z_sample = z_samples[:, start:end]
             _z_shape = z_shapes[:, start:end]
             _z_rate = z_rates[:, start:end]
 
@@ -637,7 +650,7 @@ class scDEF(object):
                 lambda: jax.lax.stop_gradient(_z_rate),
                 lambda: _z_rate,
             )
-            _z_sample = gamma_sample(rng, _z_shape, _z_rate)
+            # _z_sample = gamma_sample(rng, _z_shape, _z_rate)
 
             if idx == self.n_layers - 1:
                 local_pl += gamma_logpdf(
@@ -653,7 +666,7 @@ class scDEF(object):
                 local_pl += gamma_logpdf(
                     _z_sample, self.layer_shapes[idx], rate_param / z_mean
                 )
-            local_en += -gamma_logpdf(_z_sample, _z_shape, _z_rate)
+            local_en += gamma_entropy(_z_shape, _z_rate)
 
             z_mean = jnp.einsum("nk,kp->np", _z_sample, _w_sample)
 
@@ -923,7 +936,8 @@ class scDEF(object):
         gene_budget_params = self.var_params[1]
         fscale_params = self.var_params[2]
         z_params = self.var_params[3]
-        w_params = self.var_params[4]
+        w_shapes = self.var_params[4]
+        w_rates = self.var_params[5]
 
         self.pmeans = {
             "cell_scale": np.array(
@@ -941,8 +955,12 @@ class scDEF(object):
             self.pmeans[f"{self.layer_names[idx]}z"] = np.array(
                 np.exp(z_params[0][:, start:end]) / np.exp(z_params[1][:, start:end])
             )
-            _w_shape = self.var_params[4 + idx][0]
-            _w_rate = self.var_params[4 + idx][1]
+            if idx == 0:
+                end_j = self.n_genes
+            else:
+                end_j = self.layer_sizes[idx - 1]
+            _w_shape = w_shapes[start:end, :end_j]
+            _w_rate = w_rates[start:end, :end_j]
             self.pmeans[f"{self.layer_names[idx]}W"] = np.array(
                 np.exp(_w_shape) / np.exp(_w_rate)
             )
@@ -952,7 +970,8 @@ class scDEF(object):
         gene_budget_params = self.var_params[1]
         fscale_params = self.var_params[2]
         z_params = self.var_params[3]
-        w_params = self.var_params[4]
+        w_shapes = self.var_params[4]
+        w_rates = self.var_params[5]
 
         self.pvars = {
             "cell_scale": np.array(
@@ -971,8 +990,12 @@ class scDEF(object):
                 np.exp(z_params[0][:, start:end])
                 / np.exp(z_params[1][:, start:end]) ** 2
             )
-            _w_shape = self.var_params[4 + idx][0]
-            _w_rate = self.var_params[4 + idx][1]
+            if idx == 0:
+                end_j = self.n_genes
+            else:
+                end_j = self.layer_sizes[idx - 1]
+            _w_shape = w_shapes[start:end, :end_j]
+            _w_rate = w_rates[start:end, :end_j]
             self.pvars[f"{self.layer_names[idx]}W"] = np.array(
                 np.exp(_w_shape) / np.exp(_w_rate) ** 2
             )
