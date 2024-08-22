@@ -69,7 +69,7 @@ class scDEF(object):
         adata: AnnData,
         counts_layer: Optional[str] = None,
         layer_sizes: Optional[list] = [100, 60, 30, 10, 1],
-        batch_key: Optional[str] = "batch",
+        batch_key: Optional[str] = None,
         seed: Optional[int] = 1,
         logginglevel: Optional[int] = logging.INFO,
         layer_shapes: Optional[list] = None,
@@ -276,7 +276,7 @@ class scDEF(object):
         out += "\n" + "Contains " + self.adata.__str__()
         return out
 
-    def load_adata(self, adata, layer=None, batch_key="batch"):
+    def load_adata(self, adata, layer=None, batch_key=None):
         if not isinstance(adata, AnnData):
             raise TypeError("adata must be an instance of AnnData.")
         self.adata = adata.copy()
@@ -299,38 +299,41 @@ class scDEF(object):
         )
         gene_size = np.sum(self.X, axis=0)
         self.gene_ratio = np.mean(gene_size) / np.var(gene_size)
-        if batch_key in self.adata.obs.columns:
-            batches = np.unique(self.adata.obs[batch_key].values)
-            self.batches = batches
-            self.n_batches = len(batches)
-            self.logger.info(
-                f"Found {self.n_batches} values for `{batch_key}` in data: {batches}"
-            )
-            if f"{batch_key}_colors" in self.adata.uns:
-                self.batch_colors = self.adata.uns[f"{batch_key}_colors"]
-            else:
-                batch_colorpalette = sns.color_palette(
-                    self.batch_cpal, n_colors=self.n_batches
+        if batch_key is not None:
+            if batch_key in self.adata.obs.columns:
+                batches = np.unique(self.adata.obs[batch_key].values)
+                self.batches = batches
+                self.n_batches = len(batches)
+                self.logger.info(
+                    f"Found {self.n_batches} values for `{batch_key}` in data: {batches}"
                 )
-                self.batch_colors = [
-                    matplotlib.colors.to_hex(batch_colorpalette[idx])
-                    for idx in range(self.n_batches)
-                ]
-                self.adata.uns[f"{batch_key}_colors"] = self.batch_colors
-            self.batch_indices_onehot = np.zeros((self.adata.shape[0], self.n_batches))
-            if self.n_batches > 1:
-                self.gene_ratio = np.ones((self.n_batches, self.adata.shape[1]))
-                for i, b in enumerate(batches):
-                    cells = np.where(self.adata.obs[batch_key] == b)[0]
-                    self.batch_indices_onehot[cells, i] = 1
-                    self.batch_lib_sizes[cells] = np.sum(self.X, axis=1)[cells]
-                    self.batch_lib_ratio[cells] = np.mean(
-                        self.batch_lib_sizes[cells]
-                    ) / np.var(self.batch_lib_sizes[cells])
-                    batch_gene_size = np.sum(self.X[cells], axis=0)
-                    self.gene_ratio[i] = np.mean(batch_gene_size) / np.var(
-                        batch_gene_size
+                if f"{batch_key}_colors" in self.adata.uns:
+                    self.batch_colors = self.adata.uns[f"{batch_key}_colors"]
+                else:
+                    batch_colorpalette = sns.color_palette(
+                        self.batch_cpal, n_colors=self.n_batches
                     )
+                    self.batch_colors = [
+                        matplotlib.colors.to_hex(batch_colorpalette[idx])
+                        for idx in range(self.n_batches)
+                    ]
+                    self.adata.uns[f"{batch_key}_colors"] = self.batch_colors
+                self.batch_indices_onehot = np.zeros(
+                    (self.adata.shape[0], self.n_batches)
+                )
+                if self.n_batches > 1:
+                    self.gene_ratio = np.ones((self.n_batches, self.adata.shape[1]))
+                    for i, b in enumerate(batches):
+                        cells = np.where(self.adata.obs[batch_key] == b)[0]
+                        self.batch_indices_onehot[cells, i] = 1
+                        self.batch_lib_sizes[cells] = np.sum(self.X, axis=1)[cells]
+                        self.batch_lib_ratio[cells] = np.mean(
+                            self.batch_lib_sizes[cells]
+                        ) / np.var(self.batch_lib_sizes[cells])
+                        batch_gene_size = np.sum(self.X[cells], axis=0)
+                        self.gene_ratio[i] = np.mean(batch_gene_size) / np.var(
+                            batch_gene_size
+                        )
         self.batch_indices_onehot = jnp.array(self.batch_indices_onehot)
         self.batch_lib_sizes = jnp.array(self.batch_lib_sizes)
         self.batch_lib_ratio = jnp.array(self.batch_lib_ratio)
