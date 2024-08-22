@@ -4,9 +4,8 @@ from scdef.utils.jax_utils import *
 from jax import jit, grad, vmap
 from jax.example_libraries import optimizers
 from jax import random, value_and_grad
-from jax.scipy.stats import norm, gamma, poisson
+from jax.scipy.stats import poisson
 import jax.numpy as jnp
-import jax.nn as jnn
 import jax
 
 import matplotlib
