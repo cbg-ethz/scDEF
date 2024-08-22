@@ -1,7 +1,7 @@
 suppressMessages(library(splatter))
 suppressMessages(library(ggplot2))
 suppressMessages(library(cowplot))
-suppressMessages(library(scater))
+suppressMessages(library(SingleCellExperiment))
 suppressMessages(library(SeuratData))
 suppressMessages(library(Seurat))
 suppressMessages(library(dplyr))
@@ -14,7 +14,9 @@ n_cells <- rep(n_cells_per_batch, n_batches)
 n_total_cells <- as.integer(n_cells_per_batch) * as.integer(n_batches)
 frac_shared <- as.numeric(snakemake@params[["frac_shared"]])
 de_fscale <- as.numeric(snakemake@params[["de_fscale"]])
+de_prob <- as.numeric(snakemake@params[["de_prob"]])
 batch_facscale <- as.numeric(snakemake@params[["batch_facscale"]])
+coverage <- as.numeric(snakemake@params[["coverage"]])
 seed <- as.numeric(snakemake@params[["seed"]])
 
 
@@ -23,12 +25,16 @@ data("pbmc3k")
 c <- as.matrix(GetAssayData(object = pbmc3k, slot = "counts")) # Use 3k PBMCs data from 10x Genomics as reference
 params <- splatEstimate(c)
 
+print(params)
+
 # Generate 4000 cells with 1000 genes separated in 2 groups
 params <- setParam(params, "nGenes", 1000)
 params <- setParam(params, "batchCells", n_cells)
-params <- setParam(params, "de.prob", 0.2)
+params <- setParam(params, "de.prob", de_prob)
 params <- setParam(params, "de.facScale", de_fscale)
 params <- setParam(params, "seed", seed)
+if (coverage > 0)
+  params <- setParam(params, "lib.loc", log(coverage * 1000/1750))
 params <- setParam(params, "group.prob", rep(1/2, 2))
 sim1 <- splatSimulate(params, method="groups", verbose=FALSE)
 # sort cells by groups
@@ -44,9 +50,11 @@ print("First splatter done!")
 # Add 500 genes separated in 4 groups
 params <- setParam(params, "nGenes", 500)
 params <- setParam(params, "batchCells", n_cells)
-params <- setParam(params, "de.prob", 0.2)
+params <- setParam(params, "de.prob", de_prob)
 params <- setParam(params, "de.facScale", de_fscale)
 params <- setParam(params, "seed", seed)
+if (coverage > 0)
+  params <- setParam(params, "lib.loc", log(coverage * 500/1750))
 params <- setParam(params, "group.prob", rep(1/4, 4))
 sim2 <- splatSimulate(params, method="groups", verbose=FALSE)
 # # sort cells by groups
@@ -62,10 +70,12 @@ print("Second splatter done!")
 # Add 250 genes separated in 8 groups
 params <- setParam(params, "nGenes", 250)
 params <- setParam(params, "batchCells", n_cells)
-params <- setParam(params, "de.prob", 0.2)
+params <- setParam(params, "de.prob", de_prob)
 params <- setParam(params, "de.facScale", de_fscale)
 params <- setParam(params, "seed", seed)
 params <- setParam(params, "group.prob", rep(1/8, 8))
+if (coverage > 0)
+  params <- setParam(params, "lib.loc", log(coverage * 250/1750))
 params <- setParam(params, "batch.facScale", batch_facscale)
 sim3 <- splatSimulate(params, method="groups", verbose=FALSE)
 sim3_nobatch <- splatSimulate(params, method="groups", verbose=FALSE, batch.rmEffect = TRUE,)
@@ -155,10 +165,12 @@ if (n_batches > 1) {
     sub_sim_nobatch <- sim_nobatch
   }
   # Make Seurat object
-  sub_sim <- logNormCounts(sub_sim)
-  sub_sim_nobatch <- logNormCounts(sub_sim_nobatch)
-  sub_sim.seurat <- as.Seurat(sub_sim, counts = "counts", logcounts = "logcounts")
-  sub_sim_nobatch.seurat <- as.Seurat(sub_sim_nobatch, counts = "counts", logcounts = "logcounts")
+  # sub_sim <- logNormCounts(sub_sim)
+  # sub_sim_nobatch <- logNormCounts(sub_sim_nobatch)
+  sub_sim.seurat <- as.Seurat(sub_sim, counts = "counts", data=NULL)
+  sub_sim.seurat <- NormalizeData(sub_sim.seurat, verbose = FALSE)
+  sub_sim_nobatch.seurat <- as.Seurat(sub_sim_nobatch, counts = "counts", data=NULL)
+  sub_sim_nobatch.seurat <- NormalizeData(sub_sim_nobatch.seurat, verbose = FALSE)
 
   # Save group signatures from non-batch data
   Idents(object = sub_sim_nobatch.seurat) <- "GroupC"
@@ -192,7 +204,7 @@ if (n_batches > 1) {
   p <- plot_grid(p1, p2, p3, p4, p5, p6, ncol = 3)
   ggsave(snakemake@output[["umap_fname"]])
 
-  sub_sim_nobatch.seurat <- NormalizeData(sub_sim_nobatch.seurat, verbose = FALSE)
+  # sub_sim_nobatch.seurat <- NormalizeData(sub_sim_nobatch.seurat, verbose = FALSE)
   sub_sim_nobatch.seurat <- FindVariableFeatures(sub_sim_nobatch.seurat, selection.method = "vst", nfeatures = 1000)
   sub_sim_nobatch.seurat <- ScaleData(sub_sim_nobatch.seurat, verbose = FALSE)
   sub_sim_nobatch.seurat <- RunPCA(sub_sim_nobatch.seurat, npcs = 30, verbose = FALSE)
@@ -213,8 +225,9 @@ if (n_batches > 1) {
   sub_sim <- sim
 
   # Make Seurat object
-  sub_sim <- logNormCounts(sub_sim)
-  sub_sim.seurat <- as.Seurat(sub_sim, counts = "counts", logcounts = "logcounts")
+  # sub_sim <- logNormCounts(sub_sim)
+  sub_sim.seurat <- as.Seurat(sub_sim, counts = "counts", data=NULL)
+  sub_sim.seurat <- NormalizeData(sub_sim.seurat, verbose = FALSE)
 
   # Save group signatures from non-batch data
   Idents(object = sub_sim.seurat) <- "GroupC"
@@ -232,7 +245,7 @@ if (n_batches > 1) {
   write.csv(meta,snakemake@output[["meta_fname"]])
 
   # Save the UMAP of the data
-  sub_sim.seurat <- NormalizeData(sub_sim.seurat, verbose = FALSE)
+  # sub_sim.seurat <- NormalizeData(sub_sim.seurat, verbose = FALSE)
   sub_sim.seurat <- FindVariableFeatures(sub_sim.seurat, selection.method = "vst", nfeatures = 1000)
   sub_sim.seurat <- ScaleData(sub_sim.seurat, verbose = FALSE)
   sub_sim.seurat <- RunPCA(sub_sim.seurat, npcs = 30, verbose = FALSE)

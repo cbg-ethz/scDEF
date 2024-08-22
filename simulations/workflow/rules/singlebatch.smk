@@ -4,11 +4,13 @@ rule generate_singlebatch_data:
         threads=10,
     params:
         de_fscale = "{separability}",
+        de_prob = config["de_prob"],
         batch_facscale = 0.,
         n_cells = config["n_cells"],
         n_batches = 1,
         frac_shared = 0.,
         seed = "{rep_id}",
+        coverage = 0.,
     output:
         counts_fname = 'results/data/sep_{separability}/singlebatch/rep_{rep_id}_counts.csv',
         meta_fname = 'results/data/sep_{separability}/singlebatch/rep_{rep_id}_meta.csv',
@@ -93,3 +95,36 @@ rule run_schpf_singlebatch:
         scores_fname = 'results/scHPF/sep_{separability}/singlebatch/rep_{rep_id}_scores.csv',
     script:
         "../scripts/run_schpf.py"
+
+rule run_nsbm_singlebatch:
+    resources:
+        time = "03:40:00",
+        mem_per_cpu=10000,
+        threads=10,
+    params:
+        seed = "{rep_id}",
+    input:
+        counts_fname = 'results/data/sep_{separability}/singlebatch/rep_{rep_id}_counts.csv',
+        meta_fname = 'results/data/sep_{separability}/singlebatch/rep_{rep_id}_meta.csv',
+        markers_fname = 'results/data/sep_{separability}/singlebatch/rep_{rep_id}_markers.csv',
+    output:
+        scores_fname = 'results/nSBM/sep_{separability}/singlebatch/rep_{rep_id}_scores.csv',
+    script:
+        "../scripts/run_nsbm.py"     
+
+
+rule run_fsclvm_singlebatch:
+    resources:
+        time = "03:40:00",
+        mem_per_cpu=10000,
+        threads=10,
+    params:
+        seed = "{rep_id}",
+    input:
+        counts_fname = 'results/data/sep_{separability}/singlebatch/rep_{rep_id}_counts.csv',
+        meta_fname = 'results/data/sep_{separability}/singlebatch/rep_{rep_id}_meta.csv',
+        markers_fname = 'results/data/sep_{separability}/singlebatch/rep_{rep_id}_markers.csv',
+    output:
+        scores_fname = 'results/fscLVM/sep_{separability}/singlebatch/rep_{rep_id}_scores.csv',
+    script:
+        "../scripts/run_muvi.py"                

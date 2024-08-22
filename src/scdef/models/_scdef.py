@@ -4,9 +4,8 @@ from scdef.utils.jax_utils import *
 from jax import jit, grad, vmap
 from jax.example_libraries import optimizers
 from jax import random, value_and_grad
-from jax.scipy.stats import norm, gamma, poisson
+from jax.scipy.stats import poisson
 import jax.numpy as jnp
-import jax.nn as jnn
 import jax
 
 import matplotlib
@@ -19,6 +18,8 @@ from tqdm import tqdm
 import time
 
 import logging
+
+logging.basicConfig()
 
 import scipy
 import numpy as np
@@ -67,7 +68,7 @@ class scDEF(object):
         adata: AnnData,
         counts_layer: Optional[str] = None,
         layer_sizes: Optional[list] = [100, 60, 30, 10, 1],
-        batch_key: Optional[str] = "batch",
+        batch_key: Optional[str] = None,
         seed: Optional[int] = 1,
         logginglevel: Optional[int] = logging.INFO,
         layer_shapes: Optional[list] = None,
@@ -274,7 +275,7 @@ class scDEF(object):
         out += "\n" + "Contains " + self.adata.__str__()
         return out
 
-    def load_adata(self, adata, layer=None, batch_key="batch"):
+    def load_adata(self, adata, layer=None, batch_key=None):
         if not isinstance(adata, AnnData):
             raise TypeError("adata must be an instance of AnnData.")
         self.adata = adata.copy()
@@ -297,45 +298,48 @@ class scDEF(object):
         )
         gene_size = np.sum(self.X, axis=0)
         self.gene_ratio = np.mean(gene_size) / np.var(gene_size)
-        if batch_key in self.adata.obs.columns:
-            batches = np.unique(self.adata.obs[batch_key].values)
-            self.batches = batches
-            self.n_batches = len(batches)
-            self.logger.info(
-                f"Found {self.n_batches} values for `{batch_key}` in data: {batches}"
-            )
-            if f"{batch_key}_colors" in self.adata.uns:
-                self.batch_colors = self.adata.uns[f"{batch_key}_colors"]
-            else:
-                batch_colorpalette = sns.color_palette(
-                    self.batch_cpal, n_colors=self.n_batches
+        if batch_key is not None:
+            if batch_key in self.adata.obs.columns:
+                batches = np.unique(self.adata.obs[batch_key].values)
+                self.batches = batches
+                self.n_batches = len(batches)
+                self.logger.info(
+                    f"Found {self.n_batches} values for `{batch_key}` in data: {batches}"
                 )
-                self.batch_colors = [
-                    matplotlib.colors.to_hex(batch_colorpalette[idx])
-                    for idx in range(self.n_batches)
-                ]
-                self.adata.uns[f"{batch_key}_colors"] = self.batch_colors
-            self.batch_indices_onehot = np.zeros((self.adata.shape[0], self.n_batches))
-            if self.n_batches > 1:
-                self.gene_ratio = np.ones((self.n_batches, self.adata.shape[1]))
-                for i, b in enumerate(batches):
-                    cells = np.where(self.adata.obs[batch_key] == b)[0]
-                    self.batch_indices_onehot[cells, i] = 1
-                    self.batch_lib_sizes[cells] = np.sum(self.X, axis=1)[cells]
-                    self.batch_lib_ratio[cells] = np.mean(
-                        self.batch_lib_sizes[cells]
-                    ) / np.var(self.batch_lib_sizes[cells])
-                    batch_gene_size = np.sum(self.X[cells], axis=0)
-                    self.gene_ratio[i] = np.mean(batch_gene_size) / np.var(
-                        batch_gene_size
+                if f"{batch_key}_colors" in self.adata.uns:
+                    self.batch_colors = self.adata.uns[f"{batch_key}_colors"]
+                else:
+                    batch_colorpalette = sns.color_palette(
+                        self.batch_cpal, n_colors=self.n_batches
                     )
+                    self.batch_colors = [
+                        matplotlib.colors.to_hex(batch_colorpalette[idx])
+                        for idx in range(self.n_batches)
+                    ]
+                    self.adata.uns[f"{batch_key}_colors"] = self.batch_colors
+                self.batch_indices_onehot = np.zeros(
+                    (self.adata.shape[0], self.n_batches)
+                )
+                if self.n_batches > 1:
+                    self.gene_ratio = np.ones((self.n_batches, self.adata.shape[1]))
+                    for i, b in enumerate(batches):
+                        cells = np.where(self.adata.obs[batch_key] == b)[0]
+                        self.batch_indices_onehot[cells, i] = 1
+                        self.batch_lib_sizes[cells] = np.sum(self.X, axis=1)[cells]
+                        self.batch_lib_ratio[cells] = np.mean(
+                            self.batch_lib_sizes[cells]
+                        ) / np.var(self.batch_lib_sizes[cells])
+                        batch_gene_size = np.sum(self.X[cells], axis=0)
+                        self.gene_ratio[i] = np.mean(batch_gene_size) / np.var(
+                            batch_gene_size
+                        )
         self.batch_indices_onehot = jnp.array(self.batch_indices_onehot)
         self.batch_lib_sizes = jnp.array(self.batch_lib_sizes)
         self.batch_lib_ratio = jnp.array(self.batch_lib_ratio)
         self.gene_ratio = jnp.array(self.gene_ratio)
 
-    def init_var_params(self, minval=1.0, maxval=1.0):
-        rngs = random.split(random.PRNGKey(self.seed), 6 + 2 * 2 * self.n_layers)
+    def init_var_params(self, minval=0.5, maxval=1.5):
+        rngs = random.split(random.PRNGKey(self.seed), 6 + 2 * 4 * self.n_layers)
 
         self.var_params = [
             jnp.array(
@@ -343,8 +347,8 @@ class scDEF(object):
                     jnp.log(
                         random.uniform(
                             rngs[0],
-                            minval=minval,
-                            maxval=maxval,
+                            minval=1.0,
+                            maxval=1.0,
                             shape=[self.n_cells, 1],
                         )
                         * 10.0
@@ -365,8 +369,8 @@ class scDEF(object):
                     jnp.log(
                         random.uniform(
                             rngs[2],
-                            minval=minval,
-                            maxval=maxval,
+                            minval=1.0,
+                            maxval=1.0,
                             shape=[self.n_batches, self.n_genes],
                         )
                         * 10.0
@@ -390,8 +394,8 @@ class scDEF(object):
                     jnp.log(
                         random.uniform(
                             rngs[4],
-                            minval=minval,
-                            maxval=maxval,
+                            minval=1.0,
+                            maxval=1.0,
                             shape=[self.layer_sizes[0], 1],
                         )
                         * self.brd
@@ -420,8 +424,8 @@ class scDEF(object):
             z_shape = jnp.log(
                 random.uniform(
                     rngs[rng_cnt],
-                    minval=minval,
-                    maxval=maxval,
+                    minval=1.0,
+                    maxval=1.0,
                     shape=[self.n_cells, self.layer_sizes[layer_idx]],
                 )
                 * self.layer_shapes[layer_idx]
@@ -442,6 +446,8 @@ class scDEF(object):
 
         self.var_params.append(jnp.array((jnp.hstack(z_shapes), jnp.hstack(z_rates))))
 
+        w_shapes = []
+        w_rates = []
         for layer_idx in range(
             self.n_layers
         ):  # the w don't have a shared axis across all, so we can't vectorize
@@ -454,8 +460,8 @@ class scDEF(object):
             w_shape = jnp.log(
                 random.uniform(
                     rngs[rng_cnt],
-                    minval=minval,
-                    maxval=maxval,
+                    minval=1.0,
+                    maxval=1.0,
                     shape=[in_layer, out_layer],
                 )
                 * jnp.clip(self.w_priors[layer_idx][0], 1e-2, 1e2)
@@ -471,8 +477,15 @@ class scDEF(object):
                 * jnp.clip(self.w_priors[layer_idx][1], 1e-2, 1e2)
             )
             rng_cnt += 1
+            w_shapes.append(
+                jnp.hstack([w_shape, jnp.ones((in_layer, self.n_genes - out_layer))])
+            )
+            w_rates.append(
+                jnp.hstack([w_rate, jnp.ones((in_layer, self.n_genes - out_layer))])
+            )
 
-            self.var_params.append(jnp.array((w_shape, w_rate)))
+        self.var_params.append(jnp.vstack(w_shapes))
+        self.var_params.append(jnp.vstack(w_rates))
 
     def elbo(
         self,
@@ -551,8 +564,12 @@ class scDEF(object):
         gene_budget_sample = gamma_sample(rng, gene_budget_shape, gene_budget_rate)
         if self.use_brd:
             fscale_samples = gamma_sample(rng, fscale_shapes, fscale_rates)
-        # z_samples = gamma_sample(rng, z_shapes, z_rates)  # vectorized
-        # w will be sampled in a loop below because it cannot be vectorized
+        z_samples = gamma_sample(rng, z_shapes, z_rates)  # vectorized
+        _w_shapes = jnp.maximum(jnp.exp(var_params[4]), min_shape)
+        _w_rates = jnp.minimum(jnp.maximum(jnp.exp(var_params[5]), min_rate), max_rate)
+        _w_samples = gamma_sample(
+            rng, _w_shapes, _w_rates
+        )  # sum(layer_sizes) x n_genes
 
         # Compute ELBO
         global_pl = gamma_logpdf(
@@ -560,24 +577,20 @@ class scDEF(object):
             self.gene_scale_shape,
             self.gene_scale_shape * self.gene_ratio,
         )
-        global_en = -gamma_logpdf(
-            gene_budget_sample, gene_budget_shape, gene_budget_rate
-        )
+        global_en = gamma_entropy(gene_budget_shape, gene_budget_rate)
         local_pl = gamma_logpdf(
             cell_budget_sample,
             self.cell_scale_shape,
             self.cell_scale_shape * self.batch_lib_ratio[indices],
         )
-        local_en = -gamma_logpdf(
-            cell_budget_sample, cell_budget_shape, cell_budget_rate
-        )
+        local_en = gamma_entropy(cell_budget_shape, cell_budget_rate)
 
         # scale
         if self.use_brd:
             global_pl += gamma_logpdf(
                 fscale_samples, self.brd, self.brd * self.factor_rates[0]
             )
-            global_en += -gamma_logpdf(fscale_samples, fscale_shapes, fscale_rates)
+            global_en += gamma_entropy(fscale_shapes, fscale_rates)
 
         z_mean = 1.0
         for idx in list(np.arange(0, self.n_layers)[::-1]):
@@ -585,10 +598,14 @@ class scDEF(object):
             end = start + self.layer_sizes[idx]
 
             # w
-            _w_shape = jnp.maximum(jnp.exp(var_params[4 + idx][0]), min_shape)
-            _w_rate = jnp.minimum(
-                jnp.maximum(jnp.exp(var_params[4 + idx][1]), min_rate), max_rate
-            )
+            if idx == 0:
+                end_j = self.n_genes
+            else:
+                end_j = self.layer_sizes[idx - 1]
+
+            _w_sample = _w_samples[start:end, :end_j]
+            _w_shape = _w_shapes[start:end, :end_j]
+            _w_rate = _w_rates[start:end, :end_j]
 
             _w_shape = jax.lax.cond(
                 stop_gradients[idx],
@@ -601,7 +618,7 @@ class scDEF(object):
                 lambda: _w_rate,
             )
 
-            _w_sample = gamma_sample(rng, _w_shape, _w_rate)
+            # _w_sample = gamma_sample(rng, _w_shape, _w_rate)
             if idx == 0 and self.use_brd:
                 global_pl += gamma_logpdf(
                     _w_sample,
@@ -620,10 +637,10 @@ class scDEF(object):
                     self.w_priors[idx][0],
                     self.w_priors[idx][1],
                 )
-            global_en += -gamma_logpdf(_w_sample, _w_shape, _w_rate)
+            global_en += gamma_entropy(_w_shape, _w_rate)
 
             # z
-            # _z_sample = z_samples[:, start:end]
+            _z_sample = z_samples[:, start:end]
             _z_shape = z_shapes[:, start:end]
             _z_rate = z_rates[:, start:end]
 
@@ -637,7 +654,7 @@ class scDEF(object):
                 lambda: jax.lax.stop_gradient(_z_rate),
                 lambda: _z_rate,
             )
-            _z_sample = gamma_sample(rng, _z_shape, _z_rate)
+            # _z_sample = gamma_sample(rng, _z_shape, _z_rate)
 
             if idx == self.n_layers - 1:
                 local_pl += gamma_logpdf(
@@ -653,7 +670,7 @@ class scDEF(object):
                 local_pl += gamma_logpdf(
                     _z_sample, self.layer_shapes[idx], rate_param / z_mean
                 )
-            local_en += -gamma_logpdf(_z_sample, _z_shape, _z_rate)
+            local_en += gamma_entropy(_z_shape, _z_rate)
 
             z_mean = jnp.einsum("nk,kp->np", _z_sample, _w_sample)
 
@@ -923,7 +940,8 @@ class scDEF(object):
         gene_budget_params = self.var_params[1]
         fscale_params = self.var_params[2]
         z_params = self.var_params[3]
-        w_params = self.var_params[4]
+        w_shapes = self.var_params[4]
+        w_rates = self.var_params[5]
 
         self.pmeans = {
             "cell_scale": np.array(
@@ -941,8 +959,12 @@ class scDEF(object):
             self.pmeans[f"{self.layer_names[idx]}z"] = np.array(
                 np.exp(z_params[0][:, start:end]) / np.exp(z_params[1][:, start:end])
             )
-            _w_shape = self.var_params[4 + idx][0]
-            _w_rate = self.var_params[4 + idx][1]
+            if idx == 0:
+                end_j = self.n_genes
+            else:
+                end_j = self.layer_sizes[idx - 1]
+            _w_shape = w_shapes[start:end, :end_j]
+            _w_rate = w_rates[start:end, :end_j]
             self.pmeans[f"{self.layer_names[idx]}W"] = np.array(
                 np.exp(_w_shape) / np.exp(_w_rate)
             )
@@ -952,7 +974,8 @@ class scDEF(object):
         gene_budget_params = self.var_params[1]
         fscale_params = self.var_params[2]
         z_params = self.var_params[3]
-        w_params = self.var_params[4]
+        w_shapes = self.var_params[4]
+        w_rates = self.var_params[5]
 
         self.pvars = {
             "cell_scale": np.array(
@@ -971,8 +994,12 @@ class scDEF(object):
                 np.exp(z_params[0][:, start:end])
                 / np.exp(z_params[1][:, start:end]) ** 2
             )
-            _w_shape = self.var_params[4 + idx][0]
-            _w_rate = self.var_params[4 + idx][1]
+            if idx == 0:
+                end_j = self.n_genes
+            else:
+                end_j = self.layer_sizes[idx - 1]
+            _w_shape = w_shapes[start:end, :end_j]
+            _w_rate = w_rates[start:end, :end_j]
             self.pvars[f"{self.layer_names[idx]}W"] = np.array(
                 np.exp(_w_shape) / np.exp(_w_rate) ** 2
             )
@@ -1129,7 +1156,7 @@ class scDEF(object):
                 self.adata.obs = self.adata.obs.drop(
                     columns=[col for col in self.adata.obs.columns if "score" in col]
                 )
-                self.adata.obs[df.columns] = df
+                self.adata.obs = pd.concat([self.adata.obs, df], axis=1)
 
             self.logger.info(
                 f"Updated adata.obs with layer {idx}: `{layer_name}factor` and `{layer_name}_score` for all factors in layer {idx}"
@@ -1197,8 +1224,7 @@ class scDEF(object):
             }
 
             self.logger.info(
-                f"Updated adata.uns with layer {idx} signatures: `{layer_name}factor_signatures`.\
-                Includes dummy values for pvals, pvals_adj, and logfoldchanges for compatibility with scanpy plotting functions."
+                f"Updated adata.uns with layer {idx} signatures: `{layer_name}factor_signatures`."
             )
 
     def get_annotations(self, marker_reference, gene_rankings=None):
@@ -1738,27 +1764,27 @@ class scDEF(object):
                         ]
                     )
                 elif show_signatures:
-                    if factor_idx in self.factor_lists[layer_idx]:
-                        if not (show_all and len(self.factor_lists[layer_idx]) == 1):
+
+                    def print_signature(i):
+                        factor_gene_rankings = gene_rankings[i][: top_genes[layer_idx]]
+                        factor_gene_scores = gene_scores[i][: top_genes[layer_idx]]
+                        fontsizes = map_scores_to_fontsizes(
+                            gene_scores[i], **fontsize_kwargs
+                        )[: top_genes[layer_idx]]
+                        gene_labels = []
+                        for j, gene in enumerate(factor_gene_rankings):
+                            gene_labels.append(
+                                f'<FONT POINT-SIZE="{fontsizes[j]}">{gene}</FONT>'
+                            )
+                        return "<br/><br/>" + "<br/>".join(gene_labels)
+
+                    idx = factor_idx
+                    if show_all:
+                        if factor_idx in self.factor_lists[layer_idx]:
                             idx = np.where(
                                 factor_idx == np.array(self.factor_lists[layer_idx])
                             )[0][0]
-                            factor_gene_rankings = gene_rankings[idx][
-                                : top_genes[layer_idx]
-                            ]
-                            factor_gene_scores = gene_scores[idx][
-                                : top_genes[layer_idx]
-                            ]
-                            fontsizes = map_scores_to_fontsizes(
-                                gene_scores[idx], **fontsize_kwargs
-                            )[: top_genes[layer_idx]]
-                            gene_labels = []
-                            for j, gene in enumerate(factor_gene_rankings):
-                                gene_labels.append(
-                                    f'<FONT POINT-SIZE="{fontsizes[j]}">{gene}</FONT>'
-                                )
-                            label += "<br/><br/>" + "<br/>".join(gene_labels)
-
+                            label += print_signature(idx)
                             if show_confidences:
                                 confidence_score = self.get_signature_confidence(
                                     idx,
@@ -1767,6 +1793,16 @@ class scDEF(object):
                                     mc_samples=mc_samples,
                                 )
                                 label += f"<br/><br/>({confidence_score:.3f})"
+                    else:
+                        label += print_signature(idx)
+                        if show_confidences:
+                            confidence_score = self.get_signature_confidence(
+                                idx,
+                                layer_idx,
+                                top_genes=top_genes[layer_idx],
+                                mc_samples=mc_samples,
+                            )
+                            label += f"<br/><br/>({confidence_score:.3f})"
 
                 elif filled is not None and filled != "factor":
                     label += "<br/><br/>" + ""
@@ -1880,7 +1916,7 @@ class scDEF(object):
         for layer, layer_name in enumerate(self.layer_names):
             layer_attachments = []
             for factor_idx in range(len(self.factor_lists[layer])):
-                factor_name = f"{self.factor_names[layer_idx][int(factor_idx)]}"
+                factor_name = f"{self.factor_names[layer][int(factor_idx)]}"
                 # cells attached to this factor
                 cells = np.where(self.adata.obs[f"{layer_name}factor"] == factor_name)[
                     0

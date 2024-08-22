@@ -3,6 +3,8 @@ import pandas as pd
 import scanpy as sc
 import anndata
 import scdef
+import fsclvm
+import scipy
 from sklearn.metrics import adjusted_rand_score, silhouette_score, roc_auc_score
 from sklearn.model_selection import train_test_split
 import time
@@ -18,14 +20,15 @@ markers = dict(
 
 adata = anndata.AnnData(X=counts.values.T, obs=meta)
 adata.var_names = [f"Gene{i+1}" for i in range(adata.shape[1])]
-# Normalize per batch
+
+adata.layers["counts"] = adata.X.copy()  # preserve counts
 sc.pp.filter_cells(adata, min_genes=200)
 sc.pp.filter_genes(adata, min_cells=3)
-adata.layers["counts"] = adata.X.copy()  # preserve counts
+adata.raw = adata
+raw_adata = adata.raw
+raw_adata = raw_adata.to_adata()
 sc.pp.normalize_total(adata, target_sum=1e4)
 sc.pp.log1p(adata)
-adata.raw = adata  # freeze the state in `.raw`
-
 sc.pp.highly_variable_genes(
     adata,
     n_top_genes=2000,
@@ -38,10 +41,7 @@ sc.pp.highly_variable_genes(
 adata.obs["GroupA"] = adata.obs["GroupA"].apply(lambda row: f"hh{row}")
 adata.obs["GroupB"] = adata.obs["GroupB"].apply(lambda row: f"h{row}")
 
-# Scanorama requires adata sorted by batch
-adata = adata[np.argsort(adata.obs["Batch"]), :]
-
-methods_list = ["Scanorama"]
+methods_list = ["MuVI"]
 duration = time.time()
 methods_results = scdef.benchmark.run_methods(adata, methods_list, batch_key="Batch")
 duration = time.time() - duration
@@ -76,5 +76,6 @@ df = scdef.benchmark.evaluate_methods(
     celltype_obs_key="GroupC",
     batch_obs_key="Batch",
 )
-df["Scanorama", "Runtime"] = duration
+df["MuVI", "Runtime"] = duration
+
 df.to_csv(snakemake.output["scores_fname"])

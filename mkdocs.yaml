@@ -37,6 +37,7 @@ plugins:
       default_handler: python
       handlers:
         python:
+          paths: [src]
           options:
             show_source: false
             show_root_heading: true

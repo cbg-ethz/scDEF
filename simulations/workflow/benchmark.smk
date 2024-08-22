@@ -1,4 +1,4 @@
-configfile: "config/config.yaml"
+configfile: "config/benchmark_config.yaml"
 
 N_REPS = config["n_reps"]
 SEPARABILITY = config["de_fscale"]

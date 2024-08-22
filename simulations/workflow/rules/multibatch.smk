@@ -4,11 +4,13 @@ rule generate_multibatch_data:
         threads=10,
     params:
         de_fscale = "{separability}",
+        de_prob = config["de_prob"],
         batch_facscale = config["batch_facscale"],
         n_cells = 1000,
         n_batches = config["n_batches"],
         frac_shared = "{frac_shared}",
         seed = "{rep_id}",
+        coverage = 0.,
     output:
         counts_fname = 'results/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_counts.csv',
         meta_fname = 'results/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_meta.csv',
@@ -160,3 +162,35 @@ rule run_scanorama:
         scores_fname = 'results/Scanorama/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_scores.csv',
     script:
         "../scripts/run_scanorama.py"
+
+rule run_nsbm:
+    resources:
+        time = "03:40:00",
+        mem_per_cpu=10000,
+        threads=10,
+    params:
+        seed = "{rep_id}",
+    input:
+        counts_fname = 'results/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_counts.csv',
+        meta_fname = 'results/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_meta.csv',
+        markers_fname = 'results/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_markers.csv',
+    output:
+        scores_fname = 'results/nSBM/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_scores.csv',
+    script:
+        "../scripts/run_nsbm.py"
+
+rule run_fsclvm:
+    resources:
+        time = "03:40:00",
+        mem_per_cpu=10000,
+        threads=10,
+    params:
+        seed = "{rep_id}",
+    input:
+        counts_fname = 'results/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_counts.csv',
+        meta_fname = 'results/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_meta.csv',
+        markers_fname = 'results/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_markers.csv',
+    output:
+        scores_fname = 'results/fscLVM/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_scores.csv',
+    script:
+        "../scripts/run_muvi.py"

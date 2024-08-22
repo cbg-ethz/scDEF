@@ -4,6 +4,7 @@ import scanpy as sc
 import anndata
 import scdef
 from sklearn.decomposition import NMF
+import time
 
 counts = pd.read_csv(snakemake.input["counts_fname"], index_col=0)
 meta = pd.read_csv(snakemake.input["meta_fname"])
@@ -37,7 +38,9 @@ adata.obs["GroupA"] = adata.obs["GroupA"].apply(lambda row: f"hh{row}")
 adata.obs["GroupB"] = adata.obs["GroupB"].apply(lambda row: f"h{row}")
 
 methods_list = ["NMF"]
+duration = time.time()
 methods_results = scdef.benchmark.run_methods(adata, methods_list, batch_key="Batch")
+duration = time.time() - duration
 
 metrics_list = [
     "Cell Type ARI",
