@@ -1156,7 +1156,7 @@ class scDEF(object):
                 self.adata.obs = self.adata.obs.drop(
                     columns=[col for col in self.adata.obs.columns if "score" in col]
                 )
-                self.adata.obs[df.columns] = df
+                self.adata.obs = pd.concat([self.adata.obs, df], axis=1)
 
             self.logger.info(
                 f"Updated adata.obs with layer {idx}: `{layer_name}factor` and `{layer_name}_score` for all factors in layer {idx}"
