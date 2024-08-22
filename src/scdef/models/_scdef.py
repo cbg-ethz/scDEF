@@ -1224,8 +1224,7 @@ class scDEF(object):
             }
 
             self.logger.info(
-                f"Updated adata.uns with layer {idx} signatures: `{layer_name}factor_signatures`.\
-                Includes dummy values for pvals, pvals_adj, and logfoldchanges for compatibility with scanpy plotting functions."
+                f"Updated adata.uns with layer {idx} signatures: `{layer_name}factor_signatures`."
             )
 
     def get_annotations(self, marker_reference, gene_rankings=None):
