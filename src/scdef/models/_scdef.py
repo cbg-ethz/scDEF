@@ -1764,27 +1764,27 @@ class scDEF(object):
                         ]
                     )
                 elif show_signatures:
-                    if factor_idx in self.factor_lists[layer_idx]:
-                        if not (show_all and len(self.factor_lists[layer_idx]) == 1):
+
+                    def print_signature(i):
+                        factor_gene_rankings = gene_rankings[i][: top_genes[layer_idx]]
+                        factor_gene_scores = gene_scores[i][: top_genes[layer_idx]]
+                        fontsizes = map_scores_to_fontsizes(
+                            gene_scores[i], **fontsize_kwargs
+                        )[: top_genes[layer_idx]]
+                        gene_labels = []
+                        for j, gene in enumerate(factor_gene_rankings):
+                            gene_labels.append(
+                                f'<FONT POINT-SIZE="{fontsizes[j]}">{gene}</FONT>'
+                            )
+                        return "<br/><br/>" + "<br/>".join(gene_labels)
+
+                    idx = factor_idx
+                    if show_all:
+                        if factor_idx in self.factor_lists[layer_idx]:
                             idx = np.where(
                                 factor_idx == np.array(self.factor_lists[layer_idx])
                             )[0][0]
-                            factor_gene_rankings = gene_rankings[idx][
-                                : top_genes[layer_idx]
-                            ]
-                            factor_gene_scores = gene_scores[idx][
-                                : top_genes[layer_idx]
-                            ]
-                            fontsizes = map_scores_to_fontsizes(
-                                gene_scores[idx], **fontsize_kwargs
-                            )[: top_genes[layer_idx]]
-                            gene_labels = []
-                            for j, gene in enumerate(factor_gene_rankings):
-                                gene_labels.append(
-                                    f'<FONT POINT-SIZE="{fontsizes[j]}">{gene}</FONT>'
-                                )
-                            label += "<br/><br/>" + "<br/>".join(gene_labels)
-
+                            label += print_signature(idx)
                             if show_confidences:
                                 confidence_score = self.get_signature_confidence(
                                     idx,
@@ -1793,6 +1793,16 @@ class scDEF(object):
                                     mc_samples=mc_samples,
                                 )
                                 label += f"<br/><br/>({confidence_score:.3f})"
+                    else:
+                        label += print_signature(idx)
+                        if show_confidences:
+                            confidence_score = self.get_signature_confidence(
+                                idx,
+                                layer_idx,
+                                top_genes=top_genes[layer_idx],
+                                mc_samples=mc_samples,
+                            )
+                            label += f"<br/><br/>({confidence_score:.3f})"
 
                 elif filled is not None and filled != "factor":
                     label += "<br/><br/>" + ""
