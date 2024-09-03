@@ -1,10 +1,9 @@
 from scdef.utils import score_utils, hierarchy_utils, color_utils
 from scdef.utils.jax_utils import *
 
-from jax import jit, grad, vmap
+from jax import jit, vmap
 from jax.example_libraries import optimizers
 from jax import random, value_and_grad
-from jax.scipy.stats import poisson
 import jax.numpy as jnp
 import jax
 
@@ -18,7 +17,6 @@ from tqdm import tqdm
 import time
 
 import logging
-
 logging.basicConfig()
 
 import scipy
@@ -32,7 +30,6 @@ from scipy.cluster.hierarchy import ward, leaves_list
 from scipy.spatial.distance import pdist
 
 from typing import Optional, Union, Sequence, Mapping, Literal
-
 
 class scDEF(object):
     """Single-cell Deep Exponential Families model.
@@ -338,8 +335,9 @@ class scDEF(object):
         self.batch_lib_ratio = jnp.array(self.batch_lib_ratio)
         self.gene_ratio = jnp.array(self.gene_ratio)
 
+
     def init_var_params(self, minval=0.5, maxval=1.5):
-        rngs = random.split(random.PRNGKey(self.seed), 6 + 2 * 4 * self.n_layers)
+        rngs = random.split(random.PRNGKey(self.seed), 6 + 2 * 2 * self.n_layers)
 
         self.var_params = [
             jnp.array(
@@ -347,8 +345,8 @@ class scDEF(object):
                     jnp.log(
                         random.uniform(
                             rngs[0],
-                            minval=1.0,
-                            maxval=1.0,
+                            minval=1.,
+                            maxval=1.,
                             shape=[self.n_cells, 1],
                         )
                         * 10.0
@@ -361,7 +359,7 @@ class scDEF(object):
                             shape=[self.n_cells, 1],
                         )
                     )
-                    * jnp.clip(10.0 * self.batch_lib_ratio, 1e-6, 1e2),
+                    * jnp.clip(10.0 * self.batch_lib_ratio, 1e-8, 1e2),
                 )
             ),
             jnp.array(
@@ -369,8 +367,8 @@ class scDEF(object):
                     jnp.log(
                         random.uniform(
                             rngs[2],
-                            minval=1.0,
-                            maxval=1.0,
+                            minval=1.,
+                            maxval=1.,
                             shape=[self.n_batches, self.n_genes],
                         )
                         * 10.0
@@ -382,7 +380,7 @@ class scDEF(object):
                             maxval=maxval,
                             shape=[self.n_batches, self.n_genes],
                         )
-                        * jnp.clip(10.0 * self.gene_ratio, 1e-6, 1e2)
+                        * jnp.clip(10.0 * self.gene_ratio, 1e-8, 1e2)
                     ),
                 )
             ),
@@ -394,8 +392,8 @@ class scDEF(object):
                     jnp.log(
                         random.uniform(
                             rngs[4],
-                            minval=1.0,
-                            maxval=1.0,
+                            minval=1.,
+                            maxval=1.,
                             shape=[self.layer_sizes[0], 1],
                         )
                         * self.brd
@@ -424,8 +422,8 @@ class scDEF(object):
             z_shape = jnp.log(
                 random.uniform(
                     rngs[rng_cnt],
-                    minval=1.0,
-                    maxval=1.0,
+                    minval=1.,
+                    maxval=1.,
                     shape=[self.n_cells, self.layer_sizes[layer_idx]],
                 )
                 * self.layer_shapes[layer_idx]
@@ -446,8 +444,6 @@ class scDEF(object):
 
         self.var_params.append(jnp.array((jnp.hstack(z_shapes), jnp.hstack(z_rates))))
 
-        w_shapes = []
-        w_rates = []
         for layer_idx in range(
             self.n_layers
         ):  # the w don't have a shared axis across all, so we can't vectorize
@@ -460,8 +456,8 @@ class scDEF(object):
             w_shape = jnp.log(
                 random.uniform(
                     rngs[rng_cnt],
-                    minval=1.0,
-                    maxval=1.0,
+                    minval=1.,
+                    maxval=1.,
                     shape=[in_layer, out_layer],
                 )
                 * jnp.clip(self.w_priors[layer_idx][0], 1e-2, 1e2)
@@ -477,15 +473,8 @@ class scDEF(object):
                 * jnp.clip(self.w_priors[layer_idx][1], 1e-2, 1e2)
             )
             rng_cnt += 1
-            w_shapes.append(
-                jnp.hstack([w_shape, jnp.ones((in_layer, self.n_genes - out_layer))])
-            )
-            w_rates.append(
-                jnp.hstack([w_rate, jnp.ones((in_layer, self.n_genes - out_layer))])
-            )
 
-        self.var_params.append(jnp.vstack(w_shapes))
-        self.var_params.append(jnp.vstack(w_rates))
+            self.var_params.append(jnp.array((w_shape, w_rate)))
 
     def elbo(
         self,
@@ -495,9 +484,9 @@ class scDEF(object):
         var_params,
         annealing_parameter,
         stop_gradients,
-        min_shape=1e-6,
-        min_rate=1e-6,
-        max_rate=1e6,
+        min_shape=1e-8,
+        min_rate=1e-8,
+        max_rate=1e8,
     ):
         # Single-sample Monte Carlo estimate of the variational lower bound.
         batch_indices_onehot = self.batch_indices_onehot[indices]
@@ -564,12 +553,8 @@ class scDEF(object):
         gene_budget_sample = gamma_sample(rng, gene_budget_shape, gene_budget_rate)
         if self.use_brd:
             fscale_samples = gamma_sample(rng, fscale_shapes, fscale_rates)
-        z_samples = gamma_sample(rng, z_shapes, z_rates)  # vectorized
-        _w_shapes = jnp.maximum(jnp.exp(var_params[4]), min_shape)
-        _w_rates = jnp.minimum(jnp.maximum(jnp.exp(var_params[5]), min_rate), max_rate)
-        _w_samples = gamma_sample(
-            rng, _w_shapes, _w_rates
-        )  # sum(layer_sizes) x n_genes
+        # z_samples = gamma_sample(rng, z_shapes, z_rates)  # vectorized
+        # w will be sampled in a loop below because it cannot be vectorized
 
         # Compute ELBO
         global_pl = gamma_logpdf(
@@ -577,20 +562,24 @@ class scDEF(object):
             self.gene_scale_shape,
             self.gene_scale_shape * self.gene_ratio,
         )
-        global_en = gamma_entropy(gene_budget_shape, gene_budget_rate)
+        global_en = -gamma_logpdf(
+            gene_budget_sample, gene_budget_shape, gene_budget_rate
+        )
         local_pl = gamma_logpdf(
             cell_budget_sample,
             self.cell_scale_shape,
             self.cell_scale_shape * self.batch_lib_ratio[indices],
         )
-        local_en = gamma_entropy(cell_budget_shape, cell_budget_rate)
+        local_en = -gamma_logpdf(
+            cell_budget_sample, cell_budget_shape, cell_budget_rate
+        )
 
         # scale
         if self.use_brd:
             global_pl += gamma_logpdf(
                 fscale_samples, self.brd, self.brd * self.factor_rates[0]
             )
-            global_en += gamma_entropy(fscale_shapes, fscale_rates)
+            global_en += -gamma_logpdf(fscale_samples, fscale_shapes, fscale_rates)
 
         z_mean = 1.0
         for idx in list(np.arange(0, self.n_layers)[::-1]):
@@ -598,14 +587,10 @@ class scDEF(object):
             end = start + self.layer_sizes[idx]
 
             # w
-            if idx == 0:
-                end_j = self.n_genes
-            else:
-                end_j = self.layer_sizes[idx - 1]
-
-            _w_sample = _w_samples[start:end, :end_j]
-            _w_shape = _w_shapes[start:end, :end_j]
-            _w_rate = _w_rates[start:end, :end_j]
+            _w_shape = jnp.maximum(jnp.exp(var_params[4 + idx][0]), min_shape)
+            _w_rate = jnp.minimum(
+                jnp.maximum(jnp.exp(var_params[4 + idx][1]), min_rate), max_rate
+            )
 
             _w_shape = jax.lax.cond(
                 stop_gradients[idx],
@@ -618,7 +603,7 @@ class scDEF(object):
                 lambda: _w_rate,
             )
 
-            # _w_sample = gamma_sample(rng, _w_shape, _w_rate)
+            _w_sample = gamma_sample(rng, _w_shape, _w_rate)
             if idx == 0 and self.use_brd:
                 global_pl += gamma_logpdf(
                     _w_sample,
@@ -637,10 +622,10 @@ class scDEF(object):
                     self.w_priors[idx][0],
                     self.w_priors[idx][1],
                 )
-            global_en += gamma_entropy(_w_shape, _w_rate)
+            global_en += -gamma_logpdf(_w_sample, _w_shape, _w_rate)
 
             # z
-            _z_sample = z_samples[:, start:end]
+            # _z_sample = z_samples[:, start:end]
             _z_shape = z_shapes[:, start:end]
             _z_rate = z_rates[:, start:end]
 
@@ -654,7 +639,7 @@ class scDEF(object):
                 lambda: jax.lax.stop_gradient(_z_rate),
                 lambda: _z_rate,
             )
-            # _z_sample = gamma_sample(rng, _z_shape, _z_rate)
+            _z_sample = gamma_sample(rng, _z_shape, _z_rate)
 
             if idx == self.n_layers - 1:
                 local_pl += gamma_logpdf(
@@ -670,7 +655,7 @@ class scDEF(object):
                 local_pl += gamma_logpdf(
                     _z_sample, self.layer_shapes[idx], rate_param / z_mean
                 )
-            local_en += gamma_entropy(_z_shape, _z_rate)
+            local_en += -gamma_logpdf(_z_sample, _z_shape, _z_rate)
 
             z_mean = jnp.einsum("nk,kp->np", _z_sample, _w_sample)
 
@@ -758,51 +743,55 @@ class scDEF(object):
         early_stop_counter = 0
         stop_early = False
         pbar = tqdm(range(n_epochs))
-        for epoch in pbar:
-            epoch_losses = []
-            start_time = time.time()
-            for it in range(num_batches):
-                rng, rng_input = random.split(rng)
-                X, indices = next(batches)
-                loss, opt_state = update_func(
-                    X,
-                    indices,
-                    t,
-                    rng_input,
-                    opt_state,
-                    annealing_parameter,
-                    stop_gradients,
-                )
-                epoch_losses.append(loss)
-                t += 1
-            current_loss = np.mean(epoch_losses)
-            losses.append(current_loss)
-
-            if epoch >= min_epochs:
-                if min_loss == np.inf:
-                    min_loss = current_loss
-                    stop_early = False
-
-                relative_improvement = (min_loss - current_loss) / np.abs(min_loss)
-                min_loss = min(min_loss, current_loss)
-
-                if relative_improvement < tolerance:
-                    early_stop_counter += 1
-                else:
-                    early_stop_counter = 0
-                if early_stop_counter >= patience:
-                    stop_early = True
-
-            if stop_early:
-                self.logger.info(
-                    "Relative improvement of "
-                    f"{relative_improvement:0.4g} < {tolerance:0.4g} "
-                    f"for {patience} step(s) in a row, stopping early."
-                )
-                break
-
-            epoch_time = time.time() - start_time
-            pbar.set_postfix({"Loss": losses[-1]})
+        try:
+            for epoch in pbar:
+                epoch_losses = []
+                start_time = time.time()
+                for it in range(num_batches):
+                    rng, rng_input = random.split(rng)
+                    X, indices = next(batches)
+                    loss, opt_state = update_func(
+                        X,
+                        indices,
+                        t,
+                        rng_input,
+                        opt_state,
+                        annealing_parameter,
+                        stop_gradients,
+                    )
+                    epoch_losses.append(loss)
+                    t += 1
+                current_loss = np.mean(epoch_losses)
+                losses.append(current_loss)
+    
+                if epoch >= min_epochs:
+                    if min_loss == np.inf:
+                        min_loss = current_loss
+                        stop_early = False
+    
+                    relative_improvement = (min_loss - current_loss) / np.abs(min_loss)
+                    min_loss = min(min_loss, current_loss)
+    
+                    if relative_improvement < tolerance:
+                        early_stop_counter += 1
+                    else:
+                        early_stop_counter = 0
+                    if early_stop_counter >= patience:
+                        stop_early = True
+    
+                if stop_early:
+                    self.logger.info(
+                        "Relative improvement of "
+                        f"{relative_improvement:0.4g} < {tolerance:0.4g} "
+                        f"for {patience} step(s) in a row, stopping early."
+                    )
+                    break
+    
+                epoch_time = time.time() - start_time
+                pbar.set_postfix({"Loss": losses[-1]})
+        except KeyboardInterrupt:
+            self.logger.info("Interrupted learning. Exiting safely...")
+            
 
         return losses, opt_state
 
@@ -940,8 +929,7 @@ class scDEF(object):
         gene_budget_params = self.var_params[1]
         fscale_params = self.var_params[2]
         z_params = self.var_params[3]
-        w_shapes = self.var_params[4]
-        w_rates = self.var_params[5]
+        w_params = self.var_params[4]
 
         self.pmeans = {
             "cell_scale": np.array(
@@ -959,12 +947,8 @@ class scDEF(object):
             self.pmeans[f"{self.layer_names[idx]}z"] = np.array(
                 np.exp(z_params[0][:, start:end]) / np.exp(z_params[1][:, start:end])
             )
-            if idx == 0:
-                end_j = self.n_genes
-            else:
-                end_j = self.layer_sizes[idx - 1]
-            _w_shape = w_shapes[start:end, :end_j]
-            _w_rate = w_rates[start:end, :end_j]
+            _w_shape = self.var_params[4 + idx][0]
+            _w_rate = self.var_params[4 + idx][1]
             self.pmeans[f"{self.layer_names[idx]}W"] = np.array(
                 np.exp(_w_shape) / np.exp(_w_rate)
             )
@@ -974,8 +958,7 @@ class scDEF(object):
         gene_budget_params = self.var_params[1]
         fscale_params = self.var_params[2]
         z_params = self.var_params[3]
-        w_shapes = self.var_params[4]
-        w_rates = self.var_params[5]
+        w_params = self.var_params[4]
 
         self.pvars = {
             "cell_scale": np.array(
@@ -994,16 +977,12 @@ class scDEF(object):
                 np.exp(z_params[0][:, start:end])
                 / np.exp(z_params[1][:, start:end]) ** 2
             )
-            if idx == 0:
-                end_j = self.n_genes
-            else:
-                end_j = self.layer_sizes[idx - 1]
-            _w_shape = w_shapes[start:end, :end_j]
-            _w_rate = w_rates[start:end, :end_j]
+            _w_shape = self.var_params[4 + idx][0]
+            _w_rate = self.var_params[4 + idx][1]
             self.pvars[f"{self.layer_names[idx]}W"] = np.array(
                 np.exp(_w_shape) / np.exp(_w_rate) ** 2
             )
-
+            
     def filter_factors(
         self,
         thres: Optional[float] = None,
@@ -1535,6 +1514,9 @@ class scDEF(object):
         show_label: Optional[bool] = True,
         gene_score: Optional[str] = None,
         gene_cmap: Optional[str] = "viridis",
+        shell: Optional[bool] = False,
+        r: Optional[float] = 2.,
+        r_decay: Optional[float] = 0.8,
         **fontsize_kwargs,
     ):
         """Make Graphviz-formatted scDEF graph.
@@ -1548,7 +1530,7 @@ class scDEF(object):
             enrichments: enrichment results from gseapy to include in the node labels
             top_genes: number of genes from each signature to be shown in the node labels
             show_batch_counts: whether to show the number of cells from each batch that attach to each factor
-            filled: key from self.adata.obs to use to fill the nodes with
+            filled: key from self.adata.obs to use to fill the nodes with, or dictionary of factor scores
             wedged: key from self.adata.obs to use to wedge the nodes with
             color_edges: whether to color the graph edges according to the upper factors
             show_confidences: whether to show the confidence score for each signature
@@ -1570,7 +1552,7 @@ class scDEF(object):
         elif len(top_genes) != self.n_layers:
             raise IndexError("top_genes list must be of size scDEF.n_layers")
 
-        gene_cmap = matplotlib.colormaps["viridis"]
+        gene_cmap = matplotlib.colormaps[gene_cmap]
         gene_scores = dict()
         if gene_score is not None:
             if gene_score not in self.adata.var_names:
@@ -1589,8 +1571,9 @@ class scDEF(object):
             elif filled == "factor":
                 style = "filled"
             else:
-                if filled not in self.adata.obs:
-                    raise ValueError("filled must be factor or any `obs` in self.adata")
+                if isinstance(filled, str):
+                    if filled not in self.adata.obs:
+                        raise ValueError("filled must be factor or any `obs` in self.adata")
                 else:
                     style = "filled"
 
@@ -1654,7 +1637,12 @@ class scDEF(object):
 
         g = Graph()
         ordering = "out"
-
+        if shell:
+            g.engine = 'neato'
+        else:
+            g.engine = 'dot'
+        # g.node('root', style = 'invis')
+        angle_dict = dict()
         for layer_idx in range(self.n_layers):
             layer_name = self.layer_names[layer_idx]
             if show_all:
@@ -1680,7 +1668,7 @@ class scDEF(object):
                 )
 
             factor_order = layer_factor_orders[layer_idx]
-            for factor_idx in factor_order:
+            for ii, factor_idx in enumerate(factor_order):
                 factor_idx = int(factor_idx)
                 alpha = "FF"
                 color = None
@@ -1715,7 +1703,7 @@ class scDEF(object):
                         # Color by gene score
                         rgba = gene_cmap(gene_scores[factor_name])
                         fillcolor = matplotlib.colors.rgb2hex(rgba)
-                    elif filled is not None:
+                    elif isinstance(filled, str):
                         # cells attached to this factor
                         original_factor_index = self.factor_lists[layer_idx][factor_idx]
                         if len(cells) > 0:
@@ -1734,7 +1722,12 @@ class scDEF(object):
                                 (0, 0, 0, alpha), keep_alpha=True
                             )[-2:].upper()
                             fillcolor = self.adata.uns[f"{filled}_colors"][obs_idx]
+                    elif isinstance(filled, dict):
+                        # Color by dictionary of signature values with gene_cmap
+                        rgba = gene_cmap(filled[factor_name])
+                        fillcolor = matplotlib.colors.rgb2hex(rgba)
                     fillcolor = fillcolor + alpha
+                    color = fillcolor + alpha
                 elif style == "wedged":
                     # cells attached to this factor
                     original_factor_index = self.factor_lists[layer_idx][factor_idx]
@@ -1804,7 +1797,7 @@ class scDEF(object):
                             )
                             label += f"<br/><br/>({confidence_score:.3f})"
 
-                elif filled is not None and filled != "factor":
+                elif isinstance(filled, str) and filled != "factor":
                     label += "<br/><br/>" + ""
 
                 label = "<" + label + ">"
@@ -1838,18 +1831,44 @@ class scDEF(object):
                 if not show_label:
                     label = ""
 
-                g.node(
-                    factor_name,
-                    label=label,
-                    fillcolor=fillcolor,
-                    color=color,
-                    ordering=ordering,
-                    style=style,
-                    width=str(size),
-                    height=str(size),
-                    fixedsize=fixedsize,
-                )
+                if shell:
+                    radius = r*(layer_idx+1)**r_decay # distance from root
+                    if layer_idx == 0:
+                        angle_dict[factor_name] = ii * 2*np.pi/len(self.factor_lists[0])
+                    else:
+                        children_angles = [angle_dict[f] for f in hierarchy[factor_name]]
+                        angle_dict[factor_name] = np.mean(children_angles)
+                    x = radius*np.cos(angle_dict[factor_name])
+                    y = radius*np.sin(angle_dict[factor_name])
+                    g.node(
+                        factor_name,
+                        label=label,
+                        fillcolor=fillcolor,
+                        color=color,
+                        ordering=ordering,
+                        style=style,
+                        width=str(size),
+                        height=str(size),
+                        fixedsize=fixedsize,
+                        pos=f"{x},{y}!",
+                        pin='true',
+                    )
+                else:
+                    g.node(
+                        factor_name,
+                        label=label,
+                        fillcolor=fillcolor,
+                        color=color,
+                        ordering=ordering,
+                        style=style,
+                        width=str(size),
+                        height=str(size),
+                        fixedsize=fixedsize,
+                    )
 
+
+                if not color_edges:
+                    color = None
                 if layer_idx > 0:
                     if hierarchy is not None:
                         if factor_name in hierarchy:
@@ -1906,11 +1925,10 @@ class scDEF(object):
                                 penwidth=str(4 * normalized_weight),
                                 color=color,
                             )
-
         self.graph = g
 
         self.logger.info(f"Updated scDEF graph")
-
+        
     def attach_factors_to_obs(self, obs_key):
         attachments = []
         for layer, layer_name in enumerate(self.layer_names):
