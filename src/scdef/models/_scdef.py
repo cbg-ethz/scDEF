@@ -5,6 +5,7 @@ from jax import jit, vmap
 from jax.example_libraries import optimizers
 from jax import random, value_and_grad
 import jax.numpy as jnp
+from jax.scipy.stats import poisson
 import jax
 
 import matplotlib
@@ -17,6 +18,7 @@ from tqdm import tqdm
 import time
 
 import logging
+
 logging.basicConfig()
 
 import scipy
@@ -30,6 +32,7 @@ from scipy.cluster.hierarchy import ward, leaves_list
 from scipy.spatial.distance import pdist
 
 from typing import Optional, Union, Sequence, Mapping, Literal
+
 
 class scDEF(object):
     """Single-cell Deep Exponential Families model.
@@ -335,7 +338,6 @@ class scDEF(object):
         self.batch_lib_ratio = jnp.array(self.batch_lib_ratio)
         self.gene_ratio = jnp.array(self.gene_ratio)
 
-
     def init_var_params(self, minval=0.5, maxval=1.5):
         rngs = random.split(random.PRNGKey(self.seed), 6 + 2 * 2 * self.n_layers)
 
@@ -345,8 +347,8 @@ class scDEF(object):
                     jnp.log(
                         random.uniform(
                             rngs[0],
-                            minval=1.,
-                            maxval=1.,
+                            minval=1.0,
+                            maxval=1.0,
                             shape=[self.n_cells, 1],
                         )
                         * 10.0
@@ -367,8 +369,8 @@ class scDEF(object):
                     jnp.log(
                         random.uniform(
                             rngs[2],
-                            minval=1.,
-                            maxval=1.,
+                            minval=1.0,
+                            maxval=1.0,
                             shape=[self.n_batches, self.n_genes],
                         )
                         * 10.0
@@ -392,8 +394,8 @@ class scDEF(object):
                     jnp.log(
                         random.uniform(
                             rngs[4],
-                            minval=1.,
-                            maxval=1.,
+                            minval=1.0,
+                            maxval=1.0,
                             shape=[self.layer_sizes[0], 1],
                         )
                         * self.brd
@@ -422,8 +424,8 @@ class scDEF(object):
             z_shape = jnp.log(
                 random.uniform(
                     rngs[rng_cnt],
-                    minval=1.,
-                    maxval=1.,
+                    minval=1.0,
+                    maxval=1.0,
                     shape=[self.n_cells, self.layer_sizes[layer_idx]],
                 )
                 * self.layer_shapes[layer_idx]
@@ -456,8 +458,8 @@ class scDEF(object):
             w_shape = jnp.log(
                 random.uniform(
                     rngs[rng_cnt],
-                    minval=1.,
-                    maxval=1.,
+                    minval=1.0,
+                    maxval=1.0,
                     shape=[in_layer, out_layer],
                 )
                 * jnp.clip(self.w_priors[layer_idx][0], 1e-2, 1e2)
@@ -763,22 +765,22 @@ class scDEF(object):
                     t += 1
                 current_loss = np.mean(epoch_losses)
                 losses.append(current_loss)
-    
+
                 if epoch >= min_epochs:
                     if min_loss == np.inf:
                         min_loss = current_loss
                         stop_early = False
-    
+
                     relative_improvement = (min_loss - current_loss) / np.abs(min_loss)
                     min_loss = min(min_loss, current_loss)
-    
+
                     if relative_improvement < tolerance:
                         early_stop_counter += 1
                     else:
                         early_stop_counter = 0
                     if early_stop_counter >= patience:
                         stop_early = True
-    
+
                 if stop_early:
                     self.logger.info(
                         "Relative improvement of "
@@ -786,12 +788,11 @@ class scDEF(object):
                         f"for {patience} step(s) in a row, stopping early."
                     )
                     break
-    
+
                 epoch_time = time.time() - start_time
                 pbar.set_postfix({"Loss": losses[-1]})
         except KeyboardInterrupt:
             self.logger.info("Interrupted learning. Exiting safely...")
-            
 
         return losses, opt_state
 
@@ -803,6 +804,9 @@ class scDEF(object):
         num_samples: Optional[int] = 10,
         batch_size: Optional[int] = None,
         layerwise: Optional[bool] = False,
+        min_epochs: Optional[int] = 100,
+        tolerance: Optional[float] = 1e-5,
+        patience: Optional[int] = 50,
         **kwargs,
     ):
         """Fit a variational approximation to the posterior over scDEF parameters.
@@ -821,7 +825,9 @@ class scDEF(object):
                 first learn only Layer 0 and 1, and then 2, and then 3, and so on. The size of
                 the n_epoch or lr schedules will be ignored, only the first value will be used
                 and each step will use that n_epoch value.
-
+            min_epochs: minimum number of epochs for early stopping
+            tolerance: maximum relative change in loss for early stopping
+            patience: number of epochs for which tolerated loss changes must hold for early stopping
         """
         n_steps = 1
         if layerwise:
@@ -914,6 +920,9 @@ class scDEF(object):
                 batch_size=batch_size,
                 annealing_parameter=anneal_param,
                 stop_gradients=stop_gradients,
+                min_epochs=min_epochs,
+                tolerance=tolerance,
+                patience=patience,
                 **kwargs,
             )
             params = get_params(opt_state)
@@ -982,7 +991,7 @@ class scDEF(object):
             self.pvars[f"{self.layer_names[idx]}W"] = np.array(
                 np.exp(_w_shape) / np.exp(_w_rate) ** 2
             )
-            
+
     def filter_factors(
         self,
         thres: Optional[float] = None,
@@ -1515,7 +1524,7 @@ class scDEF(object):
         gene_score: Optional[str] = None,
         gene_cmap: Optional[str] = "viridis",
         shell: Optional[bool] = False,
-        r: Optional[float] = 2.,
+        r: Optional[float] = 2.0,
         r_decay: Optional[float] = 0.8,
         **fontsize_kwargs,
     ):
@@ -1573,7 +1582,9 @@ class scDEF(object):
             else:
                 if isinstance(filled, str):
                     if filled not in self.adata.obs:
-                        raise ValueError("filled must be factor or any `obs` in self.adata")
+                        raise ValueError(
+                            "filled must be factor or any `obs` in self.adata"
+                        )
                 else:
                     style = "filled"
 
@@ -1638,9 +1649,9 @@ class scDEF(object):
         g = Graph()
         ordering = "out"
         if shell:
-            g.engine = 'neato'
+            g.engine = "neato"
         else:
-            g.engine = 'dot'
+            g.engine = "dot"
         # g.node('root', style = 'invis')
         angle_dict = dict()
         for layer_idx in range(self.n_layers):
@@ -1832,14 +1843,18 @@ class scDEF(object):
                     label = ""
 
                 if shell:
-                    radius = r*(layer_idx+1)**r_decay # distance from root
+                    radius = r * (layer_idx + 1) ** r_decay  # distance from root
                     if layer_idx == 0:
-                        angle_dict[factor_name] = ii * 2*np.pi/len(self.factor_lists[0])
+                        angle_dict[factor_name] = (
+                            ii * 2 * np.pi / len(self.factor_lists[0])
+                        )
                     else:
-                        children_angles = [angle_dict[f] for f in hierarchy[factor_name]]
+                        children_angles = [
+                            angle_dict[f] for f in hierarchy[factor_name]
+                        ]
                         angle_dict[factor_name] = np.mean(children_angles)
-                    x = radius*np.cos(angle_dict[factor_name])
-                    y = radius*np.sin(angle_dict[factor_name])
+                    x = radius * np.cos(angle_dict[factor_name])
+                    y = radius * np.sin(angle_dict[factor_name])
                     g.node(
                         factor_name,
                         label=label,
@@ -1851,7 +1866,7 @@ class scDEF(object):
                         height=str(size),
                         fixedsize=fixedsize,
                         pos=f"{x},{y}!",
-                        pin='true',
+                        pin="true",
                     )
                 else:
                     g.node(
@@ -1865,7 +1880,6 @@ class scDEF(object):
                         height=str(size),
                         fixedsize=fixedsize,
                     )
-
 
                 if not color_edges:
                     color = None
@@ -1928,7 +1942,7 @@ class scDEF(object):
         self.graph = g
 
         self.logger.info(f"Updated scDEF graph")
-        
+
     def attach_factors_to_obs(self, obs_key):
         attachments = []
         for layer, layer_name in enumerate(self.layer_names):
