@@ -36,11 +36,13 @@ def run_multiple_resolutions(
     scores_dict = dict()
     sizes_dict = dict()
     latents_results = []
+    adatas = []
     for i, res in enumerate(resolution_sweep):
         outs = method(ad, resolution=res, batch_key=batch_key, **kwargs)
         latents = outs[0]
         latents_results.append(latents)
         scores = outs[1]
+        adatas.append(outs[2])
         assignments = outs[-1]
         signatures = outs[-2]
         prefix = layer_prefix * i
@@ -69,6 +71,7 @@ def run_multiple_resolutions(
         "scores": scores_dict,
         "sizes": sizes_dict,
         "simplified_hierarchy": simplified,
+        "adata": adatas[0],
     }
     return outs
 
@@ -799,6 +802,7 @@ def run_nsbm(
         "scores": scores_dict,
         "sizes": sizes_dict,
         "simplified_hierarchy": simplified,
+        "adata": ad,
     }
     return outs
 
