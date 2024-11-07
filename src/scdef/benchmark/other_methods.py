@@ -711,6 +711,7 @@ def run_unintegrated_hclust(
         "scores": scores_dict,
         "sizes": sizes_dict,
         "simplified_hierarchy": simplified,
+        "adata": ad,
     }
     return outs
 
@@ -718,6 +719,7 @@ def run_unintegrated_hclust(
 def run_nsbm(
     ad,
     layer_prefix="h",
+    batch_key=None,
     **kwargs,
 ):
     try:
@@ -728,7 +730,11 @@ def run_nsbm(
     # PCA
     sc.tl.pca(ad)
     # Compute neighbors
-    sc.pp.neighbors(ad)
+    if batch_key is not None:
+        sc.external.pp.harmony_integrate(ad, batch_key)
+        sc.pp.neighbors(ad, use_rep="X_pca_harmony")
+    else:
+        sc.pp.neighbors(ad)
 
     scs.inference.fit_model(ad, **kwargs)
 
@@ -836,9 +842,12 @@ def run_methods(adata, methods_list, res_sweeps=None, batch_key=None, **kwargs):
         res_sweep = OTHERS_RES_SWEEPS[method]
         if res_sweeps is not None:
             res_sweep = res_sweeps[method]
-        method_outs = run_multiple_resolutions(
-            func, adata, res_sweep, batch_key=batch_key, **kwargs
-        )
+        if method != "nSBM":
+            method_outs = run_multiple_resolutions(
+                func, adata, res_sweep, batch_key=batch_key, **kwargs
+            )
+        else:
+            method_outs = run_nsbm(adata, batch_key=batch_key, **kwargs)
 
         methods_outs[method] = method_outs
 

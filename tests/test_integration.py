@@ -187,6 +187,10 @@ def test_scdef():
         res_sweeps=res_sweeps,
         batch_key="batches",
     )
+
+    for k in methods_list:
+        assert "adata" in methods_results[k].keys()
+
     methods_results["scDEF"] = scd
     df = scdef.benchmark.evaluate.evaluate_methods(
         adata,
