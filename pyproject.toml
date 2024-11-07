@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "scdef"
-version = "0.1.0"
+version = "0.1.1"
 description = "Extract hierarchical signatures of cell state from single-cell data."
 license = "MIT"
 authors = ["pedrofale <pedro.miguel.ferreira.pf@gmail.com>"]
@@ -29,9 +29,6 @@ decoupler = "^1.7.0"
 optional = true
 
 [tool.poetry.group.extras.dependencies]
-leidenalg = '*'
-harmonypy = '*'
-scanorama = '*'
 scikit-learn = '*'
 
 [tool.poetry.dev-dependencies]
