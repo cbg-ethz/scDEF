@@ -15,6 +15,7 @@ def run_multiple_resolutions(
     ad: AnnData,
     resolution_sweep: Sequence[float],
     layer_prefix: Optional[str] = "h",
+    batch_key: Optional[str] = None,
     **kwargs,
 ) -> Mapping:
     """Run a clustering and gene signature learning method at multiple resolutions.
@@ -36,7 +37,7 @@ def run_multiple_resolutions(
     sizes_dict = dict()
     latents_results = []
     for i, res in enumerate(resolution_sweep):
-        outs = method(ad, resolution=res, **kwargs)
+        outs = method(ad, resolution=res, batch_key=batch_key, **kwargs)
         latents = outs[0]
         latents_results.append(latents)
         scores = outs[1]
@@ -78,6 +79,7 @@ def run_unintegrated(
     sorted_scores=False,
     return_signatures=True,
     return_cluster_assignments=True,
+    batch_key=None,
     **kwargs,
 ):
     try:
@@ -127,6 +129,7 @@ def run_nmf(
     resolution=10.0,
     return_signatures=True,
     return_cluster_assignments=True,
+    batch_key=None,
     **kwargs,
 ):
     try:
@@ -145,7 +148,7 @@ def run_nmf(
     ).astype(int)
     for k in k_range:
         # Run NMF
-        nmf = NMF(n_components=k, max_iter=5000)
+        nmf = NMF(n_components=k, **kwargs)
         W = nmf.fit_transform(X)
         V = nmf.components_  # K x P
         nmfs.append([W, V])
@@ -194,6 +197,7 @@ def run_schpf(
     resolution=10.0,
     return_signatures=True,
     return_cluster_assignments=True,
+    batch_key=None,
     **kwargs,
 ):
     try:
@@ -213,7 +217,7 @@ def run_schpf(
         np.arange(max(resolution - k_extra, 2), resolution + k_extra + 1)
     ).astype(int)
     for k in k_range:
-        sch = schpf.scHPF(k)
+        sch = schpf.scHPF(k, **kwargs)
         sch.fit(X)
         models.append(sch)
         losses.append(sch.loss[-1])
@@ -241,6 +245,7 @@ def run_muvi(
     resolution=10.0,
     return_signatures=True,
     return_cluster_assignments=True,
+    batch_key=None,
     **kwargs,
 ):
     try:
@@ -251,7 +256,7 @@ def run_muvi(
     ad = ad.copy()
 
     model = muvi.tl.from_adata(ad, prior_mask_key=None, n_factors=int(resolution))
-    model.fit(seed=0)
+    model.fit(**kwargs)
     muvi.tl.filter_factors(model, r2_thresh=0.95)
 
     # Obtain clustering
@@ -274,7 +279,7 @@ def run_muvi(
         )
     gene_scores = np.array(gene_scores)
 
-    latent = factor_adata.obsm[model_cache.use_rep]
+    latent = factor_adata.X
 
     outs = [latent, gene_scores, factor_adata]
     if return_signatures:
@@ -307,7 +312,7 @@ def run_harmony(
     # PCA
     sc.tl.pca(ad)
     # Harmony
-    sc.external.pp.harmony_integrate(ad, batch_key)
+    sc.external.pp.harmony_integrate(ad, batch_key, **kwargs)
     latent = ad.obsm["X_pca_harmony"]
     # Compute neighbors and do Leiden clustering
     sc.pp.neighbors(ad, use_rep="X_pca_harmony")
@@ -355,7 +360,7 @@ def run_scanorama(
     # PCA
     sc.tl.pca(ad)
     # scanorama
-    sc.external.pp.scanorama_integrate(ad, batch_key)
+    sc.external.pp.scanorama_integrate(ad, batch_key, **kwargs)
     latent = ad.obsm["X_scanorama"]
     # Compute neighbors and do Leiden clustering
     sc.pp.neighbors(ad, use_rep="X_scanorama")
@@ -409,7 +414,7 @@ def run_scvi(
         batch_key=batch_key,
     )
     model = scvi.model.SCVI(ad)
-    model.train()
+    model.train(**kwargs)
     latent = model.get_latent_representation()
     ad.obsm["X_scVI"] = latent
     # Cluster
@@ -468,48 +473,13 @@ def run_ldvae(
     k_range = (np.array(k_range) * resolution).astype(int)
     for k in k_range:
         model = scvi.model.LinearSCVI(ad, n_latent=k)
-        model.train()
+        model.train(**kwargs)
         models.append(model)
         losses.append(model.history["elbo_train"].values[-1][0])
     best = models[np.argmin(losses)]
     latent = best.get_latent_representation()
     loadings = best.get_loadings().values.T  # factor by gene
     return latent, loadings, ad
-
-
-OTHERS_FUNCS = dict(
-    zip(
-        OTHERS_LABELS,
-        [
-            run_unintegrated,
-            run_scvi,
-            run_harmony,
-            run_scanorama,
-            run_ldvae,
-            run_nmf,
-            run_schpf,
-            run_muvi,
-        ],
-    )
-)
-
-
-# TODO: parallelize across methods
-def run_methods(adata, methods_list, res_sweeps=None, **kwargs):
-    methods_outs = dict()
-    for method in methods_list:
-        logging.info(f"Running {method}...")
-
-        # Run method
-        func = OTHERS_FUNCS[method]
-        res_sweep = OTHERS_RES_SWEEPS[method]
-        if res_sweeps is not None:
-            res_sweep = res_sweeps[method]
-        method_outs = run_multiple_resolutions(func, adata, res_sweep, **kwargs)
-
-        methods_outs[method] = method_outs
-
-    return methods_outs
 
 
 def run_scdef_hclust(
@@ -757,7 +727,7 @@ def run_nsbm(
     # Compute neighbors
     sc.pp.neighbors(ad)
 
-    scs.inference.fit_model(ad, n_init=100)
+    scs.inference.fit_model(ad, **kwargs)
 
     n_levels = len(ad.obs.filter(like="nsbm_level").columns)
     # Get good lowest resolution level for fairness
@@ -831,3 +801,41 @@ def run_nsbm(
         "simplified_hierarchy": simplified,
     }
     return outs
+
+
+OTHERS_FUNCS = dict(
+    zip(
+        OTHERS_LABELS,
+        [
+            run_unintegrated,
+            run_nsbm,
+            run_scvi,
+            run_harmony,
+            run_scanorama,
+            run_ldvae,
+            run_nmf,
+            run_schpf,
+            run_muvi,
+        ],
+    )
+)
+
+
+# TODO: parallelize across methods
+def run_methods(adata, methods_list, res_sweeps=None, batch_key=None, **kwargs):
+    methods_outs = dict()
+    for method in methods_list:
+        logging.info(f"Running {method}...")
+
+        # Run method
+        func = OTHERS_FUNCS[method]
+        res_sweep = OTHERS_RES_SWEEPS[method]
+        if res_sweeps is not None:
+            res_sweep = res_sweeps[method]
+        method_outs = run_multiple_resolutions(
+            func, adata, res_sweep, batch_key=batch_key, **kwargs
+        )
+
+        methods_outs[method] = method_outs
+
+    return methods_outs

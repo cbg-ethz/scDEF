@@ -6,8 +6,6 @@ import pandas as pd
 
 
 def test_scdef():
-    n_epochs = 10
-
     # Ground truth
     true_hierarchy = {
         "T": ["CD8 T", "Memory CD4 T", "Naive CD4 T"],
@@ -92,7 +90,6 @@ def test_scdef():
     scd = scdef.scDEF(
         raw_adata,
         layer_sizes=[60, 30, 15],
-        layer_shapes=1.0,
         seed=1,
         batch_key="Experiment",
     )
@@ -100,14 +97,14 @@ def test_scdef():
 
     scd.learn(n_epoch=3)
 
-    scd.filter_factors(iqr_mult=0.0, min_cells=0)  # make sure we keep factors
+    scd.filter_factors(thres=0.0, min_cells=0)  # make sure we keep factors
 
     scd.logger.info(scd.factor_lists)
 
     assert len(scd.elbos) == 1
-    assert "factor" in scd.adata.obs.columns
-    assert "hfactor" in scd.adata.obs.columns
-    assert "hhfactor" in scd.adata.obs.columns
+    assert "L0" in scd.adata.obs.columns
+    assert "L1" in scd.adata.obs.columns
+    assert "L2" in scd.adata.obs.columns
 
     scd.plot_multilevel_paga(figsize=(16, 4), reuse_pos=True, frameon=False, show=False)
 
@@ -156,7 +153,7 @@ def test_scdef():
     scd.plot_factors_bars(["celltypes", "celltypes_coarse"], show=False)
 
     # Evaluate methods
-    methods_list = ["Leiden", "Harmony", "NMF"]
+    methods_list = ["PCA", "Harmony", "NMF"]
     metrics_list = [
         "Cell Type ARI",
         "Cell Type ASW",
@@ -167,6 +164,7 @@ def test_scdef():
         "Signature sparsity",
         "Signature accuracy",
     ]
+
     res_sweeps = dict(
         zip(
             scdef.benchmark.OTHERS_LABELS,
@@ -175,6 +173,8 @@ def test_scdef():
                 [1.0, 0.6],
                 [1.0, 0.6],
                 [1.0, 0.6],
+                [1.0, 0.6],
+                [10, 5],
                 [10, 5],
                 [10, 5],
                 [10, 5],

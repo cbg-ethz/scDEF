@@ -110,14 +110,14 @@ def evaluate_methods(
             if isinstance(method_outs, scDEF):
                 score = adjusted_rand_score(
                     method_outs.adata.obs[celltype_obs_key[0]],
-                    method_outs.adata.obs["factor"],
+                    method_outs.adata.obs["L0"],
                 )
                 # Do for all layers too
                 for j, obs in enumerate(celltype_obs_key):
                     for i in range(scdef_max_layers):
                         lscore = np.nan
                         if method_outs.n_layers > i:
-                            layer_name = f"{method_outs.layer_names[i]}factor"
+                            layer_name = f"{method_outs.layer_names[i]}"
                             lscore = adjusted_rand_score(
                                 method_outs.adata.obs[obs],
                                 method_outs.adata.obs[layer_name],
@@ -133,7 +133,7 @@ def evaluate_methods(
         if "Cell Type ASW" in metrics_list:
             if isinstance(method_outs, scDEF):
                 score = silhouette_score(
-                    method_outs.adata.obsm["X_factors"],
+                    method_outs.adata.obsm["X_L0"],
                     method_outs.adata.obs[celltype_obs_key[0]],
                 )
             else:
@@ -152,14 +152,14 @@ def evaluate_methods(
                     if isinstance(method_outs, scDEF):
                         score = adjusted_rand_score(
                             method_outs.adata.obs[batch_obs_key],
-                            method_outs.adata.obs["factor"],
+                            method_outs.adata.obs["L0"],
                         )
 
                         # Do for all layers too
                         for i in range(scdef_max_layers):
                             lscore = np.nan
                             if method_outs.n_layers > i:
-                                layer_name = f"{method_outs.layer_names[i]}factor"
+                                layer_name = f"{method_outs.layer_names[i]}"
                                 lscore = adjusted_rand_score(
                                     method_outs.adata.obs[batch_obs_key],
                                     method_outs.adata.obs[layer_name],
@@ -178,7 +178,7 @@ def evaluate_methods(
                 else:
                     if isinstance(method_outs, scDEF):
                         score = silhouette_score(
-                            method_outs.adata.obsm["X_factors"],
+                            method_outs.adata.obsm["X_L0"],
                             method_outs.adata.obs[batch_obs_key],
                         )
                     else:

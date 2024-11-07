@@ -35,6 +35,7 @@ from typing import Optional, Union, Sequence, Mapping, Literal
 
 import tensorflow_probability.substrates.jax.distributions as tfd
 
+
 class scDEF(object):
     """Single-cell Deep Exponential Families model.
 
@@ -64,14 +65,14 @@ class scDEF(object):
         lightness_mult: multiplier to define lightness of color palette at each scDEF layer
     """
 
-    def make_corrected_data(self, layer_name='scdef_corrected'):
+    def make_corrected_data(self, layer_name="scdef_corrected"):
         """
         Adds the low-rank approximation to the UMI counts from the lowest scDEF layer
         to the internal AnnData object, accessible via .adata.layers[`layer_name`]
         """
         scdef_layer = self.layer_names[0]
-        Z = self.pmeans[f'{scdef_layer}z'][:,self.factor_lists[0]] # nxk
-        W = self.pmeans[f"{scdef_layer}W"][self.factor_lists[0]] # kxg
+        Z = self.pmeans[f"{scdef_layer}z"][:, self.factor_lists[0]]  # nxk
+        W = self.pmeans[f"{scdef_layer}W"][self.factor_lists[0]]  # kxg
         self.adata.layers[layer_name] = np.array(Z.dot(W))
 
     def __init__(
@@ -79,7 +80,7 @@ class scDEF(object):
         adata: AnnData,
         counts_layer: Optional[str] = None,
         layer_sizes: Optional[list] = [100, 60, 30, 10, 1],
-        layer_shapes= [1., 1., 1., 1., 1.],
+        layer_shapes=[1.0, 1.0, 1.0, 1.0, 1.0],
         batch_key: Optional[str] = None,
         seed: Optional[int] = 1,
         logginglevel: Optional[int] = logging.INFO,
@@ -226,7 +227,11 @@ class scDEF(object):
         out += "\n" + "Contains " + self.adata.__str__()
         return out
 
-    def make_layercolors(self, layer_cpal: Optional[str] = "tab10", lightness_mult: Optional[float] = 0.15,):
+    def make_layercolors(
+        self,
+        layer_cpal: Optional[str] = "tab10",
+        lightness_mult: Optional[float] = 0.15,
+    ):
         if isinstance(layer_cpal, str):
             layer_cpal = [layer_cpal] * self.n_layers
         elif isinstance(layer_cpal, list):
@@ -234,14 +239,14 @@ class scDEF(object):
                 raise ValueError("layer_cpal list must be of size scDEF.n_layers")
         else:
             raise TypeError("layer_cpal must be either a cmap str or a list of strs")
-        
+
         layer_sizes = []
         for i in range(self.n_layers):
             layer_size = len(self.factor_lists[i])
             if layer_size > 10:
                 layer_cpal[i] = "tab20"
             elif layer_size > 20:
-                layer_cpal[i] = "hsl"                
+                layer_cpal[i] = "hsl"
             layer_sizes.append(layer_size)
 
         self.layer_colorpalettes = [
@@ -330,8 +335,8 @@ class scDEF(object):
     def init_var_params(self, minval=0.5, maxval=1.5, nmf_init=False):
         rngs = random.split(random.PRNGKey(self.seed), 6 + 2 * 2 * self.n_layers)
 
-        m = 1./jnp.maximum(self.batch_lib_ratio, 1e-1)
-        v = 1#.*(m)**2 / self.cell_scale_shape
+        m = 1.0 / jnp.maximum(self.batch_lib_ratio, 1e-1)
+        v = 1  # .*(m)**2 / self.cell_scale_shape
         self.local_params = [
             jnp.array(
                 (
@@ -343,31 +348,39 @@ class scDEF(object):
                             shape=[self.n_cells, 1],
                         )
                         * 1.0
-                    ) + jnp.log(m**2 / jnp.sqrt(m**2 + v)),   # cell_scales
+                    )
+                    + jnp.log(m**2 / jnp.sqrt(m**2 + v)),  # cell_scales
                     jnp.log(
                         random.uniform(
                             rngs[1],
                             minval=1.0,
                             maxval=1.0,
                             shape=[self.n_cells, 1],
-                        ) * jnp.sqrt(jnp.log(1 + v/(m**2)))
+                        )
+                        * jnp.sqrt(jnp.log(1 + v / (m**2)))
                     )
-                    * 1.#jnp.clip(10.0 * self.batch_lib_ratio, 1e-8, 1e2),
+                    * 1.0,  # jnp.clip(10.0 * self.batch_lib_ratio, 1e-8, 1e2),
                 )
             ),
         ]
         # m = 1.
         # v = .1
-        gene_sizes = 1./np.sum(self.X, axis=0)
-        standardized = gene_sizes/np.std(gene_sizes)
+        gene_sizes = 1.0 / np.sum(self.X, axis=0)
+        standardized = gene_sizes / np.std(gene_sizes)
         centered = standardized - np.mean(standardized)
         recentered = centered + 1
-        m = recentered[None,:]
-        m = 1./ jnp.maximum(self.gene_ratio, 1e-1)
-        v = 1.#e-1 #/ (self.gene_ratio)
+        m = recentered[None, :]
+        m = 1.0 / jnp.maximum(self.gene_ratio, 1e-1)
+        v = 1.0  # e-1 #/ (self.gene_ratio)
 
-        m_brd = jnp.clip(tfd.Gamma(self.brd, self.brd / (self.brd_mean/1.)).sample(seed=rngs[2], sample_shape=[self.layer_sizes[0],1]), 1e-1, 1e1)
-        v_brd = .1#e-1 #/ (self.gene_ratio)
+        m_brd = jnp.clip(
+            tfd.Gamma(self.brd, self.brd / (self.brd_mean / 1.0)).sample(
+                seed=rngs[2], sample_shape=[self.layer_sizes[0], 1]
+            ),
+            1e-1,
+            1e1,
+        )
+        v_brd = 0.1  # e-1 #/ (self.gene_ratio)
 
         self.global_params = [
             jnp.array(
@@ -380,15 +393,18 @@ class scDEF(object):
                             shape=[self.n_batches, self.n_genes],
                         )
                         * 1.0
-                    ) + jnp.log(m**2 / jnp.sqrt(m**2 + v)),  # gene_scales
+                    )
+                    + jnp.log(m**2 / jnp.sqrt(m**2 + v)),  # gene_scales
                     jnp.log(
                         random.uniform(
                             rngs[3],
-                            minval=1.,
-                            maxval=1.,
+                            minval=1.0,
+                            maxval=1.0,
                             shape=[self.n_batches, self.n_genes],
                         )
-                        * jnp.sqrt(jnp.log(1 + v/(m**2))) #jnp.clip(10.0 * self.gene_ratio, 1e-8, 1e2)
+                        * jnp.sqrt(
+                            jnp.log(1 + v / (m**2))
+                        )  # jnp.clip(10.0 * self.gene_ratio, 1e-8, 1e2)
                     ),
                 )
             ),
@@ -397,27 +413,27 @@ class scDEF(object):
                     jnp.log(
                         random.uniform(
                             rngs[4],
-                            minval=1.,
-                            maxval=1.,
+                            minval=1.0,
+                            maxval=1.0,
                             shape=[self.layer_sizes[0], 1],
-                        ) 
-                    ) + jnp.log(m_brd**2 / jnp.sqrt(m_brd**2 + v_brd)),
+                        )
+                    )
+                    + jnp.log(m_brd**2 / jnp.sqrt(m_brd**2 + v_brd)),
                     jnp.log(
                         random.uniform(
                             rngs[5],
-                            minval=1.,
-                            maxval=1.,
+                            minval=1.0,
+                            maxval=1.0,
                             shape=[self.layer_sizes[0], 1],
-                        ) * jnp.sqrt(jnp.log(1 + v_brd/(m_brd**2))) # * 1./self.brd
+                        )
+                        * jnp.sqrt(jnp.log(1 + v_brd / (m_brd**2)))  # * 1./self.brd
                     ),
                 )
-            )
+            ),
         ]
 
         if nmf_init:
-            self.logger.info(
-                    f"Initializing the factor weights with KL-NMF."
-                )
+            self.logger.info(f"Initializing the factor weights with KL-NMF.")
             init_z, init_w = self.get_nmf_init()
 
         z_shapes = []
@@ -428,13 +444,27 @@ class scDEF(object):
         ):  # we go from layer 0 (bottom) to layer L (top)
             # Init z
             if layer_idx == 0:
-                m = jnp.clip(tfd.Gamma(10., 10.).sample(seed=rngs[rng_cnt], sample_shape=[self.n_cells,self.layer_sizes[layer_idx]]), 1e-1, 1e1) #self.layer_shapes[layer_idx]/self.layer_rates[layer_idx]
-                v = 1. # this is important! #self.layer_shapes[layer_idx]/(self.layer_rates[layer_idx]**2)
+                m = jnp.clip(
+                    tfd.Gamma(10.0, 10.0).sample(
+                        seed=rngs[rng_cnt],
+                        sample_shape=[self.n_cells, self.layer_sizes[layer_idx]],
+                    ),
+                    1e-1,
+                    1e1,
+                )  # self.layer_shapes[layer_idx]/self.layer_rates[layer_idx]
+                v = 1.0  # this is important! #self.layer_shapes[layer_idx]/(self.layer_rates[layer_idx]**2)
             else:
-                m = jnp.clip(tfd.Gamma(10., 10.).sample(seed=rngs[rng_cnt], sample_shape=[self.n_cells,self.layer_sizes[layer_idx]]), 1e-1, 1e1)
-                v = 1. # this is important! #self.layer_shapes[layer_idx]/(self.layer_rates[layer_idx]**2)
+                m = jnp.clip(
+                    tfd.Gamma(10.0, 10.0).sample(
+                        seed=rngs[rng_cnt],
+                        sample_shape=[self.n_cells, self.layer_sizes[layer_idx]],
+                    ),
+                    1e-1,
+                    1e1,
+                )
+                v = 1.0  # this is important! #self.layer_shapes[layer_idx]/(self.layer_rates[layer_idx]**2)
                 # if nmf_init:
-                #     m = jnp.clip(init_z[layer_idx], 1e-1, 1e1)#jnp.maximum(init_z[layer_idx] - np.mean(init_z[layer_idx]) + 1., 1.)                
+                #     m = jnp.clip(init_z[layer_idx], 1e-1, 1e1)#jnp.maximum(init_z[layer_idx] - np.mean(init_z[layer_idx]) + 1., 1.)
             z_shape = jnp.log(
                 random.uniform(
                     rngs[rng_cnt],
@@ -442,7 +472,7 @@ class scDEF(object):
                     maxval=1.0,
                     shape=[self.n_cells, self.layer_sizes[layer_idx]],
                 )
-                * 1.#self.layer_shapes[layer_idx]
+                * 1.0  # self.layer_shapes[layer_idx]
             ) + jnp.log(m**2 / jnp.sqrt(m**2 + v))
             z_shapes.append(z_shape)
             rng_cnt += 1
@@ -453,7 +483,7 @@ class scDEF(object):
                     maxval=1.0,
                     shape=[self.n_cells, self.layer_sizes[layer_idx]],
                 )
-                * jnp.sqrt(jnp.log(1 + v/(m**2)))
+                * jnp.sqrt(jnp.log(1 + v / (m**2)))
             )
             z_rates.append(z_rate)
             rng_cnt += 1
@@ -465,7 +495,7 @@ class scDEF(object):
         # ):  # the w don't have a shared axis across all, so we can't vectorize
         #     # Init w
         #     layer_size = self.layer_sizes[layer_idx]
-            
+
         #     f_shape = jnp.log(
         #         random.uniform(
         #             rngs[rng_cnt],
@@ -474,7 +504,7 @@ class scDEF(object):
         #             shape=[layer_size, 1],
         #         )
         #     * 1.#jnp.clip(self.w_priors[layer_idx][0], 1e-2, 1e2)
-        #     ) 
+        #     )
         #     rng_cnt += 1
 
         #     f_rate = jnp.log(
@@ -484,9 +514,9 @@ class scDEF(object):
         #             maxval=1.,
         #             shape=[layer_size, 1],
         #         )
-        #         * 1. # jnp.clip(self.w_priors[layer_idx][1], 1e-2, 1e2) 
-        #     ) 
-        #     rng_cnt += 1      
+        #         * 1. # jnp.clip(self.w_priors[layer_idx][1], 1e-2, 1e2)
+        #     )
+        #     rng_cnt += 1
 
         #     self.local_params.append(jnp.array((f_shape, f_rate)))
 
@@ -499,14 +529,30 @@ class scDEF(object):
                 out_layer = self.n_genes
             else:
                 out_layer = self.layer_sizes[layer_idx - 1]
-            
+
             if layer_idx == 0 and self.use_brd:
-                fscale_samples = lognormal_sample(rngs[rng_cnt], self.global_params[1][0], jnp.exp(self.global_params[1][1]))
-                m = jnp.clip(tfd.Gamma(1., 1.).sample(seed=rngs[rng_cnt], sample_shape=[in_layer,out_layer]), 1e-1, 1e1)
-                v = 1.#fscale_samples
+                fscale_samples = lognormal_sample(
+                    rngs[rng_cnt],
+                    self.global_params[1][0],
+                    jnp.exp(self.global_params[1][1]),
+                )
+                m = jnp.clip(
+                    tfd.Gamma(1.0, 1.0).sample(
+                        seed=rngs[rng_cnt], sample_shape=[in_layer, out_layer]
+                    ),
+                    1e-1,
+                    1e1,
+                )
+                v = 1.0  # fscale_samples
                 if nmf_init:
-                    m = jnp.clip(tfd.Gamma(1., 1. / init_w[layer_idx]).sample(seed=rngs[rng_cnt]), 1e-1, 1e1)
-                    v = 1.
+                    m = jnp.clip(
+                        tfd.Gamma(1.0, 1.0 / init_w[layer_idx]).sample(
+                            seed=rngs[rng_cnt]
+                        ),
+                        1e-1,
+                        1e1,
+                    )
+                    v = 1.0
                 w_shape = jnp.log(
                     random.uniform(
                         rngs[rng_cnt],
@@ -514,97 +560,138 @@ class scDEF(object):
                         maxval=1.0,
                         shape=[in_layer, out_layer],
                     )
-                    * 1.# jnp.clip(self.w_priors[layer_idx][0], 1e-2, 1e2)
-                ) + jnp.log(m**2 / jnp.sqrt(m**2 + v)) #jnp.log(1/jnp.sqrt(1+fscale_samples))
-                rng_cnt += 1
-                
-                w_rate = jnp.log(
-                    random.uniform(
-                        rngs[rng_cnt],
-                        minval=1.,
-                        maxval=1.,
-                        shape=[in_layer, out_layer],
-                    )
-                    * jnp.sqrt(jnp.log(1 + v/(m**2)))#jnp.sqrt(jnp.log(1+fscale_samples))# jnp.clip(self.w_priors[layer_idx][1], 1e-2, 1e2) 
-                ) 
-            else:
-                if layer_idx == 0:
-                    m = jnp.clip(tfd.Gamma(1., 1.).sample(seed=rngs[rng_cnt], sample_shape=[in_layer,out_layer]), 1e-1, 1e1) #self.factor_shapes[layer_idx]/self.factor_rates[layer_idx]    
-                    v = 1.
-                else:
-                    m = jnp.clip(tfd.Gamma(1., 1.).sample(seed=rngs[rng_cnt], sample_shape=[in_layer,out_layer]), 1e-1, 1e1)
-                    v = 1.
-                if nmf_init:
-                    m = jnp.clip(tfd.Gamma(1., 1. / init_w[layer_idx]).sample(seed=rngs[rng_cnt]), 1e-1, 1e1)
-                    v = 1.
-                if layer_idx == self.n_layers-1:
-                    m = 1.
-                w_shape = jnp.log(
-                    random.uniform(
-                        rngs[rng_cnt],
-                        minval=1.0,
-                        maxval=1.0,
-                        shape=[in_layer, out_layer],
-                    ) 
-                * 1.#jnp.clip(self.w_priors[layer_idx][0], 1e-2, 1e2)
-                ) + jnp.log(m**2 / jnp.sqrt(m**2 + v)) 
+                    * 1.0  # jnp.clip(self.w_priors[layer_idx][0], 1e-2, 1e2)
+                ) + jnp.log(
+                    m**2 / jnp.sqrt(m**2 + v)
+                )  # jnp.log(1/jnp.sqrt(1+fscale_samples))
                 rng_cnt += 1
 
                 w_rate = jnp.log(
                     random.uniform(
                         rngs[rng_cnt],
-                        minval=1.,
-                        maxval=1.,
+                        minval=1.0,
+                        maxval=1.0,
                         shape=[in_layer, out_layer],
                     )
-                    * jnp.sqrt(jnp.log(1 + v/(m**2))) # jnp.clip(self.w_priors[layer_idx][1], 1e-2, 1e2) 
-                ) 
+                    * jnp.sqrt(
+                        jnp.log(1 + v / (m**2))
+                    )  # jnp.sqrt(jnp.log(1+fscale_samples))# jnp.clip(self.w_priors[layer_idx][1], 1e-2, 1e2)
+                )
+            else:
+                if layer_idx == 0:
+                    m = jnp.clip(
+                        tfd.Gamma(1.0, 1.0).sample(
+                            seed=rngs[rng_cnt], sample_shape=[in_layer, out_layer]
+                        ),
+                        1e-1,
+                        1e1,
+                    )  # self.factor_shapes[layer_idx]/self.factor_rates[layer_idx]
+                    v = 1.0
+                else:
+                    m = jnp.clip(
+                        tfd.Gamma(1.0, 1.0).sample(
+                            seed=rngs[rng_cnt], sample_shape=[in_layer, out_layer]
+                        ),
+                        1e-1,
+                        1e1,
+                    )
+                    v = 1.0
+                if nmf_init:
+                    m = jnp.clip(
+                        tfd.Gamma(1.0, 1.0 / init_w[layer_idx]).sample(
+                            seed=rngs[rng_cnt]
+                        ),
+                        1e-1,
+                        1e1,
+                    )
+                    v = 1.0
+                if layer_idx == self.n_layers - 1:
+                    m = 1.0
+                w_shape = jnp.log(
+                    random.uniform(
+                        rngs[rng_cnt],
+                        minval=1.0,
+                        maxval=1.0,
+                        shape=[in_layer, out_layer],
+                    )
+                    * 1.0  # jnp.clip(self.w_priors[layer_idx][0], 1e-2, 1e2)
+                ) + jnp.log(m**2 / jnp.sqrt(m**2 + v))
+                rng_cnt += 1
+
+                w_rate = jnp.log(
+                    random.uniform(
+                        rngs[rng_cnt],
+                        minval=1.0,
+                        maxval=1.0,
+                        shape=[in_layer, out_layer],
+                    )
+                    * jnp.sqrt(
+                        jnp.log(1 + v / (m**2))
+                    )  # jnp.clip(self.w_priors[layer_idx][1], 1e-2, 1e2)
+                )
             rng_cnt += 1
 
             self.global_params.append(jnp.array((w_shape, w_rate)))
 
         # Gamma(1e3, 1e3/m)
-        m = 1. * jnp.ones([1,1])
-        v = m**2 / 1e0 * jnp.ones([1,1])
-        self.global_params.append(jnp.array((jnp.log(m**2 / jnp.sqrt(m**2 + v)), 
-                                            jnp.log(jnp.sqrt(jnp.log(1 + v/(m**2)))))))
+        m = 1.0 * jnp.ones([1, 1])
+        v = m**2 / 1e0 * jnp.ones([1, 1])
+        self.global_params.append(
+            jnp.array(
+                (
+                    jnp.log(m**2 / jnp.sqrt(m**2 + v)),
+                    jnp.log(jnp.sqrt(jnp.log(1 + v / (m**2)))),
+                )
+            )
+        )
 
         m = self.layer_concentration
-        v = 1.#m**2 / 1e0
-        self.global_params.append(jnp.array(([[jnp.log(m**2 / jnp.sqrt(m**2 + v))]], 
-                                            [[jnp.log(jnp.sqrt(jnp.log(1 + v/(m**2))))]])))      
-                 
+        v = 1.0  # m**2 / 1e0
+        self.global_params.append(
+            jnp.array(
+                (
+                    [[jnp.log(m**2 / jnp.sqrt(m**2 + v))]],
+                    [[jnp.log(jnp.sqrt(jnp.log(1 + v / (m**2))))]],
+                )
+            )
+        )
 
     def get_nmf_init(self, max_cells=1000):
-        """Use NMF on the data to init the first layer and then recursively for the other layers
-        """
+        """Use NMF on the data to init the first layer and then recursively for the other layers"""
         init_z = []
         init_W = []
         from sklearn.decomposition import NMF
+
         X = self.X
-        X = X * 10_000 / np.sum(X, axis=1)[:,None]
-        X = np.log(X+1)
+        X = X * 10_000 / np.sum(X, axis=1)[:, None]
+        X = np.log(X + 1)
         if max_cells < X.shape[0]:
             key = jax.random.PRNGKey(self.seed)
-            cells = jax.random.choice(key, X.shape[0], replace=False, shape=(max_cells,))
+            cells = jax.random.choice(
+                key, X.shape[0], replace=False, shape=(max_cells,)
+            )
             X = X[cells]
         for layer_idx in range(self.n_layers):
-            model = NMF(n_components=self.layer_sizes[layer_idx], random_state=self.seed, beta_loss='kullback-leibler', solver='mu')
+            model = NMF(
+                n_components=self.layer_sizes[layer_idx],
+                random_state=self.seed,
+                beta_loss="kullback-leibler",
+                solver="mu",
+            )
             z = model.fit_transform(X)
             # z = z / np.max(z, axis=1)[:,None] # center each factor at 1
             W = model.components_
-            # W = W / np.max(W, axis=1)[:,None] 
+            # W = W / np.max(W, axis=1)[:,None]
             # W = W - np.mean(W,axis=1)[:,None] # center each factor at 1
             # W += 1.
             z = jnp.clip(z, 1e-2, 1e2)
-            W = W - np.min(W, axis=1)[:,None]
+            W = W - np.min(W, axis=1)[:, None]
             W = jnp.clip(W, 1e-2, 1e2)
             X = z
             init_z.append(z)
             init_W.append(W)
-        
-        return init_z, init_W
 
+        return init_z, init_W
 
     def elbo(
         self,
@@ -630,15 +717,18 @@ class scDEF(object):
         # s_params = local_params[2]
         gene_budget_params = global_params[0]
         fscale_params = global_params[1]
-        
 
         # cell_budget_params = var_params[0]
         # gene_budget_params = var_params[1]
         # fscale_params = var_params[2]
         # z_params = var_params[3]
 
-        cell_budget_shape = jnp.clip(cell_budget_params[0][indices], min_shape, max_shape)
-        cell_budget_rate = jnp.exp(jnp.clip(cell_budget_params[1][indices], min_rate, max_rate))
+        cell_budget_shape = jnp.clip(
+            cell_budget_params[0][indices], min_shape, max_shape
+        )
+        cell_budget_rate = jnp.exp(
+            jnp.clip(cell_budget_params[1][indices], min_rate, max_rate)
+        )
         cell_budget_shape = jax.lax.cond(
             stop_gradients[0],
             lambda: jax.lax.stop_gradient(cell_budget_shape),
@@ -676,33 +766,35 @@ class scDEF(object):
             lambda: fscale_rates,
         )
         wm_shape = jnp.clip(global_params[2 + self.n_layers][0], min_shape, max_shape)
-        wm_rate = jnp.exp(jnp.clip(global_params[2 + self.n_layers][1], min_rate, max_rate))
+        wm_rate = jnp.exp(
+            jnp.clip(global_params[2 + self.n_layers][1], min_rate, max_rate)
+        )
 
         z_shapes = jnp.clip(z_params[0][indices], min_shape, max_shape)
         z_rates = jnp.exp(jnp.clip(z_params[1][indices], min_rate, max_rate))
 
         # Sample from variational distribution
         cell_budget_shape = jax.lax.cond(
-                stop_cell_budgets,
-                lambda: jax.lax.stop_gradient(cell_budget_shape),
-                lambda: cell_budget_shape,
-            )
+            stop_cell_budgets,
+            lambda: jax.lax.stop_gradient(cell_budget_shape),
+            lambda: cell_budget_shape,
+        )
         cell_budget_rate = jax.lax.cond(
-                stop_cell_budgets,
-                lambda: jax.lax.stop_gradient(cell_budget_rate),
-                lambda: cell_budget_rate,
-            )        
+            stop_cell_budgets,
+            lambda: jax.lax.stop_gradient(cell_budget_rate),
+            lambda: cell_budget_rate,
+        )
         cell_budget_sample = lognormal_sample(rng, cell_budget_shape, cell_budget_rate)
         gene_budget_shape = jax.lax.cond(
-                stop_gene_budgets,
-                lambda: jax.lax.stop_gradient(gene_budget_shape),
-                lambda: gene_budget_shape,
-            )
+            stop_gene_budgets,
+            lambda: jax.lax.stop_gradient(gene_budget_shape),
+            lambda: gene_budget_shape,
+        )
         gene_budget_rate = jax.lax.cond(
-                stop_gene_budgets,
-                lambda: jax.lax.stop_gradient(gene_budget_rate),
-                lambda: gene_budget_rate,
-            )                
+            stop_gene_budgets,
+            lambda: jax.lax.stop_gradient(gene_budget_rate),
+            lambda: gene_budget_rate,
+        )
         gene_budget_sample = lognormal_sample(rng, gene_budget_shape, gene_budget_rate)
         if self.use_brd:
             fscale_samples = lognormal_sample(rng, fscale_shapes, fscale_rates)
@@ -710,16 +802,16 @@ class scDEF(object):
         # w will be sampled in a loop below because it cannot be vectorized
 
         # Compute ELBO
-        global_pl = 0.
-        global_en = 0.
+        global_pl = 0.0
+        global_en = 0.0
         global_pl = gamma_logpdf(
             gene_budget_sample,
-            self.gene_scale_shape, #* self.gene_ratio,
+            self.gene_scale_shape,  # * self.gene_ratio,
             self.gene_scale_shape * self.gene_ratio,
         )
         global_en = lognormal_entropy(gene_budget_shape, gene_budget_rate)
-        local_pl = 0.
-        local_en = 0.
+        local_pl = 0.0
+        local_en = 0.0
         local_pl = gamma_logpdf(
             cell_budget_sample,
             self.cell_scale_shape,
@@ -734,17 +826,17 @@ class scDEF(object):
             )
             global_en += lognormal_entropy(fscale_shapes, fscale_rates)
 
-            global_pl += gamma_logpdf(
-                _wm_sample, 1., 1. 
-            )
+            global_pl += gamma_logpdf(_wm_sample, 1.0, 1.0)
             global_en += lognormal_entropy(wm_shape, wm_rate)
 
-        s_shape = jnp.clip(global_params[2 + self.n_layers + 1][0], min_shape, max_shape)
-        s_rate = jnp.exp(jnp.clip(global_params[2 + self.n_layers + 1][1], min_rate, max_rate))
-        _s_sample = lognormal_sample(rng, s_shape, s_rate)
-        global_pl += gamma_logpdf(
-            _s_sample, 1., 1. / self.layer_concentration
+        s_shape = jnp.clip(
+            global_params[2 + self.n_layers + 1][0], min_shape, max_shape
         )
+        s_rate = jnp.exp(
+            jnp.clip(global_params[2 + self.n_layers + 1][1], min_rate, max_rate)
+        )
+        _s_sample = lognormal_sample(rng, s_shape, s_rate)
+        global_pl += gamma_logpdf(_s_sample, 1.0, 1.0 / self.layer_concentration)
         global_en += lognormal_entropy(s_shape, s_rate)
 
         z_mean = 1.0
@@ -767,7 +859,7 @@ class scDEF(object):
                 lambda: jax.lax.stop_gradient(_w_rate),
                 lambda: _w_rate,
             )
-            
+
             # if idx == 0:
             #     jax.debug.print("🤯 {a}, {b} 🤯", a=jnp.min(_w_shape), b=jnp.max(_w_shape))
             #     jax.debug.print("🤯🤯 {a}, {b} 🤯🤯", a=jnp.min(_w_rate), b=jnp.max(_w_rate))
@@ -776,15 +868,15 @@ class scDEF(object):
             if idx == 0 and self.use_brd:
                 global_pl += gamma_logpdf(
                     _w_sample,
-                    1. / fscale_samples,
-                    (1. / fscale_samples) / _wm_sample,
+                    1.0 / fscale_samples,
+                    (1.0 / fscale_samples) / _wm_sample,
                 )
             else:
                 # _f_shape = jnp.clip(local_params[2+idx-1][0], min_shape, max_shape)
-                # _f_rate = jnp.clip(jnp.exp(local_params[2+idx-1][1]), min_rate, max_rate)            
+                # _f_rate = jnp.clip(jnp.exp(local_params[2+idx-1][1]), min_rate, max_rate)
                 # _f_sample = lognormal_sample(rng, _f_shape, _f_rate)
                 # global_pl += gamma_logpdf(_f_sample, 1., 1.)
-                # global_en += lognormal_entropy(_f_shape, _f_rate)                
+                # global_en += lognormal_entropy(_f_shape, _f_rate)
                 if idx == 1 and self.use_brd:
                     global_pl += gamma_logpdf(
                         _w_sample,
@@ -795,7 +887,7 @@ class scDEF(object):
                     global_pl += gamma_logpdf(
                         _w_sample,
                         self.w_priors[idx][0],
-                        self.w_priors[idx][1], #/ _f_sample,
+                        self.w_priors[idx][1],  # / _f_sample,
                     )
             global_en += lognormal_entropy(_w_shape, _w_rate)
 
@@ -816,8 +908,8 @@ class scDEF(object):
             )
             _z_sample = lognormal_sample(rng, _z_shape, _z_rate)
 
-            shape_param = self.layer_shapes[idx]    
-            rate_param = self.layer_shapes[idx] / 1.
+            shape_param = self.layer_shapes[idx]
+            rate_param = self.layer_shapes[idx] / 1.0
             if idx < self.n_layers - 1:
                 shape_param = jax.lax.cond(
                     stop_gradients[idx],
@@ -830,12 +922,14 @@ class scDEF(object):
                     lambda: rate_param,
                 )
             # if idx > 0:
-            #     rate_param = 1./_f_sample.T    
+            #     rate_param = 1./_f_sample.T
             # else:
-            #     rate_param = 1./fscale_samples.T    
-            # local_pl += gamma_logpdf(_z_sample, self.layer_concentration, self.layer_concentration)                
+            #     rate_param = 1./fscale_samples.T
+            # local_pl += gamma_logpdf(_z_sample, self.layer_concentration, self.layer_concentration)
             local_pl += jax.lax.cond(
-                idx == self.n_layers-1, lambda: gamma_logpdf(_z_sample, _s_sample, _s_sample), lambda: gamma_logpdf(_z_sample, _s_sample, _s_sample / z_mean)
+                idx == self.n_layers - 1,
+                lambda: gamma_logpdf(_z_sample, _s_sample, _s_sample),
+                lambda: gamma_logpdf(_z_sample, _s_sample, _s_sample / z_mean),
             )
 
             # local_pl += gamma_logpdf(
@@ -852,10 +946,10 @@ class scDEF(object):
         # Compute log likelihood
         # mean_bottom = jnp.einsum(
         #     "nk,kg->ng", _z_sample , _w_sample
-        # ) 
+        # )
         mean_bottom = jnp.einsum(
-            "nk,kg->ng", _z_sample / cell_budget_sample, _w_sample 
-        )  / (batch_indices_onehot.dot(gene_budget_sample))
+            "nk,kg->ng", _z_sample / cell_budget_sample, _w_sample
+        ) / (batch_indices_onehot.dot(gene_budget_sample))
         ll = jnp.sum(vmap(poisson.logpmf)(jnp.array(batch), mean_bottom))
         ll = jax.lax.cond(
             stop_gradients[0],
@@ -866,8 +960,9 @@ class scDEF(object):
         global_en *= annealing_parameter
         local_en *= annealing_parameter
 
-        return ((ll + local_pl + local_en) * (self.X.shape[0] / indices.shape[0]) 
-            + global_pl 
+        return (
+            (ll + local_pl + local_en) * (self.X.shape[0] / indices.shape[0])
+            + global_pl
             + global_en
         )
 
@@ -892,10 +987,20 @@ class scDEF(object):
     ):
         # Average over a batch of random samples.
         rngs = random.split(rng, num_samples)
-        vectorized_elbo = vmap(self.elbo, in_axes=(0, None, None, None, None, None, None, None, None))
+        vectorized_elbo = vmap(
+            self.elbo, in_axes=(0, None, None, None, None, None, None, None, None)
+        )
         return jnp.mean(
             vectorized_elbo(
-                rngs, X, indices, local_params, global_params, annealing_parameter, stop_gradients, stop_cell_budgets, stop_gene_budgets
+                rngs,
+                X,
+                indices,
+                local_params,
+                global_params,
+                annealing_parameter,
+                stop_gradients,
+                stop_cell_budgets,
+                stop_gene_budgets,
             )
         )
 
@@ -926,9 +1031,9 @@ class scDEF(object):
         if stop_gradients is None:
             stop_gradients = np.zeros((self.n_layers))
         if stop_cell_budgets is None:
-            stop_cell_budgets = 0.
+            stop_cell_budgets = 0.0
         if stop_gene_budgets is None:
-            stop_gene_budgets = 0.
+            stop_gene_budgets = 0.0
 
         num_complete_batches, leftover = divmod(self.n_cells, batch_size)
         num_batches = num_complete_batches + bool(leftover)
@@ -987,14 +1092,14 @@ class scDEF(object):
                             t,
                             rng_input,
                             local_params,
-                            global_params,                            
+                            global_params,
                             local_opt_state,
                             global_opt_state,
                             annealing_parameter,
                             stop_gradients,
                             stop_cell_budgets,
                             stop_gene_budgets,
-                        )                    
+                        )
                     epoch_losses.append(loss)
                     t += 1
                 current_loss = np.mean(epoch_losses)
@@ -1021,15 +1126,20 @@ class scDEF(object):
                 epoch_time = time.time() - start_time
                 pbar.set_postfix({"Loss": losses[-1]})
                 if epoch >= min_epochs:
-                    pbar.set_postfix({"Loss": losses[-1], "Rel. improvement": relative_improvement})
-            
+                    pbar.set_postfix(
+                        {"Loss": losses[-1], "Rel. improvement": relative_improvement}
+                    )
+
             if stop_early:
                 self.logger.info(
                     "Relative improvement of "
                     f"{relative_improvement:0.4g} < {tolerance:0.4g} "
                     f"for {patience} step(s) in a row, stopping early."
                 )
-                if relative_improvement < 0 and np.abs(relative_improvement) > 100*tolerance:
+                if (
+                    relative_improvement < 0
+                    and np.abs(relative_improvement) > 100 * tolerance
+                ):
                     self.logger.info(
                         "It seems like the loss increased significantly. "
                         "Consider using a lower learning rate."
@@ -1082,7 +1192,7 @@ class scDEF(object):
             min_epochs: minimum number of epochs for early stopping
             tolerance: maximum relative change in loss for early stopping
             patience: number of epochs for which tolerated loss changes must hold for early stopping
-            update_locals: whether to optimize the local parameters 
+            update_locals: whether to optimize the local parameters
             update_globals: whether to optimize the global parameters
         """
         n_steps = 1
@@ -1130,7 +1240,17 @@ class scDEF(object):
         stop_gradients = np.ones((self.n_layers))
         layers_to_optimize = np.arange(self.n_layers)
 
-        def objective(X, indices, local_var_params, global_var_params, key, annealing_parameter, stop_gradients, stop_cell_budgets, stop_gene_budgets):
+        def objective(
+            X,
+            indices,
+            local_var_params,
+            global_var_params,
+            key,
+            annealing_parameter,
+            stop_gradients,
+            stop_cell_budgets,
+            stop_gene_budgets,
+        ):
             return -self.batch_elbo(
                 key,
                 X,
@@ -1143,11 +1263,17 @@ class scDEF(object):
                 stop_cell_budgets,
                 stop_gene_budgets,
             )  # minimize -ELBO
-        
-        def clip_params(params, min_mu=-1e6, max_mu=1e2, min_logstd=-1e6, max_logstd=2e0):
+
+        def clip_params(
+            params, min_mu=-1e6, max_mu=1e2, min_logstd=-1e6, max_logstd=2e0
+        ):
             for i in range(len(params)):
-                params[i] = params[i].at[0].set(jnp.clip(params[i][0], min_mu, max_mu)) # mu
-                params[i] = params[i].at[1].set(jnp.clip(params[i][1], min_logstd, max_logstd)) # logstd
+                params[i] = (
+                    params[i].at[0].set(jnp.clip(params[i][0], min_mu, max_mu))
+                )  # mu
+                params[i] = (
+                    params[i].at[1].set(jnp.clip(params[i][1], min_logstd, max_logstd))
+                )  # logstd
             return params
 
         local_loss_grad = jit(value_and_grad(objective, argnums=2))
@@ -1157,58 +1283,102 @@ class scDEF(object):
             n_epochs = n_epoch_schedule[i]
             step_size = lr_schedule[i]
             anneal_param = annealing_schedule[i]
-            self.logger.info(
-                f"Initializing optimizer with learning rate {step_size}."
-            )
+            self.logger.info(f"Initializing optimizer with learning rate {step_size}.")
             if anneal_param != 1:
-                self.logger.info(
-                    f"Set annealing parameter to {anneal_param}."
-                )
+                self.logger.info(f"Set annealing parameter to {anneal_param}.")
 
-            local_optimizer = optax.adam(step_size/1.)
+            local_optimizer = optax.adam(step_size / 1.0)
             global_optimizer = optax.adam(step_size)
 
             if layerwise:
                 if opt_layer is not None:
                     if i != opt_layer:
-                        continue 
+                        continue
                     layers_to_optimize = np.array([i])
                 else:
                     layers_to_optimize = np.array([i])
                 # layers_to_optimize = np.arange(2 + i)
                 # if i > 0:
-                #     layers_to_optimize = np.array([2+i-1])                    
+                #     layers_to_optimize = np.array([2+i-1])
                 self.logger.info(f"Optimizing layers {layers_to_optimize}")
             stop_gradients[layers_to_optimize] = 0.0
 
             def local_update(
-                X, indices, i, key, local_params, global_params, local_opt_state, global_opt_state, annealing_parameter, stop_gradients, stop_cell_budgets, stop_gene_budgets
+                X,
+                indices,
+                i,
+                key,
+                local_params,
+                global_params,
+                local_opt_state,
+                global_opt_state,
+                annealing_parameter,
+                stop_gradients,
+                stop_cell_budgets,
+                stop_gene_budgets,
             ):
                 value, gradient = local_loss_grad(
-                    X, indices, local_params, global_params, key, annealing_parameter, stop_gradients, stop_cell_budgets, stop_gene_budgets
+                    X,
+                    indices,
+                    local_params,
+                    global_params,
+                    key,
+                    annealing_parameter,
+                    stop_gradients,
+                    stop_cell_budgets,
+                    stop_gene_budgets,
                 )
-                updates, local_opt_state = local_optimizer.update(gradient, local_opt_state, local_params)
+                updates, local_opt_state = local_optimizer.update(
+                    gradient, local_opt_state, local_params
+                )
                 local_params = optax.apply_updates(local_params, updates)
                 local_params = clip_params(local_params)
                 return value, local_params, local_opt_state
 
             def global_update(
-                X, indices, i, key, local_params, global_params, local_opt_state, global_opt_state, annealing_parameter, stop_gradients, stop_cell_budgets, stop_gene_budgets
+                X,
+                indices,
+                i,
+                key,
+                local_params,
+                global_params,
+                local_opt_state,
+                global_opt_state,
+                annealing_parameter,
+                stop_gradients,
+                stop_cell_budgets,
+                stop_gene_budgets,
             ):
                 value, gradient = global_loss_grad(
-                    X, indices, local_params, global_params, key, annealing_parameter, stop_gradients, stop_cell_budgets, stop_gene_budgets
+                    X,
+                    indices,
+                    local_params,
+                    global_params,
+                    key,
+                    annealing_parameter,
+                    stop_gradients,
+                    stop_cell_budgets,
+                    stop_gene_budgets,
                 )
-                updates, global_opt_state = global_optimizer.update(gradient, global_opt_state, global_params)
+                updates, global_opt_state = global_optimizer.update(
+                    gradient, global_opt_state, global_params
+                )
                 global_params = optax.apply_updates(global_params, updates)
                 global_params = clip_params(global_params)
-                return value, global_params, global_opt_state                
+                return value, global_params, global_opt_state
 
             # local_opt_state = local_opt_init(self.local_params)
             local_opt_state = local_optimizer.init(self.local_params)
             # global_opt_state = global_opt_init(self.global_params)
             global_opt_state = global_optimizer.init(self.global_params)
 
-            losses, local_params, global_params, local_opt_state, global_opt_state = self._optimize(
+            (
+                losses,
+                local_params,
+                global_params,
+                local_opt_state,
+                global_opt_state,
+            ) = self._optimize(
                 local_update,
                 global_update,
                 self.local_params,
@@ -1247,26 +1417,37 @@ class scDEF(object):
 
         self.pmeans = {
             "cell_scale": np.array(
-                jnp.exp(cell_budget_params[0] + .5*jnp.exp(cell_budget_params[1])**2)
-                #np.exp(cell_budget_params[0]) / np.exp(cell_budget_params[1])
+                jnp.exp(
+                    cell_budget_params[0] + 0.5 * jnp.exp(cell_budget_params[1]) ** 2
+                )
+                # np.exp(cell_budget_params[0]) / np.exp(cell_budget_params[1])
             ),
             "gene_scale": np.array(
-                jnp.exp(gene_budget_params[0] + .5*jnp.exp(gene_budget_params[1])**2)
-                #np.exp(gene_budget_params[0]) / np.exp(gene_budget_params[1])
+                jnp.exp(
+                    gene_budget_params[0] + 0.5 * jnp.exp(gene_budget_params[1]) ** 2
+                )
+                # np.exp(gene_budget_params[0]) / np.exp(gene_budget_params[1])
             ),
-            "brd": jnp.exp(fscale_params[0] + .5*jnp.exp(fscale_params[1])**2),#np.array(np.exp(fscale_params[0]) / np.exp(fscale_params[1])),
+            "brd": jnp.exp(
+                fscale_params[0] + 0.5 * jnp.exp(fscale_params[1]) ** 2
+            ),  # np.array(np.exp(fscale_params[0]) / np.exp(fscale_params[1])),
         }
 
         for idx in range(self.n_layers):
             start = sum(self.layer_sizes[:idx])
             end = start + self.layer_sizes[idx]
-            self.pmeans[f"{self.layer_names[idx]}z"] = jnp.exp(z_params[0][:,start:end] + .5*jnp.exp(z_params[1][:,start:end])**2)
+            self.pmeans[f"{self.layer_names[idx]}z"] = jnp.exp(
+                z_params[0][:, start:end]
+                + 0.5 * jnp.exp(z_params[1][:, start:end]) ** 2
+            )
             # self.pmeans[f"{self.layer_names[idx]}z"] = np.array(
             #     np.exp(z_params[0][:, start:end]) / np.exp(z_params[1][:, start:end])
             # )
             _w_shape = self.global_params[2 + idx][0]
             _w_rate = self.global_params[2 + idx][1]
-            self.pmeans[f"{self.layer_names[idx]}W"] = jnp.exp(_w_shape + .5*jnp.exp(_w_rate)**2)
+            self.pmeans[f"{self.layer_names[idx]}W"] = jnp.exp(
+                _w_shape + 0.5 * jnp.exp(_w_rate) ** 2
+            )
             # self.pmeans[f"{self.layer_names[idx]}W"] = np.array(
             #     np.exp(_w_shape) / np.exp(_w_rate)
             # )
@@ -1333,7 +1514,10 @@ class scDEF(object):
         self.factor_lists = []
         for i, layer_name in enumerate(self.layer_names):
             if i == 0:
-                normed = self.pmeans[f"{layer_name}z"] / np.sum(self.pmeans[f"{layer_name}z"], axis=1)[:,None]
+                normed = (
+                    self.pmeans[f"{layer_name}z"]
+                    / np.sum(self.pmeans[f"{layer_name}z"], axis=1)[:, None]
+                )
                 assignments = np.argmax(normed, axis=1)
                 counts = np.array(
                     [
@@ -1388,7 +1572,9 @@ class scDEF(object):
                 keep = np.arange(self.layer_sizes[i])
             self.factor_lists.append(keep)
 
-        self.make_layercolors(layer_cpal=self.layer_cpal, lightness_mult=self.lightness_mult)
+        self.make_layercolors(
+            layer_cpal=self.layer_cpal, lightness_mult=self.lightness_mult
+        )
         self.annotate_adata()
         self.make_graph()
 
@@ -1419,9 +1605,9 @@ class scDEF(object):
 
         for idx in range(self.n_layers):
             layer_name = self.layer_names[idx]
-            self.adata.obsm[f"X_{layer_name}"] = np.array(self.pmeans[f"{layer_name}z"][
-                :, self.factor_lists[idx]
-            ])
+            self.adata.obsm[f"X_{layer_name}"] = np.array(
+                self.pmeans[f"{layer_name}z"][:, self.factor_lists[idx]]
+            )
             assignments = np.argmax(self.adata.obsm[f"X_{layer_name}"], axis=1)
             self.adata.obs[f"{layer_name}"] = [
                 self.factor_names[idx][a] for a in assignments
@@ -1463,9 +1649,7 @@ class scDEF(object):
             self.logger.info(
                 f"Updated adata.obs with layer {idx}: `{layer_name}` and `{layer_name}_score` for all factors in layer {idx}"
             )
-            self.logger.info(
-                f"Updated adata.obsm with layer {idx}: `X_{layer_name}`"
-            )
+            self.logger.info(f"Updated adata.obsm with layer {idx}: `X_{layer_name}`")
 
             factor_names = self.factor_names[idx]
             names = np.array(
@@ -1532,7 +1716,10 @@ class scDEF(object):
     def normalize_cellscores(self):
         for idx in range(self.n_layers):
             layer_name = self.layer_names[idx]
-            self.adata.obsm[f"X_{layer_name}_probs"] = self.adata.obsm[f"X_{layer_name}"] / np.sum(self.adata.obsm[f"X_{layer_name}"],axis=1)[:,None]
+            self.adata.obsm[f"X_{layer_name}_probs"] = (
+                self.adata.obsm[f"X_{layer_name}"]
+                / np.sum(self.adata.obsm[f"X_{layer_name}"], axis=1)[:, None]
+            )
             scores_names = [f + "_prob" for f in self.factor_names[idx]]
             df = pd.DataFrame(
                 self.adata.obsm[f"X_{layer_name}_probs"],
@@ -1639,32 +1826,36 @@ class scDEF(object):
         term_scores_sample = lognormal_sample(rng, term_scores_shape, term_scores_rate)
 
         if layer_idx > 0:
-            term_scores_shape = self.var_params[4 + layer_idx][0][self.factor_lists[layer_idx]][
-                    :, self.factor_lists[layer_idx - 1]
-                ]
-            
+            term_scores_shape = self.var_params[4 + layer_idx][0][
+                self.factor_lists[layer_idx]
+            ][:, self.factor_lists[layer_idx - 1]]
+
             term_scores_rate = np.exp(
                 self.var_params[4 + layer_idx][1][self.factor_lists[layer_idx]][
                     :, self.factor_lists[layer_idx - 1]
                 ]
             )
-            term_scores_sample = lognormal_sample(rng, term_scores_shape, term_scores_rate)
+            term_scores_sample = lognormal_sample(
+                rng, term_scores_shape, term_scores_rate
+            )
 
             for layer in range(layer_idx - 1, 0, -1):
-                lower_mat_shape = self.var_params[4 + layer][0][self.factor_lists[layer]][
-                        :, self.factor_lists[layer - 1]
-                    ]
-                
+                lower_mat_shape = self.var_params[4 + layer][0][
+                    self.factor_lists[layer]
+                ][:, self.factor_lists[layer - 1]]
+
                 lower_mat_rate = np.exp(
                     self.var_params[4 + layer][1][self.factor_lists[layer]][
                         :, self.factor_lists[layer - 1]
                     ]
                 )
-                lower_mat_sample = lognormal_sample(rng, lower_mat_shape, lower_mat_rate)
+                lower_mat_sample = lognormal_sample(
+                    rng, lower_mat_shape, lower_mat_rate
+                )
                 term_scores_sample = term_scores_sample.dot(lower_mat_sample)
 
-            lower_term_scores_shape =  self.var_params[4 + 0][0][self.factor_lists[0]]
-            
+            lower_term_scores_shape = self.var_params[4 + 0][0][self.factor_lists[0]]
+
             lower_term_scores_rate = np.exp(
                 self.var_params[4 + 0][1][self.factor_lists[0]]
             )
@@ -2025,9 +2216,7 @@ class scDEF(object):
                     if factor_name in factor_annotations:
                         label = factor_annotations[factor_name]
 
-                cells = np.where(self.adata.obs[f"{layer_name}"] == factor_name)[
-                    0
-                ]
+                cells = np.where(self.adata.obs[f"{layer_name}"] == factor_name)[0]
                 node_num_cells = len(cells)
 
                 if n_cells_label:
@@ -2146,9 +2335,7 @@ class scDEF(object):
                 if n_cells:
                     max_cells = self.n_cells
                     if scale_level:
-                        max_cells = (
-                            self.adata.obs[f"{layer_name}"].value_counts().max()
-                        )
+                        max_cells = self.adata.obs[f"{layer_name}"].value_counts().max()
                     size = np.maximum(
                         node_size_max * np.sqrt((node_num_cells / max_cells)),
                         node_size_min,
@@ -2279,9 +2466,7 @@ class scDEF(object):
             for factor_idx in range(len(self.factor_lists[layer])):
                 factor_name = f"{self.factor_names[layer][int(factor_idx)]}"
                 # cells attached to this factor
-                cells = np.where(self.adata.obs[f"{layer_name}"] == factor_name)[
-                    0
-                ]
+                cells = np.where(self.adata.obs[f"{layer_name}"] == factor_name)[0]
                 if len(cells) > 0:
                     # cells in this factor that belong to each obs
                     prevs = [
@@ -2377,7 +2562,7 @@ class scDEF(object):
 
     def plot_brd(
         self,
-        thres=1.,
+        thres=1.0,
         iqr_mult=None,
         show_yticks=False,
         scale="linear",
@@ -2482,7 +2667,10 @@ class scDEF(object):
             brds = brds - np.min(brds)
             brds = brds / np.max(brds)
         ginis = np.array(
-            [score_utils.gini(self.pmeans[f"{self.layer_names[0]}W"][k]) for k in range(self.layer_sizes[0])]
+            [
+                score_utils.gini(self.pmeans[f"{self.layer_names[0]}W"][k])
+                for k in range(self.layer_sizes[0])
+            ]
         )
         is_kept = np.zeros((self.layer_sizes[0]))
         is_kept[self.factor_lists[0]] = 1
@@ -2551,14 +2739,14 @@ class scDEF(object):
             # Third row
             self.plot_brd(ax=fig.add_subplot(gs[2, 0:2]), show=False)
         else:
-            fig = plt.figure(figsize=(figsize[0], int(figsize[1]*2/3)))
+            fig = plt.figure(figsize=(figsize[0], int(figsize[1] * 2 / 3)))
             gs = GridSpec(2, 2)
             # First row
             self.plot_loss(ax=fig.add_subplot(gs[0, 0:2]), show=False)
             # Second row
             self.plot_scale("cell", ax=fig.add_subplot(gs[1, 0]), show=False)
             self.plot_scale("gene", ax=fig.add_subplot(gs[1, 1]), show=False)
-        
+
         fig.tight_layout()
         if show:
             plt.show()
@@ -2714,7 +2902,7 @@ class scDEF(object):
 
     def plot_multilevel_paga(
         self,
-        neighbors_rep: Optional[str] = "X_factors",
+        neighbors_rep: Optional[str] = "X_L0",
         layers: Optional[list] = None,
         figsize: Optional[tuple] = (16, 4),
         reuse_pos: Optional[bool] = True,
@@ -2893,9 +3081,7 @@ class scDEF(object):
 
         # Number of cells from obs_val that are not in factor
         cells_not_in_factor_from_obs = float(
-            np.count_nonzero(
-                adata_cells_from_obs.obs[f"{layer_name}"] != factor_name
-            )
+            np.count_nonzero(adata_cells_from_obs.obs[f"{layer_name}"] != factor_name)
         )
 
         # Number of cells in factor that are obs_val
@@ -3472,9 +3658,7 @@ class scDEF(object):
                 self.adata.obsm[f"X_{self.layer_names[layer]}"]
             )
             if use_log:
-                sc.pp.neighbors(
-                    self.adata, use_rep=f"X_{self.layer_names[layer]}_log"
-                )
+                sc.pp.neighbors(self.adata, use_rep=f"X_{self.layer_names[layer]}_log")
             else:
                 sc.pp.neighbors(
                     self.adata,
@@ -3585,11 +3769,7 @@ class scDEF(object):
             layer_sizes = []
             for factor in self.factor_names[i]:
                 layer_sizes.append(
-                    len(
-                        np.where(
-                            self.adata.obs[f"{self.layer_names[i]}"] == factor
-                        )[0]
-                    )
+                    len(np.where(self.adata.obs[f"{self.layer_names[i]}"] == factor)[0])
                 )
             layer_sizes = np.array(layer_sizes)[layer_factor_orders[i]]
             xlabels = self.factor_names[i]

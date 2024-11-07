@@ -1,18 +1,20 @@
 OTHERS_LABELS = [
-    "Leiden",
+    "PCA",
+    "nSBM",
     "scVI",
     "Harmony",
     "Scanorama",
     "LDVAE",
     "NMF",
     "scHPF",
-    "MuVI",
+    "fscLVM",
 ]
 
 OTHERS_RES_SWEEPS = dict(
     zip(
         OTHERS_LABELS,
         [
+            [1.0, 0.6, 0.3, 0.1, 0.01],
             [1.0, 0.6, 0.3, 0.1, 0.01],
             [1.0, 0.6, 0.3, 0.1, 0.01],
             [1.0, 0.6, 0.3, 0.1, 0.01],
