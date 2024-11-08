@@ -265,33 +265,32 @@ def run_muvi(
     # Obtain clustering
     muvi.tl.neighbors(model)
     muvi.tl.leiden(model)
-
-    # Obtain gene signatures
-    muvi.tl.rank(model, "leiden", method="wilcoxon")
-
     model_cache = muvi.tools.utils.setup_cache(model)
     factor_adata = model_cache.factor_adata
+    ad.obs["leiden"] = factor_adata.obs["leiden"]
 
+    # Obtain gene signatures
+    sc.tl.rank_genes_groups(ad, "leiden", method="wilcoxon")
     gene_scores = []
-    for leiden in range(np.max(factor_adata.obs["leiden"].unique().astype(int)) + 1):
+    for leiden in range(np.max(ad.obs["leiden"].unique().astype(int)) + 1):
         gene_scores.append(
-            sc.get.rank_genes_groups_df(factor_adata, str(leiden))
+            sc.get.rank_genes_groups_df(ad, str(leiden))
             .set_index("names")
-            .loc[factor_adata.var_names]["scores"]
+            .loc[ad.var_names]["scores"]
             .values
         )
     gene_scores = np.array(gene_scores)
 
     latent = factor_adata.X
 
-    outs = [latent, gene_scores, factor_adata]
+    outs = [latent, gene_scores, ad]
     if return_signatures:
         signatures = []
         for k in range(len(gene_scores)):
-            signatures.append(factor_adata.var_names[np.argsort(gene_scores[k])[::-1]])
+            signatures.append(ad.var_names[np.argsort(gene_scores[k])[::-1]])
         outs.append(signatures)
     if return_cluster_assignments:
-        cluster_assignments = factor_adata.obs["leiden"].values.tolist()
+        cluster_assignments = ad.obs["leiden"].values.tolist()
         outs.append(cluster_assignments)
 
     return outs
