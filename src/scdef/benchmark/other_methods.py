@@ -258,39 +258,40 @@ def run_muvi(
 
     ad = ad.copy()
 
-    model = muvi.tl.from_adata(ad, prior_mask_key=None, n_factors=int(resolution))
+    model = muvi.tl.from_adata(
+        ad, prior_mask_key=None, n_factors=int(resolution), nmf=True
+    )
     model.fit(**kwargs)
-    muvi.tl.filter_factors(model, r2_thresh=0.95)
 
-    # Obtain clustering
-    muvi.tl.neighbors(model)
-    muvi.tl.leiden(model)
+    # Filter factors
+    r2_view, r2_factor, _ = muvi.tl.variance_explained(model)
     model_cache = muvi.tools.utils.setup_cache(model)
     factor_adata = model_cache.factor_adata
-    ad.obs["leiden"] = factor_adata.obs["leiden"]
+    r2_cols = [f"r2_{vn}" for vn in model.view_names]
+    r2_df = model_cache.factor_metadata[r2_cols]
+    r2_sorted = r2_df.sum(1).sort_values(ascending=False)
+    factor_subset = r2_sorted.index
+    r2_thresh = (r2_sorted.cumsum() / r2_sorted.sum() < 0.95).sum() + 1
 
-    # Obtain gene signatures
-    sc.tl.rank_genes_groups(ad, "leiden", method="wilcoxon")
-    gene_scores = []
-    for leiden in range(np.max(ad.obs["leiden"].unique().astype(int)) + 1):
-        gene_scores.append(
-            sc.get.rank_genes_groups_df(ad, str(leiden))
-            .set_index("names")
-            .loc[ad.var_names]["scores"]
-            .values
-        )
-    gene_scores = np.array(gene_scores)
+    factor_subset = r2_sorted.iloc[: int(r2_thresh)].index
+    factor_subset = factor_subset.tolist()
 
-    latent = factor_adata.X
+    # Get cell and gene scores
+    cscores = model.get_factor_scores(factor_idx=factor_subset)
+    gene_scores = model.get_factor_loadings(factor_idx=factor_subset)
+    gene_scores = gene_scores["view_0"]
 
-    outs = [latent, gene_scores, ad]
+    muvi.tl.filter_factors(model, r2_thresh=0.95)
+    factor_adata = model_cache.factor_adata
+
+    outs = [cscores, gene_scores, factor_adata]
     if return_signatures:
         signatures = []
-        for k in range(len(gene_scores)):
+        for k in range(gene_scores.shape[0]):
             signatures.append(ad.var_names[np.argsort(gene_scores[k])[::-1]])
         outs.append(signatures)
     if return_cluster_assignments:
-        cluster_assignments = ad.obs["leiden"].values.tolist()
+        cluster_assignments = np.argmax(cscores, axis=1).astype(str)
         outs.append(cluster_assignments)
 
     return outs
