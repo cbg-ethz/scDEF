@@ -1,0 +1,18 @@
+seed: 42
+de_fscale: [.5, 2.]
+de_prob: .2
+batch_facscale: 0.4
+n_cells: 4000
+n_reps: 5
+n_batches: 4
+frac_shared: [.5, 1.]
+methods: ["scDEF", "scDEF_un", "PCA", "NMF", "scHPF", "scVI", "Harmony", "Scanorama", "nSBM", "fscLVM"]
+metrics:
+    - "Cell Type ARI"
+    - "Cell Type ASW"
+    - "Batch ARI"
+    - "Batch ASW"    
+    - "Hierarchy accuracy"
+    - "Hierarchical signature consistency"
+    - "Signature sparsity"
+    - "Signature accuracy"

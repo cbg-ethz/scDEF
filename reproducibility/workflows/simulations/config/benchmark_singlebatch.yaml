@@ -1,0 +1,13 @@
+seed: 42
+de_fscale: [.5, 2.]
+de_prob: .2
+n_cells: 4000
+n_reps: 2
+methods: ["scDEF_un", "PCA"]
+metrics:
+    - "Cell Type ARI"
+    - "Cell Type ASW"
+    - "Hierarchy accuracy"
+    - "Hierarchical signature consistency"
+    - "Signature sparsity"
+    - "Signature accuracy"

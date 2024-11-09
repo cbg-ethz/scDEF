@@ -1,0 +1,19 @@
+name: scvi
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - bioconda
+  - nodefaults  ## block user/system channels
+dependencies:
+  - python=3.10
+  - pytorch 
+  - torchvision 
+  - torchaudio 
+  #- pytorch-cuda=11.7 
+  - jax 
+  - jaxlib
+  - scvi-tools
+  - pip
+  - pip:
+    - scdef==0.1.5

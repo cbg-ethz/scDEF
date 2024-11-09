@@ -1,0 +1,52 @@
+scDEF:
+  layer_sizes: [100, 60, 30, 10, 1]
+  tau: 0.01
+  mu: 0.01
+  nmf_init: True
+  batch_size: 256
+  num_samples: 10
+  n_epoch: [1000, 1000]
+  lr: [0.01, 0.001]
+scDEF_un:
+  layer_sizes: [100, 60, 30, 10, 1]
+  tau: 0.01
+  mu: 0.01
+  nmf_init: True
+  batch_size: 256
+  num_samples: 10
+  n_epoch: [1, 1]
+  lr: [0.01, 0.001]
+PCA:
+  n_top_genes: 2000
+  settings:
+nSBM:
+  n_top_genes: 2000
+  settings:
+    n_init: 1
+NMF:
+  n_top_genes: 4000
+  settings:
+    max_iter: 1
+scHPF:
+  n_top_genes: 4000
+  settings:
+    min_iter: 1
+    max_iter: 1
+scVI:
+  n_top_genes: 2000
+  settings:
+    max_epochs: 2
+    batch_size: 128
+    early_stopping: True
+fscLVM:
+  n_top_genes: 4000
+  settings:
+    batch_size: 0
+    n_epochs: 1
+    seed: 42
+Harmony:
+  n_top_genes: 2000
+  settings:
+Scanorama:
+  n_top_genes: 2000
+  settings:

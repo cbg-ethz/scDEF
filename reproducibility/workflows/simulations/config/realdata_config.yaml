@@ -1,0 +1,2 @@
+input_data: 'pbmcs_data/pbmcsca.h5ad'
+n_epoch: 1000

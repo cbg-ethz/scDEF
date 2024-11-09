@@ -1,0 +1,17 @@
+name: fsclvm
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - bioconda
+  - nodefaults  ## block user/system channels
+dependencies:
+  - python=3.10
+  - leidenalg
+  - pytorch
+  #- pytorch-cuda=12.1
+  - pip
+  - pip:
+      - muvi
+      - anndata==0.10.8
+      - scdef==0.1.5
