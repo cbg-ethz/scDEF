@@ -7,6 +7,7 @@ scDEF:
   num_samples: 10
   n_epoch: [1000, 1000]
   lr: [0.01, 0.001]
+  partition: 'gpu'
 scDEF_un:
   layer_sizes: [100, 60, 30, 10, 1]
   tau: 0.01
@@ -16,37 +17,46 @@ scDEF_un:
   num_samples: 10
   n_epoch: [1, 1]
   lr: [0.01, 0.001]
+  partition: 'gpu'
 PCA:
   n_top_genes: 2000
+  partition: 'cpu'
   settings:
 nSBM:
   n_top_genes: 2000
+  partition: 'cpu'
   settings:
     n_init: 1
 NMF:
   n_top_genes: 4000
+  partition: 'cpu'
   settings:
     max_iter: 1
 scHPF:
   n_top_genes: 4000
+  partition: 'cpu'
   settings:
     min_iter: 1
     max_iter: 1
 scVI:
   n_top_genes: 2000
+  partition: 'gpu'
   settings:
     max_epochs: 2
     batch_size: 128
     early_stopping: True
 fscLVM:
   n_top_genes: 4000
+  partition: 'gpu'
   settings:
     batch_size: 0
     n_epochs: 1
     seed: 42
 Harmony:
   n_top_genes: 2000
+  partition: 'cpu'
   settings:
 Scanorama:
   n_top_genes: 2000
+  partition: 'cpu'
   settings:

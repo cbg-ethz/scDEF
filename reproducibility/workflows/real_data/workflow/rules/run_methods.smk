@@ -4,6 +4,8 @@ envs_path = "../../../../envs"
 rule run_scdef:
     conda:
         envs_path + "/scdef.yml"
+    resources:
+        partition = 'gpu'        
     params:
         nmf_init = config['scDEF']['nmf_init'],
         tau = config['scDEF']['tau'],
@@ -28,6 +30,8 @@ rule run_scdef:
 rule run_scdef_un:
     conda:
         envs_path + "/scdef.yml"        
+    resources:
+        partition = 'gpu'
     params:
         nmf_init = config['scDEF_un']['nmf_init'],
         tau = config['scDEF_un']['tau'],
@@ -51,6 +55,8 @@ rule run_scdef_un:
 rule run_method:
     conda:
         envs_path + "/{method}.yml"        
+    resources:
+        partition = lambda wildcards: config[wildcards.method]['partition'],
     params:
         metrics = METRICS,    
         seed = SEED,
