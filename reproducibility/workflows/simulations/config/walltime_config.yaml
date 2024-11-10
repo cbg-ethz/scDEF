@@ -5,4 +5,4 @@ n_cells: [100, 1_000, 10_000, 100_000]
 n_reps: 5
 n_batches: 4
 frac_shared: 1.
-methods: ["scDEF", "scDEF_un", "Unintegrated", "NMF", "scHPF", "scVI", "Harmony", "Scanorama", "nSBM", "fscLVM"]
+methods: ["scDEF", "scDEF_un", "PCA", "NMF", "scHPF", "scVI", "Harmony", "Scanorama", "nSBM", "fscLVM"]
