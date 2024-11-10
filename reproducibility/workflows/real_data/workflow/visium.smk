@@ -15,7 +15,6 @@ rule all:
 rule prepare_input:
     params:
         data_fname = config['data_path'],
-        annotations_fname = config['annotations_path'],
         seed = config['seed'],
         genes_to_remove = config['genes_to_remove'],
         n_top_genes = config['n_top_genes'],

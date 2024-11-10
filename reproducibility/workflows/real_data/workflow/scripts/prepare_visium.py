@@ -7,10 +7,10 @@ import anndata as ad
 import scanpy as sc
 import squidpy as sq
 
-np.random.seed(seed)
+np.random.seed(snakemake.params.seed)
 spatial_adata = sc.read_visium(
-    params.data_fname,
-    count_file="CytAssist_FFPE_Human_Breast_Cancer_filtered_feature_bc_matrix.h5",
+    params.data_path,
+    count_file=data_fname,
 )
 
 spatial_adata.obs_names_make_unique()

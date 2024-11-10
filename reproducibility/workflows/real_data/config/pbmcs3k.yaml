@@ -1,5 +1,5 @@
-data_path: '/Users/pedrof/Downloads/pbmcs3k.h5ad'
-methods: ["fscLVM"]
+data_path: 'data/pbmcs3k/pbmcs3k.h5ad'
+methods: ["scDEF_un", "PCA", "NMF", "scHPF", "nSBM", "fscLVM"]
 seed: 42
 min_genes: 200
 min_cells: 3

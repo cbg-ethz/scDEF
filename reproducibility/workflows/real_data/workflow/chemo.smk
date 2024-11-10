@@ -1,10 +1,10 @@
 # This just generates the raw results from all the methods
 # The figures are generated within a notebook that only requires the results
 
-configfile: "config/hgsoc_chemo.yaml"
+configfile: "config/chemo.yaml"
 configfile: "config/methods.yaml"
 
-output_path = "results/hgsoc_chemo"
+output_path = "results/chemo"
 
 METHODS = config["methods"]
 SEED = config["seed"]
@@ -32,9 +32,8 @@ rule prepare_input:
     conda:
         "../../../envs/scdef.yml"
     params:
-        data_fname = config['data_path'],
-        markers_fname = config['markers_path'],
-        gene_names_fname = config['gene_names_path'],
+        counts_fname = config['counts_path'],
+        annotations_fname = config['annotations_path'],
         seed = config['seed'],
         genes_to_remove = config['genes_to_remove'],
         n_top_genes = config['n_top_genes'],
@@ -43,4 +42,4 @@ rule prepare_input:
     output:
         fname = output_path + '/prepared_input.h5ad'
     script:
-        'scripts/prepare_hgsoc_chemo.py'
+        'scripts/prepare_chemo.py'

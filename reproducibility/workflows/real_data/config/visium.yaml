@@ -1,25 +1,11 @@
-data_path: ''
-methods: ["scDEF"]
+data_path: 'visium/'
+data_fname: 'CytAssist_FFPE_Human_Breast_Cancer_filtered_feature_bc_matrix.h5'
+methods: ["scDEF_un"]
 seed: 42
 min_genes: 200
 min_cells: 3
 genes_to_remove: ['MALAT1']
 n_top_genes: 4000
 metrics:
-    - "Cell Type ARI"
-    - "Cell Type ASW"
-    - "Batch ARI"
-    - "Batch ASW"
-    - "Hierarchy accuracy"
     - "Hierarchical signature consistency"
     - "Signature sparsity"
-    - "Signature accuracy"
-scdef:
-  layer_sizes: [100, 60, 30, 10, 1]
-  tau: 1e-2
-  mu: 1e-2
-  nmf_init: True
-  batch_size: 256
-  num_samples: 10
-  n_epochs: [1000, 1000]
-  lr: [1e-2, 1e-3]

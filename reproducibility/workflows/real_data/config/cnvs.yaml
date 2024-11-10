@@ -1,5 +1,10 @@
-data_path: 'data/pbmcsifn/ifnb.h5ad'
-methods: ["scDEF_un", "scDEF", "PCA", "NMF", "scHPF", "scVI", "Harmony", "Scanorama", "nSBM", "fscLVM"]
+data_path: 'data/cnvs/all_cells.h5ad'
+annotations_path: 'annot.csv'
+donor_1: 'SPECTRUM-OV-026'
+celltype_1: 'Ovarian.cancer.cell'
+donor_2: 'SPECTRUM-OV-082'
+celltype_2: 'Fibroblast'
+methods: ["scDEF", "PCA", "NMF", "scHPF", "scVI", "Harmony", "Scanorama", "nSBM", "fscLVM"]
 seed: 42
 min_genes: 200
 min_cells: 3

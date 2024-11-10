@@ -2,14 +2,14 @@ import scanpy as sc
 import numpy as np
 
 np.random.seed(snakemake.params.seed)
-adata = sc.read_h5ad(params.data_fname)
+adata = sc.read_h5ad(snakemake.params.data_fname)
 adata.__dict__["_raw"].__dict__["_var"] = (
     adata.__dict__["_raw"].__dict__["_var"].rename(columns={"_index": "features"})
 )
 adata.var = adata.var.drop(columns="features")
 
 # Remove some genes
-for gene in params.genes_to_remove:
+for gene in snakemake.params.genes_to_remove:
     adata = adata[:, adata.var_names != gene]
 
 sc.pp.filter_cells(adata, min_genes=200)

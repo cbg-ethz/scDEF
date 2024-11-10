@@ -1,4 +1,5 @@
-data_path: 'data/pbmcs2b/pbmcs2b.h5ad'
+counts_path: 'data/chemo/GSE165897_UMIcounts_HGSOC.tsv'
+annotations_path: 'data/chemo/GSE165897_cellInfo_HGSOC.tsv'
 methods: ["scDEF_un", "scDEF", "PCA", "NMF", "scHPF", "scVI", "Harmony", "Scanorama", "nSBM", "fscLVM"]
 seed: 42
 min_genes: 200
@@ -6,11 +7,7 @@ min_cells: 3
 genes_to_remove: ['MALAT1']
 n_top_genes: 4000
 metrics:
-    - "Cell Type ARI"
-    - "Cell Type ASW"
     - "Batch ARI"
     - "Batch ASW"
-    - "Hierarchy accuracy"
     - "Hierarchical signature consistency"
     - "Signature sparsity"
-    - "Signature accuracy"

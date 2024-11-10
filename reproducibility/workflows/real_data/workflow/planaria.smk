@@ -32,7 +32,7 @@ rule prepare_input:
     conda:
         "../../../envs/scdef.yml"
     params:
-        data_fname = config['data_path'],
+        data_path = config['data_path'],
         markers_fname = config['markers_path'],
         gene_names_fname = config['gene_names_path'],
         seed = config['seed'],
