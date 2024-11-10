@@ -1,4 +1,4 @@
-data_path: 'data/pbmcs3k/pbmcs3k.h5ad'
+data_path: '/cluster/work/bewi/members/pedrof/scdef_revisions/init_data/pbmcs3k/pbmcs3k.h5ad'
 methods: ["scDEF_un", "PCA", "NMF", "scHPF", "nSBM", "fscLVM"]
 seed: 42
 min_genes: 200

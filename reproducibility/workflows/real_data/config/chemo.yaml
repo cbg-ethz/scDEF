@@ -1,5 +1,5 @@
-counts_path: 'data/chemo/GSE165897_UMIcounts_HGSOC.tsv'
-annotations_path: 'data/chemo/GSE165897_cellInfo_HGSOC.tsv'
+counts_path: '/cluster/work/bewi/members/pedrof/scdef_revisions/init_data/chemo/GSE165897_UMIcounts_HGSOC.tsv'
+annotations_path: '/cluster/work/bewi/members/pedrof/scdef_revisions/init_data/chemo/GSE165897_cellInfo_HGSOC.tsv'
 methods: ["scDEF_un", "scDEF", "PCA", "NMF", "scHPF", "scVI", "Harmony", "Scanorama", "nSBM", "fscLVM"]
 seed: 42
 min_genes: 200

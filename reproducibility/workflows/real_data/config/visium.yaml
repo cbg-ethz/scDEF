@@ -1,4 +1,4 @@
-data_path: 'visium/'
+data_path: '/cluster/work/bewi/members/pedrof/scdef_revisions/init_data/visium/'
 data_fname: 'CytAssist_FFPE_Human_Breast_Cancer_filtered_feature_bc_matrix.h5'
 methods: ["scDEF_un"]
 seed: 42

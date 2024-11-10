@@ -1,5 +1,5 @@
-data_path: 'data/cnvs/all_cells.h5ad'
-annotations_path: 'annot.csv'
+data_path: '/cluster/work/bewi/members/pedrof/scdef_revisions/init_data/cnvs/all_cells.h5ad'
+annotations_path: '/cluster/work/bewi/members/pedrof/scdef_revisions/init_data/cnvs/annot.csv'
 donor_1: 'SPECTRUM-OV-026'
 celltype_1: 'Ovarian.cancer.cell'
 donor_2: 'SPECTRUM-OV-082'
