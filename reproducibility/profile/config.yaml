@@ -10,10 +10,10 @@ set-resources:
   run_scvi:
     slurm_extra: "'--gpus=1'"
   run_fsclvm:
-    slurm_extra: "'--gpus=1'"            
+    slurm_extra: "'--gpus=1'"
 
 default-resources:
-  mem_mb_per_cpu: max(2*input.size_mb, 8192)
+  mem_mb_per_cpu: 100000
   runtime: 240
   slurm_account: "'es_beere'"
 
