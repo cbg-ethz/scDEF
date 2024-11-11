@@ -4,8 +4,6 @@ envs_path = "../../../../envs"
 rule run_scdef:
     conda:
         envs_path + "/scdef.yml"
-    resources:
-        partition = config['scDEF']['partition'],
     params:
         nmf_init = config['scDEF']['nmf_init'],
         tau = config['scDEF']['tau'],
@@ -30,9 +28,6 @@ rule run_scdef:
 rule run_scdef_un:
     conda:
         envs_path + "/scdef.yml"        
-    resources:
-        partition = config['scDEF_un']['partition'],
-        slurm_extra="--gres=gpu:1"
     params:
         nmf_init = config['scDEF_un']['nmf_init'],
         tau = config['scDEF_un']['tau'],
