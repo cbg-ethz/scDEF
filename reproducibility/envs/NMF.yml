@@ -8,4 +8,4 @@ dependencies:
   - leidenalg
   - pip
   - pip:
-      - scdef==0.1.3
+    - scdef==0.1.6

@@ -48,143 +48,146 @@ rule run_scdef_un:
     script:
         scripts_path + "/run_scdef_un.py"
 
-rule run_method:
+rule run_pca:
     conda:
-        envs_path + "/{method}.yml"        
+        envs_path + "/PCA.yml"        
     params:
         metrics = METRICS,    
         seed = SEED,
-        method = "{method}",
-        n_top_genes = lambda wildcards: config[wildcards.method]['n_top_genes'],
-        settings = lambda wildcards: config[wildcards.method]['settings'],
+        method = "PCA",
+        n_top_genes = config["PCA"]['n_top_genes'],
+        settings = config["PCA"]['settings'],
         store_full = True
     input:
         fname = output_path + '/prepared_input.h5ad',
     output:
-        out_fname = output_path + '/{method}/{method}.h5ad',
-        scores_fname = output_path + '/{method}/{method}.csv',
+        out_fname = output_path + '/PCA/PCA.h5ad',
+        scores_fname = output_path + '/PCA/PCA.csv',
     script:
         scripts_path + "/run_method.py"
 
-# rule run_unintegrated:
-#     conda:
-#         envs_path + "/scdef.yml"        
-#     params:
-#         metrics = METRICS,    
-#         seed = SEED,
-#     input:
-#         adata = output_path + '/prepared_input.h5ad',
-#     output:
-#         out_fname = output_path + '/Unintegrated/Unintegrated.h5ad',
-#         scores_fname = output_path + '/Unintegrated/Unintegrated.csv',
-#     script:
-#         scripts_path + "/run_unintegrated.py"
+rule run_nmf:
+    conda:
+        envs_path + "/NMF.yml"        
+    params:
+        metrics = METRICS,    
+        seed = SEED,
+        method = "NMF",
+        n_top_genes = config["NMF"]['n_top_genes'],
+        settings = config["NMF"]['settings'],
+        store_full = True
+    input:
+        fname = output_path + '/prepared_input.h5ad',
+    output:
+        out_fname = output_path + '/NMF/NMF.h5ad',
+        scores_fname = output_path + '/NMF/NMF.csv',
+    script:
+        scripts_path + "/run_method.py"
 
-# rule run_nmf:
-#     conda:
-#         envs_path + "/scdef.yml"        
-#     params:
-#         metrics = METRICS,    
-#         seed = SEED,
-#         method = 'NMF',
-#         settings = config['NMF'],
-#     input:
-#         adata = output_path + '/prepared_input.h5ad',
-#     output:
-#         out_fname = output_path + '/NMF/NMF.h5ad',
-#         scores_fname = output_path + '/NMF/NMF.csv',
-#     script:
-#         scripts_path + "/run_method.py"
+rule run_schpf:
+    conda:
+        envs_path + "/scHPF.yml"        
+    params:
+        metrics = METRICS,    
+        seed = SEED,
+        method = "scHPF",
+        n_top_genes = config["scHPF"]['n_top_genes'],
+        settings = config["scHPF"]['settings'],
+        store_full = True
+    input:
+        fname = output_path + '/prepared_input.h5ad',
+    output:
+        out_fname = output_path + '/scHPF/scHPF.h5ad',
+        scores_fname = output_path + '/scHPF/scHPF.csv',
+    script:
+        scripts_path + "/run_method.py"
 
-# rule run_schpf:
-#     params:
-#         metrics = METRICS,    
-#         seed = SEED,
-#         method = 'scHPF',
-#         settings = config['scHPF'],
-#     input:
-#         adata = output_path + '/prepared_input.h5ad',
-#     output:
-#         out_fname = output_path + '/scHPF/scHPF.h5ad',
-#         scores_fname = output_path + '/scHPF/scHPF.csv',
-#     script:
-#         scripts_path + "/run_method.py"
+rule run_scvi:
+    conda:
+        envs_path + "/scVI.yml"        
+    params:
+        metrics = METRICS,    
+        seed = SEED,
+        method = "scVI",
+        n_top_genes = config["scVI"]['n_top_genes'],
+        settings = config["scVI"]['settings'],
+        store_full = True
+    input:
+        fname = output_path + '/prepared_input.h5ad',
+    output:
+        out_fname = output_path + '/scVI/scVI.h5ad',
+        scores_fname = output_path + '/scVI/scVI.csv',
+    script:
+        scripts_path + "/run_method.py"
 
-# rule run_scvi:
-#     conda:
-#         envs_path + "/scvi.yml"                
-#     params:
-#         metrics = METRICS,    
-#         seed = SEED,
-#         method = 'scVI',
-#         settings = config['scVI']
-#     input:
-#         adata = output_path + '/prepared_input.h5ad',
-#     output:
-#         out_fname = output_path + '/scVI/scVI.h5ad',
-#         scores_fname = output_path + '/scVI/scVI.csv',
-#     script:
-#         scripts_path + "/run_method.py"
+rule run_harmony:
+    conda:
+        envs_path + "/Harmony.yml"        
+    params:
+        metrics = METRICS,    
+        seed = SEED,
+        method = "Harmony",
+        n_top_genes = config["Harmony"]['n_top_genes'],
+        settings = config["Harmony"]['settings'],
+        store_full = True
+    input:
+        fname = output_path + '/prepared_input.h5ad',
+    output:
+        out_fname = output_path + '/Harmony/Harmony.h5ad',
+        scores_fname = output_path + '/Harmony/Harmony.csv',
+    script:
+        scripts_path + "/run_method.py"
 
-# rule run_harmony:
-#     conda:
-#         envs_path + "/harmony.yml"
-#     params:
-#         metrics = METRICS,    
-#         seed = SEED,
-#         method = 'Harmony',
-#     input:
-#         adata = output_path + '/prepared_input.h5ad',
-#     output:
-#         out_fname = output_path + '/Harmony/Harmony.h5ad',
-#         scores_fname = output_path + '/Harmony/Harmony.csv',
-#     script:
-#         scripts_path + "/run_method.py"
+rule run_scanorama:
+    conda:
+        envs_path + "/Scanorama.yml"        
+    params:
+        metrics = METRICS,    
+        seed = SEED,
+        method = "Scanorama",
+        n_top_genes = config["Scanorama"]['n_top_genes'],
+        settings = config["Scanorama"]['settings'],
+        store_full = True
+    input:
+        fname = output_path + '/prepared_input.h5ad',
+    output:
+        out_fname = output_path + '/Scanorama/Scanorama.h5ad',
+        scores_fname = output_path + '/Scanorama/Scanorama.csv',
+    script:
+        scripts_path + "/run_method.py"
 
-# rule run_scanorama:
-#     conda:
-#         envs_path + "/scanorama.yml"        
-#     params:
-#         metrics = METRICS,    
-#         seed = SEED,
-#         method = 'Scanorama',
-#     input:
-#         adata = output_path + '/prepared_input.h5ad',
-#     output:
-#         out_fname = output_path + '/Scanorama/Scanorama.h5ad',
-#         scores_fname = output_path + '/Scanorama/Scanorama.csv',
-#     script:
-#         scripts_path + "/run_method.py"
+rule run_nsbm:
+    conda:
+        envs_path + "/nSBM.yml"        
+    params:
+        metrics = METRICS,    
+        seed = SEED,
+        method = "nSBM",
+        n_top_genes = config["nSBM"]['n_top_genes'],
+        settings = config["nSBM"]['settings'],
+        store_full = True
+    input:
+        fname = output_path + '/prepared_input.h5ad',
+    output:
+        out_fname = output_path + '/nSBM/nSBM.h5ad',
+        scores_fname = output_path + '/nSBM/nSBM.csv',
+    script:
+        scripts_path + "/run_method.py"
 
-# rule run_nsbm:
-#     conda:
-#         envs_path + "/nsbm.yml"                
-#     params:
-#         metrics = METRICS,    
-#         seed = SEED,
-#         method = 'nSBM',
-#         settings = config['nSBM'],
-#     input:
-#         adata = output_path + '/prepared_input.h5ad',
-#     output:
-#         out_fname = output_path + '/nSBM/nSBM.h5ad',
-#         scores_fname = output_path + '/nSBM/nSBM.csv',
-#     script:
-#         scripts_path + "/run_method.py"
-
-# rule run_fsclvm:
-#     conda:
-#         envs_path + "/fsclvm.yml"                        
-#     params:
-#         metrics = METRICS,    
-#         seed = SEED,
-#         method = 'fscLVM',
-#         batch_size = config['fscLVM']['batch_size'],   
-#         n_epochs = config['fscLVM']['n_epochs'],   
-#     input:
-#         adata = output_path + '/prepared_input.h5ad',
-#     output:
-#         out_fname = output_path + '/fscLVM/fscLVM.h5ad',
-#         scores_fname = output_path + '/fscLVM/fscLVM.csv',
-#     script:
-#         scripts_path + "/run_method.py"
+rule run_fsclvm:
+    conda:
+        envs_path + "/fscLVM.yml"        
+    params:
+        metrics = METRICS,    
+        seed = SEED,
+        method = "fscLVM",
+        n_top_genes = config["fscLVM"]['n_top_genes'],
+        settings = config["fscLVM"]['settings'],
+        store_full = True
+    input:
+        fname = output_path + '/prepared_input.h5ad',
+    output:
+        out_fname = output_path + '/fscLVM/fscLVM.h5ad',
+        scores_fname = output_path + '/fscLVM/fscLVM.csv',
+    script:
+        scripts_path + "/run_method.py"

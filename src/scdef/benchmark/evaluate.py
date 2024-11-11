@@ -93,15 +93,20 @@ def evaluate_methods(
             if isinstance(method_outs, scDEF):
                 _, signature_scores = method_outs.get_signatures_dict(scores=True)
                 for node in signature_scores:
-                    ginis.append(score_utils.gini(signature_scores[node]))
-            else:
-                for node in method_outs["scores"]:
                     ginis.append(
                         score_utils.gini(
-                            method_outs["scores"][node]
-                            - np.min(method_outs["scores"][node])
+                            signature_scores[node] - np.min(signature_scores[node])
                         )
                     )
+            else:
+                for node in method_outs["scores"]:
+                    arr = method_outs["scores"][node] - np.min(
+                        method_outs["scores"][node]
+                    )
+                    if np.var(arr) == 0.0:
+                        ginis.append(0.0)
+                    else:
+                        ginis.append(score_utils.gini(arr))
             sparsity = np.mean(ginis)
             df.loc["Signature sparsity", method] = sparsity
 
@@ -312,4 +317,6 @@ def evaluate_hierarchical_signatures_consistency(
                 [signatures[parent][:top_genes], consensus_signature[:top_genes]]
             )
             overlaps.append(overlap)
+    if len(overlaps) == 0:
+        return 0.0
     return np.mean(overlaps)

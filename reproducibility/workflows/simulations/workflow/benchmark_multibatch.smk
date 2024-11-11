@@ -113,22 +113,140 @@ rule run_scdef_un:
     output:
         scores_fname = output_path + '/scDEF_un/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_scores.csv',
     script:
-        methods_scripts_path + "/run_scdef_un.py"
+        methods_scripts_path + "/run_scdef_un.py"      
 
-rule run_method:
+rule run_pca:
     conda:
-        envs_path + "/{method}.yml"        
+        envs_path + "/PCA.yml"        
     params:
         metrics = METRICS,    
-        seed = "{rep_id}",
-        method = "{method}",
-        n_top_genes = lambda wildcards: config[wildcards.method]['n_top_genes'],
-        settings = lambda wildcards: config[wildcards.method]['settings'],
-        store_full = False
+        seed = SEED,
+        method = "PCA",
+        n_top_genes = config["PCA"]['n_top_genes'],
+        settings = config["PCA"]['settings'],
+        store_full = True
     input:
         fname = output_path + '/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}.h5ad',
     output:
-        scores_fname = output_path + '/{method}/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_scores.csv',
+        scores_fname = output_path + '/PCA/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_scores.csv',
     script:
         methods_scripts_path + "/run_method.py"
-      
+
+rule run_nmf:
+    conda:
+        envs_path + "/NMF.yml"        
+    params:
+        metrics = METRICS,    
+        seed = SEED,
+        method = "NMF",
+        n_top_genes = config["NMF"]['n_top_genes'],
+        settings = config["NMF"]['settings'],
+        store_full = True
+    input:
+        fname = output_path + '/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}.h5ad',
+    output:
+        scores_fname = output_path + '/NMF/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_scores.csv',
+    script:
+        methods_scripts_path + "/run_method.py"
+
+rule run_schpf:
+    conda:
+        envs_path + "/scHPF.yml"        
+    params:
+        metrics = METRICS,    
+        seed = SEED,
+        method = "scHPF",
+        n_top_genes = config["scHPF"]['n_top_genes'],
+        settings = config["scHPF"]['settings'],
+        store_full = True
+    input:
+        fname = output_path + '/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}.h5ad',
+    output:
+        scores_fname = output_path + '/scHPF/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_scores.csv',
+    script:
+        methods_scripts_path + "/run_method.py"
+
+rule run_scvi:
+    conda:
+        envs_path + "/scVI.yml"        
+    params:
+        metrics = METRICS,    
+        seed = SEED,
+        method = "scVI",
+        n_top_genes = config["scVI"]['n_top_genes'],
+        settings = config["scVI"]['settings'],
+        store_full = True
+    input:
+        fname = output_path + '/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}.h5ad',
+    output:
+        scores_fname = output_path + '/scVI/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_scores.csv',
+    script:
+        methods_scripts_path + "/run_method.py"
+
+rule run_harmony:
+    conda:
+        envs_path + "/Harmony.yml"        
+    params:
+        metrics = METRICS,    
+        seed = SEED,
+        method = "Harmony",
+        n_top_genes = config["Harmony"]['n_top_genes'],
+        settings = config["Harmony"]['settings'],
+        store_full = True
+    input:
+        fname = output_path + '/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}.h5ad',
+    output:
+        scores_fname = output_path + '/Harmony/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_scores.csv',
+    script:
+        methods_scripts_path + "/run_method.py"
+
+rule run_scanorama:
+    conda:
+        envs_path + "/Scanorama.yml"        
+    params:
+        metrics = METRICS,    
+        seed = SEED,
+        method = "Scanorama",
+        n_top_genes = config["Scanorama"]['n_top_genes'],
+        settings = config["Scanorama"]['settings'],
+        store_full = True
+    input:
+        fname = output_path + '/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}.h5ad',
+    output:
+        scores_fname = output_path + '/Scanorama/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_scores.csv',
+    script:
+        methods_scripts_path + "/run_method.py"
+
+rule run_nsbm:
+    conda:
+        envs_path + "/nSBM.yml"        
+    params:
+        metrics = METRICS,    
+        seed = SEED,
+        method = "nSBM",
+        n_top_genes = config["nSBM"]['n_top_genes'],
+        settings = config["nSBM"]['settings'],
+        store_full = True
+    input:
+        fname = output_path + '/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}.h5ad',
+    output:
+        scores_fname = output_path + '/nSBM/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_scores.csv',
+    script:
+        methods_scripts_path + "/run_method.py"
+
+rule run_fsclvm:
+    conda:
+        envs_path + "/fscLVM.yml"        
+    params:
+        metrics = METRICS,    
+        seed = SEED,
+        method = "fscLVM",
+        n_top_genes = config["fscLVM"]['n_top_genes'],
+        settings = config["fscLVM"]['settings'],
+        store_full = True
+    input:
+        fname = output_path + '/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}.h5ad',
+    output:
+        scores_fname = output_path + '/fscLVM/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_scores.csv',
+    script:
+        methods_scripts_path + "/run_method.py"     

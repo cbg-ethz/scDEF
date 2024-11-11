@@ -9,9 +9,9 @@ dependencies:
   - python=3.10
   - leidenalg
   - pytorch
-  #- pytorch-cuda=12.1
+  - pytorch-cuda=12.1
   - pip
   - pip:
-      - muvi
-      - anndata==0.10.8
-      - scdef==0.1.5
+    - muvi
+    - anndata==0.10.8
+    - scdef==0.1.6

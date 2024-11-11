@@ -104,3 +104,87 @@ rule run_method:
     script:
         methods_scripts_path + "/run_method.py"
       
+rule run_pca:
+    conda:
+        envs_path + "/PCA.yml"        
+    params:
+        metrics = METRICS,    
+        seed = SEED,
+        method = "PCA",
+        n_top_genes = config["PCA"]['n_top_genes'],
+        settings = config["PCA"]['settings'],
+        store_full = True
+    input:
+        fname = output_path + '/data/sep_{separability}/rep_{rep_id}.h5ad'
+    output:
+        scores_fname = output_path + '/PCA/sep_{separability}/rep_{rep_id}_scores.csv',
+    script:
+        methods_scripts_path + "/run_method.py"
+
+rule run_nmf:
+    conda:
+        envs_path + "/NMF.yml"        
+    params:
+        metrics = METRICS,    
+        seed = SEED,
+        method = "NMF",
+        n_top_genes = config["NMF"]['n_top_genes'],
+        settings = config["NMF"]['settings'],
+        store_full = True
+    input:
+        fname = output_path + '/data/sep_{separability}/rep_{rep_id}.h5ad'
+    output:
+        scores_fname = output_path + '/NMF/sep_{separability}/rep_{rep_id}_scores.csv',
+    script:
+        methods_scripts_path + "/run_method.py"
+
+rule run_schpf:
+    conda:
+        envs_path + "/scHPF.yml"        
+    params:
+        metrics = METRICS,    
+        seed = SEED,
+        method = "scHPF",
+        n_top_genes = config["scHPF"]['n_top_genes'],
+        settings = config["scHPF"]['settings'],
+        store_full = True
+    input:
+        fname = output_path + '/data/sep_{separability}/rep_{rep_id}.h5ad'
+    output:
+        scores_fname = output_path + '/scHPF/sep_{separability}/rep_{rep_id}_scores.csv',
+    script:
+        methods_scripts_path + "/run_method.py"
+
+rule run_nsbm:
+    conda:
+        envs_path + "/nSBM.yml"        
+    params:
+        metrics = METRICS,    
+        seed = SEED,
+        method = "nSBM",
+        n_top_genes = config["nSBM"]['n_top_genes'],
+        settings = config["nSBM"]['settings'],
+        store_full = True
+    input:
+        fname = output_path + '/data/sep_{separability}/rep_{rep_id}.h5ad'
+    output:
+        scores_fname = output_path + '/nSBM/sep_{separability}/rep_{rep_id}_scores.csv',
+    script:
+        methods_scripts_path + "/run_method.py"
+
+rule run_fsclvm:
+    conda:
+        envs_path + "/fscLVM.yml"        
+    params:
+        metrics = METRICS,    
+        seed = SEED,
+        method = "fscLVM",
+        n_top_genes = config["fscLVM"]['n_top_genes'],
+        settings = config["fscLVM"]['settings'],
+        store_full = True
+    input:
+        fname = output_path + '/data/sep_{separability}/rep_{rep_id}.h5ad'
+    output:
+        scores_fname = output_path + '/fscLVM/sep_{separability}/rep_{rep_id}_scores.csv',
+    script:
+        methods_scripts_path + "/run_method.py"  

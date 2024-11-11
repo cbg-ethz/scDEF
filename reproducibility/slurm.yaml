@@ -1,0 +1,9 @@
+default-resources:
+  - runtime=100
+  - mem_mb=6000
+  - disk_mb=1000000
+set-resources:
+    run_scdef:
+        partition: gpu
+    run_scdef_un:
+        partition: gpu
