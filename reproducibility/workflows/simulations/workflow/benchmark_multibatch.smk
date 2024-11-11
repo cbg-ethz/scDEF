@@ -13,8 +13,6 @@ N_REPS = config["n_reps"]
 SEPARABILITY = config["de_fscale"]
 FRACS_SHARED = config["frac_shared"]
 
-ruleorder: run_scdef_un > run_scdef > run_method
-
 rule all:
     input:
         output_path + '/multibatch_scores.csv'
@@ -120,7 +118,7 @@ rule run_pca:
         envs_path + "/PCA.yml"        
     params:
         metrics = METRICS,    
-        seed = SEED,
+        seed = "{rep_id}",
         method = "PCA",
         n_top_genes = config["PCA"]['n_top_genes'],
         settings = config["PCA"]['settings'],
@@ -137,7 +135,7 @@ rule run_nmf:
         envs_path + "/NMF.yml"        
     params:
         metrics = METRICS,    
-        seed = SEED,
+        seed = "{rep_id}",
         method = "NMF",
         n_top_genes = config["NMF"]['n_top_genes'],
         settings = config["NMF"]['settings'],
@@ -154,7 +152,7 @@ rule run_schpf:
         envs_path + "/scHPF.yml"        
     params:
         metrics = METRICS,    
-        seed = SEED,
+        seed = "{rep_id}",
         method = "scHPF",
         n_top_genes = config["scHPF"]['n_top_genes'],
         settings = config["scHPF"]['settings'],
@@ -171,7 +169,7 @@ rule run_scvi:
         envs_path + "/scVI.yml"        
     params:
         metrics = METRICS,    
-        seed = SEED,
+        seed = "{rep_id}",
         method = "scVI",
         n_top_genes = config["scVI"]['n_top_genes'],
         settings = config["scVI"]['settings'],
@@ -188,7 +186,7 @@ rule run_harmony:
         envs_path + "/Harmony.yml"        
     params:
         metrics = METRICS,    
-        seed = SEED,
+        seed = "{rep_id}",
         method = "Harmony",
         n_top_genes = config["Harmony"]['n_top_genes'],
         settings = config["Harmony"]['settings'],
@@ -205,7 +203,7 @@ rule run_scanorama:
         envs_path + "/Scanorama.yml"        
     params:
         metrics = METRICS,    
-        seed = SEED,
+        seed = "{rep_id}",
         method = "Scanorama",
         n_top_genes = config["Scanorama"]['n_top_genes'],
         settings = config["Scanorama"]['settings'],
@@ -222,7 +220,7 @@ rule run_nsbm:
         envs_path + "/nSBM.yml"        
     params:
         metrics = METRICS,    
-        seed = SEED,
+        seed = "{rep_id}",
         method = "nSBM",
         n_top_genes = config["nSBM"]['n_top_genes'],
         settings = config["nSBM"]['settings'],
@@ -239,7 +237,7 @@ rule run_fsclvm:
         envs_path + "/fscLVM.yml"        
     params:
         metrics = METRICS,    
-        seed = SEED,
+        seed = "{rep_id}",
         method = "fscLVM",
         n_top_genes = config["fscLVM"]['n_top_genes'],
         settings = config["fscLVM"]['settings'],

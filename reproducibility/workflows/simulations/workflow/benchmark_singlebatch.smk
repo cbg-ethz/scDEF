@@ -12,8 +12,6 @@ METRICS = config["metrics"]
 N_REPS = config["n_reps"]
 SEPARABILITY = config["de_fscale"]
 
-ruleorder: run_scdef_un > run_method
-
 rule all:
     input:
         output_path + '/singlebatch_scores.csv'
@@ -55,7 +53,7 @@ rule prepare_input:
     conda:
         envs_path + "/scdef.yml"
     params:
-        seed = config['seed'],
+        seed = "{rep_id}",
     input:
         counts_fname = output_path + '/data/sep_{separability}/rep_{rep_id}_counts.csv',
         meta_fname = output_path + '/data/sep_{separability}/rep_{rep_id}_meta.csv',
@@ -87,29 +85,29 @@ rule run_scdef_un:
     script:
         methods_scripts_path + "/run_scdef_un.py"
 
-rule run_method:
-    conda:
-        envs_path + "/{method}.yml"        
-    params:
-        metrics = METRICS,    
-        seed = "{rep_id}",
-        method = "{method}",
-        n_top_genes = lambda wildcards: config[wildcards.method]['n_top_genes'],
-        settings = lambda wildcards: config[wildcards.method]['settings'],
-        store_full = False
-    input:
-        fname = output_path + '/data/sep_{separability}/rep_{rep_id}.h5ad'
-    output:
-        scores_fname = output_path + '/{method}/sep_{separability}/rep_{rep_id}_scores.csv',
-    script:
-        methods_scripts_path + "/run_method.py"
+# rule run_method:
+#     conda:
+#         envs_path + "/{method}.yml"        
+#     params:
+#         metrics = METRICS,    
+#         seed = "{rep_id}",
+#         method = "{method}",
+#         n_top_genes = lambda wildcards: config[wildcards.method]['n_top_genes'],
+#         settings = lambda wildcards: config[wildcards.method]['settings'],
+#         store_full = False
+#     input:
+#         fname = output_path + '/data/sep_{separability}/rep_{rep_id}.h5ad'
+#     output:
+#         scores_fname = output_path + '/{method}/sep_{separability}/rep_{rep_id}_scores.csv',
+#     script:
+#         methods_scripts_path + "/run_method.py"
       
 rule run_pca:
     conda:
         envs_path + "/PCA.yml"        
     params:
         metrics = METRICS,    
-        seed = SEED,
+        seed = "{rep_id}",
         method = "PCA",
         n_top_genes = config["PCA"]['n_top_genes'],
         settings = config["PCA"]['settings'],
@@ -126,7 +124,7 @@ rule run_nmf:
         envs_path + "/NMF.yml"        
     params:
         metrics = METRICS,    
-        seed = SEED,
+        seed = "{rep_id}",
         method = "NMF",
         n_top_genes = config["NMF"]['n_top_genes'],
         settings = config["NMF"]['settings'],
@@ -143,7 +141,7 @@ rule run_schpf:
         envs_path + "/scHPF.yml"        
     params:
         metrics = METRICS,    
-        seed = SEED,
+        seed = "{rep_id}",
         method = "scHPF",
         n_top_genes = config["scHPF"]['n_top_genes'],
         settings = config["scHPF"]['settings'],
@@ -160,7 +158,7 @@ rule run_nsbm:
         envs_path + "/nSBM.yml"        
     params:
         metrics = METRICS,    
-        seed = SEED,
+        seed = "{rep_id}",
         method = "nSBM",
         n_top_genes = config["nSBM"]['n_top_genes'],
         settings = config["nSBM"]['settings'],
@@ -177,7 +175,7 @@ rule run_fsclvm:
         envs_path + "/fscLVM.yml"        
     params:
         metrics = METRICS,    
-        seed = SEED,
+        seed = "{rep_id}",
         method = "fscLVM",
         n_top_genes = config["fscLVM"]['n_top_genes'],
         settings = config["fscLVM"]['settings'],
