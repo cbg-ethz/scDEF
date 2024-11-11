@@ -10,7 +10,7 @@ import squidpy as sq
 np.random.seed(snakemake.params.seed)
 spatial_adata = sc.read_visium(
     snakemake.params.data_path,
-    count_file=snakemake.data_fname,
+    count_file=snakemake.params.data_fname,
 )
 
 spatial_adata.obs_names_make_unique()
@@ -32,11 +32,6 @@ sc.pp.filter_genes(spatial_adata, min_cells=10)
 
 spatial_adata.layers["counts"] = spatial_adata.X.todense()
 
-spatial_adata.uns["true_markers"] = dict()
-spatial_adata.uns["hierarchy_obs"] = ["clusters"]
-for i, obs in enumerate(spatial_adata.uns["hierarchy_obs"]):
-    spatial_adata.obs[obs] = "h" * i + spatial_adata.obs[obs].astype(str)
-
 sc.pp.normalize_total(spatial_adata, inplace=True)
 sc.pp.log1p(spatial_adata)
 sc.pp.highly_variable_genes(spatial_adata, n_top_genes=snakemake.params.n_top_genes)
@@ -48,5 +43,10 @@ sc.tl.leiden(
     spatial_adata, key_added="clusters", flavor="igraph", directed=False, n_iterations=2
 )
 
+spatial_adata.uns["true_markers"] = dict()
+spatial_adata.uns["hierarchy_obs"] = ["clusters"]
+for i, obs in enumerate(spatial_adata.uns["hierarchy_obs"]):
+    spatial_adata.obs[obs] = "h" * i + spatial_adata.obs[obs].astype(str)
+
 # Write new h5ad file
-adata.write(output.fname)
+spatial_adata.write(snakemake.output.fname)

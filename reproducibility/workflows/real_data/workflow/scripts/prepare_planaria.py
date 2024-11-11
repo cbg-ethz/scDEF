@@ -192,9 +192,9 @@ adata.uns["true_markers"] = markers_dict
 gene_names = pd.read_csv(snakemake.params.gene_names_fname, index_col=0)
 adata.var["gene_name"] = ""
 for gene in gene_names.index:
-    adata.var.loc[gene, "gene_name"] = gene_names.loc[gene, "Name"]
+    if gene in adata.var_names:
+        adata.var.loc[gene, "gene_name"] = gene_names.loc[gene, "Name"]
 
-print(adata)
 # Keep only HVGs
 sc.pp.highly_variable_genes(
     adata, flavor="seurat_v3", layer="counts", n_top_genes=snakemake.params.n_top_genes
@@ -202,7 +202,6 @@ sc.pp.highly_variable_genes(
 adata = adata[:, adata.var.highly_variable]
 
 # Process and visualize the data
-sc.pp.regress_out(adata, ["total_counts", "pct_counts_mt"])
 sc.pp.scale(adata, max_value=10)
 sc.tl.pca(adata, svd_solver="arpack")
 sc.pp.neighbors(adata, n_neighbors=10, n_pcs=40)

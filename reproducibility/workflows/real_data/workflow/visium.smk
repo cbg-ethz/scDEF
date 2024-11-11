@@ -15,9 +15,11 @@ include: "rules/run_methods.smk"
 
 rule all:
     input:
-        output_path + '/scDEF.pkl'
+        output_path + '/scDEF/scDEF.pkl'
 
 rule prepare_input:
+    conda:
+        "../../../envs/squidpy.yml"
     params:
         data_path = config['data_path'],
         data_fname = config['data_fname'],

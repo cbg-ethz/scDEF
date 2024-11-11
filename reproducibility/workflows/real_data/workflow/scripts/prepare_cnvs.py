@@ -109,8 +109,8 @@ sub_adata.write_h5ad(snakemake.output.adata_full_fname)
 # Pick fibroblasts from one patient and cancer cells from another
 celltype_1 = snakemake.params.celltype_1
 celltype_2 = snakemake.params.celltype_2
-sub_sub_adata = init_data[
-    init_data.obs.query(
+sub_sub_adata = sub_adata[
+    sub_adata.obs.query(
         f"(donor_id == '{donor_1}' and author_cell_type == '{celltype_1}') \
                             or (donor_id == '{donor_2}' and author_cell_type == '{celltype_2}') "
     ).index
