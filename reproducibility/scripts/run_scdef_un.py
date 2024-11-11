@@ -49,7 +49,10 @@ df.loc["Runtime", "scDEF"] = duration
 
 # Store scDEF
 if snakemake.params["store_full"]:
-    scdef.dump(snakemake.output["out_fname"])
+    with open(
+        snakemake.output["out_fname"], "wb"
+    ) as outp:  # Overwrites any existing file.
+        pickle.dump(scd, outp, pickle.HIGHEST_PROTOCOL)
 
 # Store scores
 df.to_csv(snakemake.output["scores_fname"])
