@@ -1,5 +1,4 @@
 executor: slurm
-latency-wait: 30
 jobs: 500
 cores: 500
 

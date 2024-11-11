@@ -3,13 +3,15 @@ import scanpy as sc
 import numpy as np
 
 np.random.seed(snakemake.params.seed)
-adata = anndata.read_h5ad(snakemake.params.data_fname)
+adata = anndata.read_h5ad(
+    "/cluster/work/bewi/members/pedrof/scdef_revisions/init_data/pbmcs3k/pbmcs3k.h5ad"
+)
 
 # Remove some genes
-for gene in snakemake.params.genes_to_remove:
+for gene in ["MALAT1"]:
     adata = adata[:, adata.var_names != gene]
-sc.pp.filter_cells(adata, min_genes=snakemake.params.min_genes)
-sc.pp.filter_genes(adata, min_cells=snakemake.params.min_cells)
+sc.pp.filter_cells(adata, min_genes=200)
+sc.pp.filter_genes(adata, min_cells=3)
 adata.var["mt"] = adata.var_names.str.startswith(
     "MT-"
 )  # annotate the group of mitochondrial genes as 'mt'

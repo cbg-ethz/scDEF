@@ -1,6 +1,8 @@
 # This just generates the raw results from all the methods
 # The figures are generated within a notebook that only requires the results
 
+localrules: gather_results
+
 configfile: "config/cnvs.yaml"
 configfile: "config/methods.yaml"
 
