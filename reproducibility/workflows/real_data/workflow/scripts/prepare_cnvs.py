@@ -125,6 +125,13 @@ sc.pp.filter_genes(sub_sub_adata, min_cells=10)
 
 sub_sub_adata.X = sub_sub_adata.layers["counts"]
 
+sub_sub_adata.obs["Cell types"] = sub_sub_adata.obs["author_cell_type"]
+sub_sub_adata.obs["Donor"] = sub_sub_adata.obs["donor_id"]
+sub_sub_adata.uns["true_markers"] = dict()
+adata.uns["hierarchy_obs"] = ["author_cell_type", "donor_id"]
+for i, obs in enumerate(adata.uns["hierarchy_obs"]):
+    adata.obs[obs] = "h" * i + adata.obs[obs].astype(str)
+
 # Keep only HVGs
 sc.pp.normalize_total(sub_sub_adata, target_sum=1e4)
 sc.pp.log1p(sub_sub_adata)

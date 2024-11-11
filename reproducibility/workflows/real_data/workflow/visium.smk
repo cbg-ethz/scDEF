@@ -19,7 +19,8 @@ rule all:
 
 rule prepare_input:
     params:
-        data_fname = config['data_path'],
+        data_path = config['data_path'],
+        data_fname = config['data_fname'],
         seed = config['seed'],
         genes_to_remove = config['genes_to_remove'],
         n_top_genes = config['n_top_genes'],

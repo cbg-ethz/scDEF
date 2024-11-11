@@ -37,6 +37,11 @@ adata.obs["Batch"] = adata.obs["patient_id"]
 adata.obs["Patient"] = adata.obs["patient_id"]
 adata.obs["Treatment"] = adata.obs["treatment_phase"]
 
+adata.uns["true_markers"] = dict()
+adata.uns["hierarchy_obs"] = ["patient_id", "treatment_phase"]
+for i, obs in enumerate(adata.uns["hierarchy_obs"]):
+    adata.obs[obs] = "h" * i + adata.obs[obs].astype(str)
+
 # Keep only HVGs
 sc.pp.normalize_total(adata, target_sum=1e4)
 sc.pp.log1p(adata)
@@ -45,7 +50,6 @@ sc.pp.highly_variable_genes(
     flavor="seurat_v3",
     layer="counts",
     n_top_genes=snakemake.params.n_top_genes,
-    batch_key="Batch",
 )  # Not required, but makes scDEF faster
 adata = adata[:, adata.var.highly_variable]
 

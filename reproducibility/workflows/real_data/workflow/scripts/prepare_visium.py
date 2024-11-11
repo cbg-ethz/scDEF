@@ -9,8 +9,8 @@ import squidpy as sq
 
 np.random.seed(snakemake.params.seed)
 spatial_adata = sc.read_visium(
-    params.data_path,
-    count_file=data_fname,
+    snakemake.params.data_path,
+    count_file=snakemake.data_fname,
 )
 
 spatial_adata.obs_names_make_unique()
@@ -31,9 +31,15 @@ spatial_adata = spatial_adata[spatial_adata.obs["pct_counts_mt"] < 20].copy()
 sc.pp.filter_genes(spatial_adata, min_cells=10)
 
 spatial_adata.layers["counts"] = spatial_adata.X.todense()
+
+spatial_adata.uns["true_markers"] = dict()
+spatial_adata.uns["hierarchy_obs"] = ["clusters"]
+for i, obs in enumerate(spatial_adata.uns["hierarchy_obs"]):
+    spatial_adata.obs[obs] = "h" * i + spatial_adata.obs[obs].astype(str)
+
 sc.pp.normalize_total(spatial_adata, inplace=True)
 sc.pp.log1p(spatial_adata)
-sc.pp.highly_variable_genes(spatial_adata, n_top_genes=params.n_top_genes)
+sc.pp.highly_variable_genes(spatial_adata, n_top_genes=snakemake.params.n_top_genes)
 
 sc.pp.pca(spatial_adata)
 sc.pp.neighbors(spatial_adata)
