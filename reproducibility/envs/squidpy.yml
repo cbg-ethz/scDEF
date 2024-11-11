@@ -1,13 +1,12 @@
-name: scanorama
+name: squidpy
 channels:
   - conda-forge
   - bioconda
   - nodefaults  ## block user/system channels
 dependencies:
   - python=3.10
-  - python-annoy
   - leidenalg
   - pip
   - pip:
-    - scanorama
     - scdef==0.1.6
+    - squidpy
