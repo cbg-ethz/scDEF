@@ -5,11 +5,11 @@ import numpy as np
 
 np.random.seed(snakemake.params.seed)
 
-df = pd.read_csv(snakemake.params.counts_fname, sep="\t")
+df = pd.read_csv(snakemake.params.counts_fname, sep="\t", index_col=0)
 cellinfo = pd.read_csv(snakemake.params.annotations_fname, sep="\t")
 cellinfo = cellinfo.set_index("cell")
 
-adata = anndata.AnnData(df, obs=cellinfo)
+adata = anndata.AnnData(df.T, obs=cellinfo)
 adata = adata[adata.obs["cell_type"] == "EOC"]  # cancer cells only
 
 sc.pp.filter_cells(adata, min_genes=1552)
