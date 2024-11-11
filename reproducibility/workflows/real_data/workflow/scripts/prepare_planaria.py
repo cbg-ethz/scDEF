@@ -34,8 +34,6 @@ adata.obsm["X_pca"] = X_pca_seurat
 
 sc.pp.neighbors(adata, n_neighbors=30)
 
-sc.tl.louvain(adata, resolution=1)
-
 adata.obs["clusters"] = np.genfromtxt(
     data_path + "/R_annotation.txt", delimiter=",", dtype=str
 )
@@ -108,8 +106,6 @@ adata.uns["clusters_colors"] = [
 sc.tl.tsne(adata)
 
 sc.pl.tsne(adata, color="clusters", legend_loc="on data", legend_fontsize=5)
-
-sc.pl.tsne(adata, color="louvain", legend_loc="on")
 
 map_neoblasts = {
     c: c if not c.startswith("neoblast") else "neoblast"
