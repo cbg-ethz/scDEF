@@ -5,8 +5,8 @@ import numpy as np
 
 np.random.seed(snakemake.params.seed)
 
-df = pd.read_csv(snakemake.params.counts_path, sep="\t")
-cellinfo = pd.read_csv(snakemake.params.annotations_path, sep="\t")
+df = pd.read_csv(snakemake.params.counts_fname, sep="\t")
+cellinfo = pd.read_csv(snakemake.params.annotations_fname, sep="\t")
 cellinfo = cellinfo.set_index("cell")
 
 adata = anndata.AnnData(df, obs=cellinfo)
