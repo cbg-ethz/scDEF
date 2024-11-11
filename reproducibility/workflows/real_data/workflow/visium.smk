@@ -9,6 +9,7 @@ configfile: "config/methods.yaml"
 output_path = "results/visium"
 
 SEED = config["seed"]
+METRICS = config["metrics"]
 
 include: "rules/run_methods.smk"
 

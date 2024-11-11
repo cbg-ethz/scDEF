@@ -10,6 +10,7 @@ output_path = "results/pbmcs2b"
 
 METHODS = config["methods"]
 SEED = config["seed"]
+METRICS = config["metrics"]
 
 include: "rules/run_methods.smk"
 
