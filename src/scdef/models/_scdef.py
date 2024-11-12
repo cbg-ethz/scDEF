@@ -1821,17 +1821,17 @@ class scDEF(object):
     ):
         term_names = np.array(self.adata.var_names)
 
-        term_scores_shape = self.var_params[4 + 0][0][self.factor_lists[0]]
-        term_scores_rate = np.exp(self.var_params[4 + 0][1][self.factor_lists[0]])
+        term_scores_shape = self.global_params[2 + 0][0][self.factor_lists[0]]
+        term_scores_rate = np.exp(self.global_params[2 + 0][1][self.factor_lists[0]])
         term_scores_sample = lognormal_sample(rng, term_scores_shape, term_scores_rate)
 
         if layer_idx > 0:
-            term_scores_shape = self.var_params[4 + layer_idx][0][
+            term_scores_shape = self.global_params[2 + layer_idx][0][
                 self.factor_lists[layer_idx]
             ][:, self.factor_lists[layer_idx - 1]]
 
             term_scores_rate = np.exp(
-                self.var_params[4 + layer_idx][1][self.factor_lists[layer_idx]][
+                self.global_params[2 + layer_idx][1][self.factor_lists[layer_idx]][
                     :, self.factor_lists[layer_idx - 1]
                 ]
             )
@@ -1840,12 +1840,12 @@ class scDEF(object):
             )
 
             for layer in range(layer_idx - 1, 0, -1):
-                lower_mat_shape = self.var_params[4 + layer][0][
+                lower_mat_shape = self.global_params[2 + layer][0][
                     self.factor_lists[layer]
                 ][:, self.factor_lists[layer - 1]]
 
                 lower_mat_rate = np.exp(
-                    self.var_params[4 + layer][1][self.factor_lists[layer]][
+                    self.global_params[2 + layer][1][self.factor_lists[layer]][
                         :, self.factor_lists[layer - 1]
                     ]
                 )
@@ -1854,10 +1854,10 @@ class scDEF(object):
                 )
                 term_scores_sample = term_scores_sample.dot(lower_mat_sample)
 
-            lower_term_scores_shape = self.var_params[4 + 0][0][self.factor_lists[0]]
+            lower_term_scores_shape = self.global_params[2 + 0][0][self.factor_lists[0]]
 
             lower_term_scores_rate = np.exp(
-                self.var_params[4 + 0][1][self.factor_lists[0]]
+                self.global_params[2 + 0][1][self.factor_lists[0]]
             )
             lower_term_scores_sample = lognormal_sample(
                 rng, lower_term_scores_shape, lower_term_scores_rate
