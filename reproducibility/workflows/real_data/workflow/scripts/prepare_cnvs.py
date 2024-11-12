@@ -77,34 +77,34 @@ sc.tl.leiden(sub_adata, n_iterations=2)
 sc.pl.umap(sub_adata, color=["leiden", "author_cell_type", "donor_id"], frameon=False)
 
 # Call CNVs
-sub_adata.var["chromosome"] = sub_adata.var["chromosome"].astype("category")
-sub_adata.var["chromosome"] = sub_adata.var["chromosome"].cat.rename_categories(
-    dict(
-        zip(
-            [str(i) for i in range(23)] + ["X", "Y"],
-            [f"chr{i}" for i in range(23)] + ["chrX", "chrY"],
-        )
-    )
-)
+# sub_adata.var["chromosome"] = sub_adata.var["chromosome"].astype("category")
+# sub_adata.var["chromosome"] = sub_adata.var["chromosome"].cat.rename_categories(
+#     dict(
+#         zip(
+#             [str(i) for i in range(23)] + ["X", "Y"],
+#             [f"chr{i}" for i in range(23)] + ["chrX", "chrY"],
+#         )
+#     )
+# )
 sub_adata.X = sub_adata.X.todense()
 sub_adata.var["start"] = sub_adata.var["start"].astype(int)
 sub_adata.var["end"] = sub_adata.var["end"].astype(int)
 
-cnv.tl.infercnv(
-    sub_adata,
-    reference_key="author_cell_type",
-    reference_cat=[
-        l for l in sub_adata.obs["author_cell_type"].unique() if "cancer" not in l
-    ],
-    window_size=250,
-    calculate_gene_values=True,
-)
-cnv.pl.chromosome_heatmap(
-    sub_adata, groupby="author_cell_type", save=snakemake.output.cnv_full_fname
-)
+# cnv.tl.infercnv(
+#     sub_adata,
+#     reference_key="author_cell_type",
+#     reference_cat=[
+#         l for l in sub_adata.obs["author_cell_type"].unique() if "cancer" not in l
+#     ],
+#     window_size=250,
+#     calculate_gene_values=True,
+# )
+# cnv.pl.chromosome_heatmap(
+#     sub_adata, groupby="author_cell_type", save=snakemake.output.cnv_full_fname
+# )
 
 sub_adata.obs.index.name = "barcode"
-sub_adata.write_h5ad(snakemake.output.adata_full_fname)
+# sub_adata.write_h5ad(snakemake.output.adata_full_fname)
 
 # Pick fibroblasts from one patient and cancer cells from another
 celltype_1 = snakemake.params.celltype_1
@@ -116,9 +116,9 @@ sub_sub_adata = sub_adata[
     ).index
 ]
 
-cnv.pl.chromosome_heatmap(
-    sub_sub_adata, groupby="author_cell_type", save=snakemake.output.cnv_subset_fname
-)
+# cnv.pl.chromosome_heatmap(
+#     sub_sub_adata, groupby="author_cell_type", save=snakemake.output.cnv_subset_fname
+# )
 
 sc.pp.filter_cells(sub_sub_adata, min_genes=20)
 sc.pp.filter_genes(sub_sub_adata, min_cells=10)

@@ -18,7 +18,7 @@ rule all:
 
 rule gather_singlebatch_scores:
     conda:
-        envs_path + "/scdef.yml"
+        envs_path + "/PCA.yml"
     input:
         fname_list = expand(
             output_path + '/{method}/sep_{separability}/rep_{rep_id}_scores.csv',
@@ -51,7 +51,7 @@ rule generate_singlebatch_data:
 
 rule prepare_input:
     conda:
-        envs_path + "/scdef.yml"
+        envs_path + "/PCA.yml"
     params:
         seed = "{rep_id}",
     input:

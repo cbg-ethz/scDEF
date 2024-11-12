@@ -20,7 +20,7 @@ rule all:
 
 rule gather_results:
     conda:
-        "../../../envs/scdef.yml"
+        "../../../envs/PCA.yml"
     input:
         fname_list = expand(
             output_path + '/{method}/{method}.csv',

@@ -14,7 +14,7 @@ scDEF_un:
   nmf_init: True
   batch_size: 256
   num_samples: 10
-  n_epoch: [1, 1]
+  n_epoch: [1000, 1000]
   lr: [0.01, 0.001]
 PCA:
   n_top_genes: 2000
@@ -22,7 +22,7 @@ PCA:
 nSBM:
   n_top_genes: 2000
   settings:
-    n_init: 1
+    n_init: 100
 NMF:
   n_top_genes: 4000
   settings:
@@ -30,19 +30,19 @@ NMF:
 scHPF:
   n_top_genes: 4000
   settings:
-    min_iter: 1
-    max_iter: 1
+    min_iter: 30
+    max_iter: 1000
 scVI:
   n_top_genes: 2000
   settings:
-    max_epochs: 2
+    max_epochs: 400
     batch_size: 128
     early_stopping: True
 fscLVM:
   n_top_genes: 4000
   settings:
-    batch_size: 0
-    n_epochs: 1
+    batch_size: 256
+    n_epochs: 0
     seed: 42
 Harmony:
   n_top_genes: 2000

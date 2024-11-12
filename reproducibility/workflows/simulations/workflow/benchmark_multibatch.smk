@@ -19,7 +19,7 @@ rule all:
 
 rule gather_multibatch_scores:
     conda:
-        envs_path + "/scdef.yml"
+        envs_path + "/PCA.yml"
     input:
         fname_list = expand(
             output_path + '/{method}/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_scores.csv',
@@ -55,7 +55,7 @@ rule generate_multibatch_data:
 
 rule prepare_input:
     conda:
-        envs_path + "/scdef.yml"
+        envs_path + "/PCA.yml"
     params:
         seed = config['seed'],
     input:

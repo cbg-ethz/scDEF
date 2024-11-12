@@ -19,7 +19,7 @@ rule all:
         output_path + '/scores.csv'
 rule gather_results:
     conda:
-        "../../../envs/scdef.yml"
+        "../../../envs/PCA.yml"
     input:
         fname_list = expand(
             output_path + '/{method}/{method}.csv',
@@ -31,7 +31,7 @@ rule gather_results:
 
 rule prepare_input:
     conda:
-        "../../../envs/scdef.yml"
+        "../../../envs/PCA.yml"
     params:
         data_fname = config['data_path'],
         seed = config['seed'],

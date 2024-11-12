@@ -41,7 +41,7 @@ scVI:
 fscLVM:
   n_top_genes: 4000
   settings:
-    batch_size: 0
+    batch_size: 256
     n_epochs: 0
     seed: 42
 Harmony:
