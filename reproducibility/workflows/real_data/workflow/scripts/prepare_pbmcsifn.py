@@ -52,7 +52,7 @@ stypes = dict(
         "pDC": "Monocyte",
         "Eryth": "Eryth",
         "Mk": "Mk",
-        "Nk": "Nk",
+        "NK": "NK",
         "T activated": "T",
     }
 )
@@ -75,7 +75,7 @@ markers = {
     "DC": ["HLA-DQA1", "GPR183"],
     "Eryth": ["HBA2", "HBB"],
     "Mk": ["PPBP", "GNG11"],
-    "Nk": ["GNLY", "NKG7", "CCL5"],
+    "NK": ["GNLY", "NKG7", "CCL5"],
     "T activated": ["CD3D", "CREM", "HSPH1", "SELL", "CACYBP", "GPR183"],
     "pDC": ["TSPAN13", "IL3RA", "IGJ"],
 }

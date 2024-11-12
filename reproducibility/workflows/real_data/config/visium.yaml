@@ -7,5 +7,4 @@ min_cells: 3
 genes_to_remove: ['MALAT1']
 n_top_genes: 4000
 metrics:
-    - "Hierarchical signature consistency"
     - "Signature sparsity"

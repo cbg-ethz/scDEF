@@ -1,6 +1,8 @@
 # This just generates the raw results from all the methods
 # The figures are generated within a notebook that only requires the results
 
+localrules: gather_results
+
 configfile: "config/cnvs.yaml"
 configfile: "config/methods.yaml"
 
@@ -18,7 +20,7 @@ rule all:
 
 rule gather_results:
     conda:
-        "../../../envs/scdef.yml"
+        "../../../envs/PCA.yml"
     input:
         fname_list = expand(
             output_path + '/{method}/{method}.csv',
@@ -44,9 +46,9 @@ rule prepare_input:
         celltype_1 = config['celltype_1'],
         celltype_2 = config['celltype_2'],
     output:
-        cnv_full_fname = output_path + '/cnv_full.png',
-        cnv_subset_fname = output_path + '/cnv_subset.png'
-        adata_full_fname = output_path + '/adata_full.h5ad'
-        adata_subset_fname = output_path + '/prepared_input.h5ad'
+        # cnv_full_fname = output_path + '/cnv_full.png',
+        cnv_subset_fname = output_path + '/cnv_subset.png',
+        # adata_full_fname = output_path + '/adata_full.h5ad',
+        adata_subset_fname = output_path + '/prepared_input.h5ad',
     script:
         'scripts/prepare_cnvs.py'

@@ -11,6 +11,8 @@ adata = sc.read(data_path + "/dge.txt").T
 sc.pp.filter_cells(adata, min_genes=200)
 sc.pp.filter_genes(adata, min_cells=3)
 adata = adata[adata.obs["n_genes"] < 2500, :]
+adata.layers["counts"] = np.array(adata.X)
+
 sc.pp.normalize_per_cell(adata, counts_per_cell_after=1e4)
 filter_result = sc.pp.filter_genes_dispersion(
     adata.X, min_mean=0.01, max_mean=3, min_disp=0.4
@@ -18,8 +20,6 @@ filter_result = sc.pp.filter_genes_dispersion(
 sc.pl.filter_genes_dispersion(filter_result)
 
 adata = adata[:, filter_result.gene_subset]
-
-adata.layers["counts"] = np.array(adata.X)
 
 sc.pp.log1p(adata)
 sc.pp.regress_out(adata, "n_counts")
@@ -34,14 +34,12 @@ adata.obsm["X_pca"] = X_pca_seurat
 
 sc.pp.neighbors(adata, n_neighbors=30)
 
-sc.tl.louvain(adata, resolution=1)
-
 adata.obs["clusters"] = np.genfromtxt(
     data_path + "/R_annotation.txt", delimiter=",", dtype=str
 )
 sc._utils.sanitize_anndata(adata)
 
-adata.obs["clusters"].cat.reorder_categories(
+adata.obs["clusters"] = adata.obs["clusters"].cat.reorder_categories(
     [
         "early epidermal progenitors",
         "activated early epidermal progenitors",
@@ -95,7 +93,6 @@ adata.obs["clusters"].cat.reorder_categories(
         "secretory 3",
         "secretory 4",
     ],
-    inplace=True,
 )
 
 colors = pd.read_csv(data_path + "/colors_dataset.txt", header=None, sep="\t")
@@ -108,8 +105,6 @@ adata.uns["clusters_colors"] = [
 sc.tl.tsne(adata)
 
 sc.pl.tsne(adata, color="clusters", legend_loc="on data", legend_fontsize=5)
-
-sc.pl.tsne(adata, color="louvain", legend_loc="on")
 
 map_neoblasts = {
     c: c if not c.startswith("neoblast") else "neoblast"
@@ -194,21 +189,19 @@ for cell_type in adata.obs["Cell types"].unique():
 adata.uns["true_markers"] = markers_dict
 
 # Load gene names
-gene_names = pd.read_csv(snakemake.params.gene_names, index_col=0)
+gene_names = pd.read_csv(snakemake.params.gene_names_fname, index_col=0)
 adata.var["gene_name"] = ""
 for gene in gene_names.index:
-    adata.var.loc[gene, "gene_name"] = gene.loc[gene, "name"]
+    if gene in adata.var_names:
+        adata.var.loc[gene, "gene_name"] = gene_names.loc[gene, "Name"]
 
 # Keep only HVGs
-sc.pp.normalize_total(adata, target_sum=1e4)
-sc.pp.log1p(adata)
 sc.pp.highly_variable_genes(
     adata, flavor="seurat_v3", layer="counts", n_top_genes=snakemake.params.n_top_genes
 )  # Not required, but makes scDEF faster
 adata = adata[:, adata.var.highly_variable]
 
 # Process and visualize the data
-sc.pp.regress_out(adata, ["total_counts", "pct_counts_mt"])
 sc.pp.scale(adata, max_value=10)
 sc.tl.pca(adata, svd_solver="arpack")
 sc.pp.neighbors(adata, n_neighbors=10, n_pcs=40)

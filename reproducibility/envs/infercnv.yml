@@ -9,3 +9,4 @@ dependencies:
   - pip
   - pip:
     - infercnvpy==0.5.0
+    - scdef==0.1.6

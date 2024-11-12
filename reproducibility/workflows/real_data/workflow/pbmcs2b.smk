@@ -1,11 +1,16 @@
 # This just generates the raw results from all the methods
 # The figures are generated within a notebook that only requires the results
 
+localrules: gather_results
+
 configfile: "config/pbmcs2b.yaml"
+configfile: "config/methods.yaml"
+
 output_path = "results/pbmcs2b"
 
 METHODS = config["methods"]
 SEED = config["seed"]
+METRICS = config["metrics"]
 
 include: "rules/run_methods.smk"
 

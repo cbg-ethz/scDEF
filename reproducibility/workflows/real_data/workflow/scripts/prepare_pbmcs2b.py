@@ -109,7 +109,7 @@ markers = {
         "LILRA4",
         "CLEC4C",
     ],
-    "B": ["CD19", "MS4A1", "CD79A", "CD79B", "MZB1", "IGHD", "IGHM"],
+    "B cell": ["CD19", "MS4A1", "CD79A", "CD79B", "MZB1", "IGHD", "IGHM"],
     "Natural killer cell": [
         "NCAM1",
         "NKG7",

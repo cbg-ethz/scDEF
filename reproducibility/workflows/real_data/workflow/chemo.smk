@@ -1,6 +1,8 @@
 # This just generates the raw results from all the methods
 # The figures are generated within a notebook that only requires the results
 
+localrules: gather_results
+
 configfile: "config/chemo.yaml"
 configfile: "config/methods.yaml"
 
@@ -18,7 +20,7 @@ rule all:
 
 rule gather_results:
     conda:
-        "../../../envs/scdef.yml"
+        "../../../envs/PCA.yml"
     input:
         fname_list = expand(
             output_path + '/{method}/{method}.csv',

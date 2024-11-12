@@ -8,14 +8,25 @@ batch_key = None
 if "Batch" in adata.obs.columns:
     batch_key = "Batch"
 
-sc.pp.highly_variable_genes(
-    adata,
-    n_top_genes=snakemake.params["n_top_genes"],
-    subset=True,
-    layer="counts",
-    flavor="seurat_v3",
-    batch_key=batch_key,
-)
+try:
+    sc.pp.highly_variable_genes(
+        adata,
+        n_top_genes=snakemake.params["n_top_genes"],
+        subset=True,
+        layer="counts",
+        flavor="seurat_v3",
+        batch_key=batch_key,
+    )
+except ValueError as e:
+    print(e)
+    sc.pp.highly_variable_genes(
+        adata,
+        n_top_genes=snakemake.params["n_top_genes"],
+        subset=True,
+        layer="counts",
+        flavor="seurat_v3",
+        batch_key=None,
+    )
 
 methods_list = [snakemake.params["method"]]
 settings = snakemake.params["settings"]
