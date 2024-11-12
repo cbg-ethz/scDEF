@@ -1,0 +1,20 @@
+executor: slurm
+latency-wait: 30
+jobs: 500
+cores: 500
+
+set-resources:
+  run_scdef_un:
+    slurm_extra: "'--gpus=1'"
+  run_scdef:
+    slurm_extra: "'--gpus=1'"
+  run_scvi:
+    slurm_extra: "'--gpus=1'"
+  run_fsclvm:
+    slurm_extra: "'--gpus=1'"            
+
+default-resources:
+  mem_mb_per_cpu: max(2*input.size_mb, 8192)
+  runtime: 240
+  slurm_account: "'es_beere'"
+

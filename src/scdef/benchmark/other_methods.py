@@ -36,13 +36,12 @@ def run_multiple_resolutions(
     scores_dict = dict()
     sizes_dict = dict()
     latents_results = []
-    adatas = []
+    adata = ad.copy()
     for i, res in enumerate(resolution_sweep):
         outs = method(ad, resolution=res, batch_key=batch_key, **kwargs)
         latents = outs[0]
         latents_results.append(latents)
         scores = outs[1]
-        adatas.append(outs[2])
         assignments = outs[-1]
         signatures = outs[-2]
         prefix = layer_prefix * i
@@ -58,12 +57,17 @@ def run_multiple_resolutions(
                 sizes_dict[name] = sizes[name]
             except KeyError:
                 sizes_dict[name] = 0
+        adata.obsm[f"{prefix}_latent"] = latents
+        adata.obs[f"{prefix}_cluster"] = assignments
+    adata.uns["signatures"] = signatures_dict
+    adata.uns["scores"] = scores_dict
 
     hierarchy = hierarchy_utils.get_hierarchy_from_clusters(assignments_results)
     layer_names = [layer_prefix * level for level in range(len(assignments_results))]
     layer_sizes = [len(np.unique(cluster)) for cluster in assignments_results]
     simplified = hierarchy_utils.simplify_hierarchy(hierarchy, layer_names, layer_sizes)
 
+    adata.uns["hierarchy"] = simplified
     outs = {
         "latents": latents_results,
         "signatures": signatures_dict,
@@ -71,7 +75,7 @@ def run_multiple_resolutions(
         "scores": scores_dict,
         "sizes": sizes_dict,
         "simplified_hierarchy": simplified,
-        "adata": adatas[0],
+        "adata": adata,
     }
     return outs
 

@@ -8,5 +8,5 @@ dependencies:
   - leidenalg
   - pip
   - pip:
-      - scanorama
-      - scdef==0.1.5
+    - scanorama
+    - scdef==0.1.6

@@ -8,5 +8,5 @@ dependencies:
   - leidenalg
   - pip
   - pip:
-      - "git+https://github.com/simslab/scHPF.git"
-      - scdef==0.1.5
+    - "git+https://github.com/simslab/scHPF.git"
+    - scdef==0.1.6

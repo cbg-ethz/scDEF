@@ -10,10 +10,10 @@ dependencies:
   - pytorch 
   - torchvision 
   - torchaudio 
-  #- pytorch-cuda=11.7 
+  - pytorch-cuda=11.7 
   - jax 
   - jaxlib
   - scvi-tools
   - pip
   - pip:
-    - scdef==0.1.5
+    - scdef==0.1.6
