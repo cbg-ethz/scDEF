@@ -42,7 +42,7 @@ fscLVM:
   n_top_genes: 4000
   settings:
     batch_size: 256
-    n_epochs: 0
+    n_epochs: 1000
     seed: 42
 Harmony:
   n_top_genes: 2000
