@@ -4,7 +4,7 @@ donor_1: 'SPECTRUM-OV-026'
 celltype_1: 'Ovarian.cancer.cell'
 donor_2: 'SPECTRUM-OV-082'
 celltype_2: 'Fibroblast'
-methods: ["scDEF", "PCA", "NMF", "scHPF", "scVI", "Harmony", "Scanorama", "nSBM", "fscLVM"]
+methods: ["scDEF_un", "scDEF", "PCA", "NMF", "scHPF", "scVI", "Harmony", "Scanorama", "nSBM", "fscLVM"]
 seed: 42
 min_genes: 200
 min_cells: 3
