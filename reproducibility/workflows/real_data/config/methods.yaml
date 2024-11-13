@@ -26,7 +26,7 @@ nSBM:
 NMF:
   n_top_genes: 4000
   settings:
-    max_iter: 1
+    max_iter: 1000
 scHPF:
   n_top_genes: 4000
   settings:
