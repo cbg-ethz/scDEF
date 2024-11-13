@@ -148,6 +148,8 @@ def run_nmf(
     ad = ad.copy()
     X = ad.layers[layer]
     X = np.log(1e4 * X / np.sum(X, axis=1)[:, None] + 1)
+    # Replace NaN entries with 0
+    X[np.isnan(X)] = 0
     nmfs = []
     n_modules = []
     k_range = (
