@@ -747,8 +747,9 @@ def run_nsbm(
     min_level = 0
     for level in range(n_levels):
         avg_cluster_size = np.mean(ad.obs[f"nsbm_level_{level}"].value_counts())
-        if avg_cluster_size > 50:
+        if avg_cluster_size > 0.01 * ad.shape[0]:
             min_level = level
+            break
 
     assignments_results = []
     signatures_dict = dict()
