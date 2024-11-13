@@ -122,7 +122,7 @@ rule run_pca:
         method = "PCA",
         n_top_genes = config["PCA"]['n_top_genes'],
         settings = config["PCA"]['settings'],
-        store_full = True
+        store_full = False
     input:
         fname = output_path + '/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}.h5ad',
     output:
@@ -139,7 +139,7 @@ rule run_nmf:
         method = "NMF",
         n_top_genes = config["NMF"]['n_top_genes'],
         settings = config["NMF"]['settings'],
-        store_full = True
+        store_full = False
     input:
         fname = output_path + '/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}.h5ad',
     output:
@@ -156,7 +156,7 @@ rule run_schpf:
         method = "scHPF",
         n_top_genes = config["scHPF"]['n_top_genes'],
         settings = config["scHPF"]['settings'],
-        store_full = True
+        store_full = False
     input:
         fname = output_path + '/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}.h5ad',
     output:
@@ -173,7 +173,7 @@ rule run_scvi:
         method = "scVI",
         n_top_genes = config["scVI"]['n_top_genes'],
         settings = config["scVI"]['settings'],
-        store_full = True
+        store_full = False
     input:
         fname = output_path + '/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}.h5ad',
     output:
@@ -190,7 +190,7 @@ rule run_harmony:
         method = "Harmony",
         n_top_genes = config["Harmony"]['n_top_genes'],
         settings = config["Harmony"]['settings'],
-        store_full = True
+        store_full = False
     input:
         fname = output_path + '/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}.h5ad',
     output:
@@ -207,7 +207,7 @@ rule run_scanorama:
         method = "Scanorama",
         n_top_genes = config["Scanorama"]['n_top_genes'],
         settings = config["Scanorama"]['settings'],
-        store_full = True
+        store_full = False
     input:
         fname = output_path + '/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}.h5ad',
     output:
@@ -224,7 +224,7 @@ rule run_nsbm:
         method = "nSBM",
         n_top_genes = config["nSBM"]['n_top_genes'],
         settings = config["nSBM"]['settings'],
-        store_full = True
+        store_full = False
     input:
         fname = output_path + '/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}.h5ad',
     output:
@@ -241,7 +241,7 @@ rule run_fsclvm:
         method = "fscLVM",
         n_top_genes = config["fscLVM"]['n_top_genes'],
         settings = config["fscLVM"]['settings'],
-        store_full = True
+        store_full = False
     input:
         fname = output_path + '/data/sep_{separability}/shared_{frac_shared}/rep_{rep_id}.h5ad',
     output:

@@ -111,7 +111,7 @@ rule run_pca:
         method = "PCA",
         n_top_genes = config["PCA"]['n_top_genes'],
         settings = config["PCA"]['settings'],
-        store_full = True
+        store_full = False
     input:
         fname = output_path + '/data/sep_{separability}/rep_{rep_id}.h5ad'
     output:
@@ -128,7 +128,7 @@ rule run_nmf:
         method = "NMF",
         n_top_genes = config["NMF"]['n_top_genes'],
         settings = config["NMF"]['settings'],
-        store_full = True
+        store_full = False
     input:
         fname = output_path + '/data/sep_{separability}/rep_{rep_id}.h5ad'
     output:
@@ -145,7 +145,7 @@ rule run_schpf:
         method = "scHPF",
         n_top_genes = config["scHPF"]['n_top_genes'],
         settings = config["scHPF"]['settings'],
-        store_full = True
+        store_full = False
     input:
         fname = output_path + '/data/sep_{separability}/rep_{rep_id}.h5ad'
     output:
@@ -162,7 +162,7 @@ rule run_nsbm:
         method = "nSBM",
         n_top_genes = config["nSBM"]['n_top_genes'],
         settings = config["nSBM"]['settings'],
-        store_full = True
+        store_full = False
     input:
         fname = output_path + '/data/sep_{separability}/rep_{rep_id}.h5ad'
     output:
@@ -179,7 +179,7 @@ rule run_fsclvm:
         method = "fscLVM",
         n_top_genes = config["fscLVM"]['n_top_genes'],
         settings = config["fscLVM"]['settings'],
-        store_full = True
+        store_full = False
     input:
         fname = output_path + '/data/sep_{separability}/rep_{rep_id}.h5ad'
     output:
