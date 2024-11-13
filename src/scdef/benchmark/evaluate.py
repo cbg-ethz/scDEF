@@ -3,7 +3,6 @@ from scdef import scDEF
 
 import pandas as pd
 import numpy as np
-import logging
 from sklearn.metrics import adjusted_rand_score, silhouette_score
 
 
@@ -26,7 +25,6 @@ def evaluate_methods(
     df = pd.DataFrame(index=metrics_list, columns=methods_list)
 
     for method in methods_results:
-        logging.info(f"Evaluating {method}...")
         method_outs = methods_results[method]
 
         # Hierarchy

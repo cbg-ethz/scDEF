@@ -5,7 +5,6 @@ from scdef.models import scDEF
 import numpy as np
 from anndata import AnnData
 import scanpy as sc
-import logging
 
 from typing import Optional, Sequence, Mapping, Callable
 
@@ -842,8 +841,6 @@ OTHERS_FUNCS = dict(
 def run_methods(adata, methods_list, res_sweeps=None, batch_key=None, **kwargs):
     methods_outs = dict()
     for method in methods_list:
-        logging.info(f"Running {method}...")
-
         # Run method
         func = OTHERS_FUNCS[method]
         res_sweep = OTHERS_RES_SWEEPS[method]
