@@ -41,7 +41,7 @@ sc.pp.filter_genes(sub_adata, min_cells=10)
 
 # Remove some genes
 for gene in snakemake.params.genes_to_remove:
-    sub_adata = sub_adata[:, adata.var_names != gene]
+    sub_adata = sub_adata[:, sub_adata.var_names != gene]
 
 sub_adata.var["mt"] = sub_adata.var_names.str.startswith(
     "MTRN"
