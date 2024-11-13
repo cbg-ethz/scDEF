@@ -21,6 +21,10 @@ sc.pl.filter_genes_dispersion(filter_result)
 
 adata = adata[:, filter_result.gene_subset]
 
+adata = adata[np.sum(adata.layers["counts"], axis=1) > 0, :]
+adata = adata[:, np.sum(adata.layers["counts"], axis=0) > 0]
+print(adata)
+
 sc.pp.log1p(adata)
 sc.pp.regress_out(adata, "n_counts")
 sc.pp.scale(adata, max_value=10)
@@ -196,10 +200,11 @@ for gene in gene_names.index:
         adata.var.loc[gene, "gene_name"] = gene_names.loc[gene, "Name"]
 
 # Keep only HVGs
-sc.pp.highly_variable_genes(
-    adata, flavor="seurat_v3", layer="counts", n_top_genes=snakemake.params.n_top_genes
-)  # Not required, but makes scDEF faster
-adata = adata[:, adata.var.highly_variable]
+# Use all genes, to make sure chat is kept
+# sc.pp.highly_variable_genes(
+#     adata, flavor="seurat_v3", layer="counts", n_top_genes=snakemake.params.n_top_genes
+# )  # Not required, but makes scDEF faster
+# adata = adata[:, adata.var.highly_variable]
 
 # Process and visualize the data
 sc.pp.scale(adata, max_value=10)
