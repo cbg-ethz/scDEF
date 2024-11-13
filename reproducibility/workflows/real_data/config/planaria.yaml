@@ -1,7 +1,7 @@
 data_path: '/cluster/work/bewi/members/pedrof/scdef_revisions/init_data/planaria/raw_inputs/'
 markers_path: '/cluster/work/bewi/members/pedrof/scdef_revisions/init_data/planaria/planaria_marker_genes.csv'
 gene_names_path: '/cluster/work/bewi/members/pedrof/scdef_revisions/init_data/planaria/planaria_named_genes.csv'
-methods: ["scDEF_un", "PCA", "NMF", "scHPF", "scVI", "Harmony", "Scanorama", "nSBM", "fscLVM"]
+methods: ["scDEF_un", "PCA", "NMF", "scHPF", "nSBM", "fscLVM"]
 seed: 42
 min_genes: 200
 min_cells: 3
