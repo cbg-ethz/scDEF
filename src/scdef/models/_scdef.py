@@ -1,39 +1,41 @@
-from scdef.utils import score_utils, hierarchy_utils, color_utils
-from scdef.utils.jax_utils import *
+# Standard library imports
+import logging
+import time
+from typing import Optional, Union, Sequence, Mapping, Literal
 
-from jax import jit, vmap
-import optax
-from jax import random, value_and_grad
-import jax.numpy as jnp
-from jax.scipy.stats import poisson
+# Third-party imports
 import jax
+import jax.numpy as jnp
+from jax import jit, vmap, random, value_and_grad
+from jax.scipy.stats import poisson
+import optax
+import tensorflow_probability.substrates.jax.distributions as tfd
+
+import numpy as np
+import pandas as pd
+import scipy
+from scipy.cluster.hierarchy import ward, leaves_list
+from scipy.spatial.distance import pdist
 
 import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 from matplotlib.lines import Line2D
 import seaborn as sns
-from graphviz import Graph
 from tqdm import tqdm
-import time
 
-import logging
-
-logging.basicConfig()
-
-import scipy
-import numpy as np
-import pandas as pd
 from anndata import AnnData
 import scanpy as sc
 import decoupler
 
-from scipy.cluster.hierarchy import ward, leaves_list
-from scipy.spatial.distance import pdist
+# Local imports
+from scdef.utils import score_utils, hierarchy_utils, color_utils
+from scdef.utils.jax_utils import (
+    lognormal_sample, lognormal_entropy, gamma_logpdf
+)
 
-from typing import Optional, Union, Sequence, Mapping, Literal
-
-import tensorflow_probability.substrates.jax.distributions as tfd
+# Configure logging
+logging.basicConfig()
 
 
 class scDEF(object):
@@ -51,15 +53,12 @@ class scDEF(object):
             no batch correction is performed.
         seed: random seed for JAX
         logginglevel: verbosity level for logger
-        layer_shapes: prior parameters for the z shape to use in each scDEF layer
         brd_strength: BRD prior concentration parameter
         brd_mean: BRD prior mean parameter
         use_brd: whether to use the BRD prior for factor relevance estimation
         cell_scale_shape: concentration level in the cell scale prior
         gene_scale_shape: concentration level in the gene scale prior
-        factor_shapes: prior parameters for the W shape to use in each scDEF layer
-        factor_rates: prior parameters for the W rate to use in each scDEF layer
-        layer_diagonals: prior diagonal strengths for the W parameters in each scDEF layer
+        factor_shapes: prior parameters for the W concentration to use in each scDEF layer
         batch_cpal: default color palette for batch annotations
         layer_cpal: default color palettes for scDEF layers
         lightness_mult: multiplier to define lightness of color palette at each scDEF layer
@@ -79,125 +78,71 @@ class scDEF(object):
         self,
         adata: AnnData,
         counts_layer: Optional[str] = None,
-        layer_sizes: Optional[list] = [100, 60, 30, 10, 1],
-        layer_shapes=[1.0, 1.0, 1.0, 1.0, 1.0],
+        n_factors: Optional[int] = 100,
+        decay_factor: Optional[float] = 2.0,
+        max_n_layers: Optional[float] = 5,
+        layer_sizes: Optional[list] = None,
+        layer_names: Optional[list] = None,
         batch_key: Optional[str] = None,
-        seed: Optional[int] = 1,
+        seed: Optional[int] = 42,
         logginglevel: Optional[int] = logging.INFO,
-        layer_concentration: Optional[float] = 1.0,
-        brd_strength: Optional[float] = 1.0,
-        brd_mean: Optional[float] = 1.0,
+        layer_concentration: Optional[float] = 10.0,
+        factor_shape: Optional[float] = 0.1,        
+        brd_strength: Optional[float] = 0.1,
+        brd_mean: Optional[float] = 10.0,
         use_brd: Optional[bool] = True,
-        cell_scale_shape: Optional[float] = 1.0,
-        gene_scale_shape: Optional[float] = 1.0,
-        factor_shapes: Optional[list] = None,
-        factor_rates: Optional[list] = None,
-        layer_diagonals: Optional[list] = None,
+        cell_scale_shape: Optional[float] = 0.1,
+        gene_scale_shape: Optional[float] = 0.1,
         batch_cpal: Optional[str] = "Dark2",
         layer_cpal: Optional[str] = "tab10",
         lightness_mult: Optional[float] = 0.15,
-        nmf_init: Optional[bool] = True,
     ):
         self.n_cells, self.n_genes = adata.shape
+
+        self.n_batches = 1
+        self.batches = [""]
+        self.batch_key = batch_key
+
+        self.load_adata(adata, layer=counts_layer, batch_key=batch_key)        
 
         self.logger = logging.getLogger("scDEF")
         self.logger.setLevel(logginglevel)
 
-        self.layer_sizes = [int(x) for x in layer_sizes]
-        self.n_layers = len(self.layer_sizes)
+        self.layer_concentration = layer_concentration
+        self.factor_shape = factor_shape        
+        self.brd = brd_strength
+        self.brd_mean = brd_mean
+        self.cell_scale_shape = cell_scale_shape
+        self.gene_scale_shape = gene_scale_shape
         self.use_brd = use_brd
 
-        self.factor_lists = [np.arange(size) for size in self.layer_sizes]
+        self.decay_factor = decay_factor
+        self.n_factors = n_factors
+        self.max_n_layers = max_n_layers
+        if layer_sizes is not None:
+            self.layer_sizes = [int(x) for x in layer_sizes]
+            self.n_factors = int(layer_sizes[0])
+            self.n_layers = len(self.layer_sizes)
+        else:
+            self.update_model_size(n_factors)
 
-        self.n_batches = 1
-        self.batches = [""]
+        if layer_names is not None:
+            self.layer_names = layer_names
+        else:
+            self.layer_names = [f"L{i}" for i in range(self.n_layers)]
+        self.factor_lists = [np.arange(size) for size in self.layer_sizes]
+        
+        self.update_model_priors()        
 
         self.seed = seed
-        self.layer_names = [f"L{i}" for i in range(self.n_layers)]
         self.batch_cpal = batch_cpal
         self.layer_cpal = layer_cpal
         self.lightness_mult = lightness_mult
         self.make_layercolors(layer_cpal=self.layer_cpal, lightness_mult=lightness_mult)
 
-        self.batch_key = batch_key
-
-        self.load_adata(adata, layer=counts_layer, batch_key=batch_key)
-
-        if factor_shapes is None:
-            if self.use_brd:
-                factor_shapes = [1.0 / brd_mean] + [1.0] * (self.n_layers - 1)
-            else:
-                factor_shapes = [0.3] + [1.0] * (self.n_layers - 1)
-        elif isinstance(factor_shapes, float) or isinstance(factor_shapes, int):
-            factor_shapes = [float(factor_shapes)] * self.n_layers
-        if len(factor_shapes) != self.n_layers:
-            raise ValueError("factor_shapes list must be of size scDEF.n_layers")
-        self.factor_shapes = factor_shapes
-
-        if factor_rates is None:
-            if self.use_brd:
-                factor_rates = [1.0 / brd_mean] + [1.0] * (self.n_layers - 1)
-            else:
-                factor_rates = [0.3] + [1.0] * (self.n_layers - 1)
-        elif isinstance(factor_rates, float) or isinstance(factor_rates, int):
-            factor_rates = [float(factor_rates)] * self.n_layers
-        if len(factor_rates) != self.n_layers:
-            raise ValueError("factor_rates list must be of size scDEF.n_layers")
-        self.factor_rates = factor_rates
-
-        if layer_diagonals is None:
-            layer_diagonals = [1.0] * self.n_layers
-        elif isinstance(layer_diagonals, float) or isinstance(layer_diagonals, int):
-            layer_diagonals = [float(layer_diagonals)] * self.n_layers
-        if len(layer_diagonals) != self.n_layers:
-            raise ValueError("layer_diagonals list must be of size scDEF.n_layers")
-        self.layer_diagonals = layer_diagonals
-
-        self.layer_shapes = layer_shapes
-        self.layer_concentration = layer_concentration
-        self.brd = brd_strength
-        self.brd_mean = brd_mean
-        self.cell_scale_shape = cell_scale_shape
-        self.gene_scale_shape = gene_scale_shape
-
-        self.w_priors = []
-        for idx in range(self.n_layers):
-            prior_shapes = self.factor_shapes[idx]
-            prior_rates = self.factor_rates[idx]
-
-            if idx > 0:
-                prior_shapes = (
-                    np.ones((self.layer_sizes[idx], self.layer_sizes[idx - 1]))
-                    * self.factor_shapes[idx]
-                    * 1.0
-                    / self.layer_diagonals[idx]
-                )
-                prior_rates = (
-                    np.ones((self.layer_sizes[idx], self.layer_sizes[idx - 1]))
-                    * self.factor_rates[idx]
-                    * self.layer_diagonals[idx]
-                )
-                for l in range(self.layer_sizes[idx]):
-                    prior_shapes[l, l] = (
-                        self.factor_shapes[idx] * self.layer_diagonals[idx]
-                    )
-                    prior_rates[l, l] = (
-                        self.factor_rates[idx] * self.layer_diagonals[idx]
-                    )
-                prior_shapes = jnp.clip(jnp.array(prior_shapes), 1e-12, 1e12)
-                prior_rates = jnp.clip(jnp.array(prior_rates), 1e-12, 1e12)
-
-            self.w_priors.append([prior_shapes, prior_rates])
-
-        self.init_var_params(nmf_init=nmf_init)
+        self.init_var_params(nmf_init=False) # just to get stub
         self.set_posterior_means()
 
-        # Keep these as class attributes to avoid re-compiling the computation graph everytime we run an optimization loop
-        self.opt_init = None
-        self.get_params = None
-        self.opt_update = None
-        self.elbos = []
-        self.step_sizes = []
 
     def __repr__(self):
         out = f"scDEF object with {self.n_layers} layers"
@@ -213,13 +158,12 @@ class scDEF(object):
         )
         out += (
             "\n\t"
-            + "Layer factor shape parameters: "
-            + ", ".join([str(shape) for shape in self.factor_shapes])
-        )
+            + "Layer concentration parameter: " + str(self.layer_concentration)
+        )        
         out += (
             "\n\t"
-            + "Layer factor rate parameters: "
-            + ", ".join([str(rate) for rate in self.factor_rates])
+            + "Layer factor shape parameters: "
+            + ", ".join([str(shape) for shape in self.factor_shapes])
         )
         if self.use_brd == True:
             out += "\n\t" + "Using BRD"
@@ -279,6 +223,8 @@ class scDEF(object):
         else:
             self.X = np.array(X)
 
+        self.X = self.X.astype(float)
+
         self.batch_indices_onehot = np.ones((self.adata.shape[0], 1))
         self.batch_lib_sizes = np.sum(self.X, axis=1)
         self.batch_lib_ratio = (
@@ -286,7 +232,7 @@ class scDEF(object):
             * np.mean(self.batch_lib_sizes)
             / np.var(self.batch_lib_sizes)
         )
-        gene_size = np.mean(self.X, axis=0)
+        gene_size = np.sum(self.X, axis=0)
         self.gene_means = np.mean(gene_size)
         self.gene_vars = np.var(gene_size)
         self.gene_ratio = self.gene_means / self.gene_vars
@@ -332,193 +278,192 @@ class scDEF(object):
         self.batch_lib_ratio = jnp.array(self.batch_lib_ratio)
         self.gene_ratio = jnp.array(self.gene_ratio)
 
-    def init_var_params(self, minval=0.5, maxval=1.5, nmf_init=False):
-        rngs = random.split(random.PRNGKey(self.seed), 6 + 2 * 2 * self.n_layers)
+    def update_model_size(self, max_n_factors, max_n_layers=None,):
+        if max_n_layers is None:
+            max_n_layers = self.max_n_layers
+        n_factors = int(max_n_factors)
+        self.layer_sizes = []
+        self.layer_sizes.append(n_factors)
+        if max_n_layers > 1:
+            while len(self.layer_sizes) < max_n_layers:
+                n_factors = int(np.floor(n_factors / self.decay_factor))
+                self.layer_sizes.append(n_factors)
+                if n_factors == 1:
+                    break
+            if self.layer_sizes[-1] > 1:
+                self.layer_sizes[-1] = 1
 
-        m = 1.0 / jnp.maximum(self.batch_lib_ratio, 1e-1)
-        v = 1  # .*(m)**2 / self.cell_scale_shape
-        self.local_params = [
-            jnp.array(
-                (
-                    jnp.log(
-                        random.uniform(
-                            rngs[0],
-                            minval=1.0,
-                            maxval=1.0,
-                            shape=[self.n_cells, 1],
-                        )
-                        * 1.0
-                    )
-                    + jnp.log(m**2 / jnp.sqrt(m**2 + v)),  # cell_scales
-                    jnp.log(
-                        random.uniform(
-                            rngs[1],
-                            minval=1.0,
-                            maxval=1.0,
-                            shape=[self.n_cells, 1],
-                        )
-                        * jnp.sqrt(jnp.log(1 + v / (m**2)))
-                    )
-                    * 1.0,  # jnp.clip(10.0 * self.batch_lib_ratio, 1e-8, 1e2),
+        self.n_layers = len(self.layer_sizes)
+        self.layer_names = [f"L{i}" for i in range(self.n_layers)]
+        self.factor_lists = [np.arange(size) for size in self.layer_sizes]
+
+    def update_model_priors(self):        
+        if self.use_brd:
+            self.factor_shapes = [1.0] + [self.factor_shape * self.layer_sizes[l]/self.layer_sizes[0] for l in range(1, self.n_layers)]
+        else:
+            self.factor_shapes = [self.factor_shape * self.layer_sizes[l]/self.layer_sizes[0] for l in range(self.n_layers)]
+
+        self.w_priors = []
+        for idx in range(self.n_layers):
+            prior_shapes = self.factor_shapes[idx]
+            prior_rates = self.factor_shapes[idx]
+
+            if idx > 0:
+                prior_shapes = (
+                    np.ones((self.layer_sizes[idx], self.layer_sizes[idx - 1]))
+                    * self.factor_shapes[idx]
+                    * 1.0
                 )
-            ),
-        ]
-        # m = 1.
-        # v = .1
-        gene_sizes = 1.0 / np.sum(self.X, axis=0)
-        standardized = gene_sizes / np.std(gene_sizes)
-        centered = standardized - np.mean(standardized)
-        recentered = centered + 1
-        m = recentered[None, :]
-        m = 1.0 / jnp.maximum(self.gene_ratio, 1e-1)
-        v = 1.0  # e-1 #/ (self.gene_ratio)
+                prior_rates = (
+                    np.ones((self.layer_sizes[idx], self.layer_sizes[idx - 1]))
+                    * self.factor_shapes[idx]
+                )
+                for l in range(self.layer_sizes[idx]):
+                    prior_shapes[l, l] = (
+                        self.factor_shapes[idx]
+                    )
+                    prior_rates[l, l] = (
+                        self.factor_shapes[idx]
+                    )
+                prior_shapes = jnp.clip(jnp.array(prior_shapes), 1e-12, 1e12)
+                prior_rates = jnp.clip(jnp.array(prior_rates), 1e-12, 1e12)
 
-        m_brd = jnp.clip(
-            tfd.Gamma(self.brd, self.brd / (self.brd_mean / 1.0)).sample(
-                seed=rngs[2], sample_shape=[self.layer_sizes[0], 1]
-            ),
-            1e-1,
-            1e1,
+            self.w_priors.append([prior_shapes, prior_rates])        
+
+    def get_effective_factors(self,         
+            thres: Optional[float] = None,
+            iqr_mult: Optional[float] = 0.005,
+            min_cells: Optional[float] = 0.0,
+            normalized: Optional[bool] = False,
+        ):
+        layer_name = self.layer_names[0]
+        min_cells = np.maximum(10, min_cells * self.n_cells) if min_cells < 1.0 else min_cells
+        ard = []
+        if thres is not None:
+            ard = thres
+        else:
+            ard = iqr_mult
+
+        if not self.use_brd:
+            ard = 0.0
+
+        normed = (
+            self.pmeans[f"{layer_name}z"]
+            / np.sum(self.pmeans[f"{layer_name}z"], axis=1)[:, None]
         )
-        v_brd = 0.1  # e-1 #/ (self.gene_ratio)
-
-        self.global_params = [
-            jnp.array(
-                (
-                    jnp.log(
-                        random.uniform(
-                            rngs[2],
-                            minval=1.0,
-                            maxval=1.0,
-                            shape=[self.n_batches, self.n_genes],
-                        )
-                        * 1.0
-                    )
-                    + jnp.log(m**2 / jnp.sqrt(m**2 + v)),  # gene_scales
-                    jnp.log(
-                        random.uniform(
-                            rngs[3],
-                            minval=1.0,
-                            maxval=1.0,
-                            shape=[self.n_batches, self.n_genes],
-                        )
-                        * jnp.sqrt(
-                            jnp.log(1 + v / (m**2))
-                        )  # jnp.clip(10.0 * self.gene_ratio, 1e-8, 1e2)
-                    ),
-                )
-            ),
-            jnp.array(
-                (
-                    jnp.log(
-                        random.uniform(
-                            rngs[4],
-                            minval=1.0,
-                            maxval=1.0,
-                            shape=[self.layer_sizes[0], 1],
-                        )
-                    )
-                    + jnp.log(m_brd**2 / jnp.sqrt(m_brd**2 + v_brd)),
-                    jnp.log(
-                        random.uniform(
-                            rngs[5],
-                            minval=1.0,
-                            maxval=1.0,
-                            shape=[self.layer_sizes[0], 1],
-                        )
-                        * jnp.sqrt(jnp.log(1 + v_brd / (m_brd**2)))  # * 1./self.brd
-                    ),
-                )
-            ),
+        assignments = np.argmax(normed, axis=1)
+        counts = np.array(
+            [
+                np.count_nonzero(assignments == a)
+                for a in range(self.layer_sizes[0])
+            ]
+        )
+        masses = np.sum(normed, axis=0)
+        keep = np.array(range(self.layer_sizes[0]))[
+            np.where(counts >= min_cells)[0]
         ]
+        brd_keep = np.arange(self.layer_sizes[0])
+        if self.use_brd:
+            rels = self.pmeans[f"brd"].ravel()
+            if normalized:
+                rels = rels - np.min(rels)
+                rels = rels / np.max(rels)
+            if thres is None:
+                median = np.median(rels)
+                q3 = np.percentile(rels, 75)
+                cutoff = ard * (q3 - median)
+            else:
+                cutoff = ard
+            brd_keep = np.where(rels >= cutoff)[0]
+            if len(brd_keep) == 0:
+                brd_keep = np.arange(self.layer_sizes[0]).astype(int)
+        keep = np.unique(list(set(brd_keep).intersection(keep)))
+        return keep
+
+
+    def init_var_params(self, init_budgets=True, init_z=None, init_w=None, nmf_init=False, **kwargs):
+        rngs = random.split(random.PRNGKey(self.seed), self.n_layers)
+
+        if init_budgets:
+            m = 1.
+            v = m  
+            self.local_params = [
+                jnp.array(
+                    (
+                        jnp.log(m**2 / jnp.sqrt(m**2 + v)) * jnp.ones((self.n_cells, 1)),  # cell_scales
+                        jnp.log(jnp.sqrt(jnp.log(1 + v / (m**2)))) * jnp.ones((self.n_cells, 1)),
+                    )
+                ),
+            ]
+            m = 1.
+            v = m
+            self.global_params = [
+                jnp.array(
+                    (
+                        jnp.log(m**2 / jnp.sqrt(m**2 + v)) * jnp.ones((1,self.n_genes)),  # gene_scales
+                        jnp.log(jnp.sqrt(jnp.log(1 + v / (m**2)))) * jnp.ones((1,self.n_genes)),
+                    )
+                ),
+            ]
+        else:
+            self.local_params = [self.local_params[0]]
+            self.global_params = [self.global_params[0]]
+        # BRD
+        m_brd = self.brd_mean
+        v_brd = m_brd / 100. 
+
+        self.global_params.append(
+            jnp.array(
+                (
+                    jnp.log(m_brd**2 / jnp.sqrt(m_brd**2 + v_brd)) * jnp.ones((self.layer_sizes[0], 1)),
+                    jnp.log(jnp.sqrt(jnp.log(1 + v_brd / (m_brd**2)))) * jnp.ones((self.layer_sizes[0], 1)),
+                )
+            ),
+        )
 
         if nmf_init:
-            self.logger.info(f"Initializing the factor weights with KL-NMF.")
-            init_z, init_w = self.get_nmf_init()
+            self.logger.info(f"Initializing the factor weights with NMF.")
+            init_z, init_w = self.get_nmf_init(**kwargs)
 
         z_shapes = []
         z_rates = []
-        rng_cnt = 6
+        rng_cnt = 0
         for layer_idx in range(
             self.n_layers
         ):  # we go from layer 0 (bottom) to layer L (top)
             # Init z
-            if layer_idx == 0:
+            a = 1.
+            clip = 1e-6 # alpha=1 and clip=1e-6 allows for many factors to be learned, but leads to BRD becoming kind of big
+
+            if layer_idx > 0: # If the top layer inits to very small numbers, the loss goes crazy when MC=10...
+                clip = 1e-6
+                a = 1.
+
+            if layer_idx == self.n_layers - 1:
+                clip = 1e-3
+            
+            if init_z is not None and layer_idx == 0 and not nmf_init:
+                m = init_z.astype(jnp.float32)
+            else: 
                 m = jnp.clip(
-                    tfd.Gamma(10.0, 10.0).sample(
+                    tfd.Gamma(a, a / 1.).sample(
                         seed=rngs[rng_cnt],
                         sample_shape=[self.n_cells, self.layer_sizes[layer_idx]],
                     ),
-                    1e-1,
+                    clip,
                     1e1,
-                )  # self.layer_shapes[layer_idx]/self.layer_rates[layer_idx]
-                v = 1.0  # this is important! #self.layer_shapes[layer_idx]/(self.layer_rates[layer_idx]**2)
-            else:
-                m = jnp.clip(
-                    tfd.Gamma(10.0, 10.0).sample(
-                        seed=rngs[rng_cnt],
-                        sample_shape=[self.n_cells, self.layer_sizes[layer_idx]],
-                    ),
-                    1e-1,
-                    1e1,
-                )
-                v = 1.0  # this is important! #self.layer_shapes[layer_idx]/(self.layer_rates[layer_idx]**2)
-                # if nmf_init:
-                #     m = jnp.clip(init_z[layer_idx], 1e-1, 1e1)#jnp.maximum(init_z[layer_idx] - np.mean(init_z[layer_idx]) + 1., 1.)
-            z_shape = jnp.log(
-                random.uniform(
-                    rngs[rng_cnt],
-                    minval=1.0,
-                    maxval=1.0,
-                    shape=[self.n_cells, self.layer_sizes[layer_idx]],
-                )
-                * 1.0  # self.layer_shapes[layer_idx]
-            ) + jnp.log(m**2 / jnp.sqrt(m**2 + v))
+                ) 
+                rng_cnt += 1
+
+            v = m / 100. 
+            if layer_idx > 0:
+                v = m / 100.   
+            z_shape = jnp.log(m**2 / jnp.sqrt(m**2 + v)) * jnp.ones((self.n_cells, self.layer_sizes[layer_idx]))
             z_shapes.append(z_shape)
-            rng_cnt += 1
-            z_rate = jnp.log(
-                random.uniform(
-                    rngs[rng_cnt],
-                    minval=1.0,
-                    maxval=1.0,
-                    shape=[self.n_cells, self.layer_sizes[layer_idx]],
-                )
-                * jnp.sqrt(jnp.log(1 + v / (m**2)))
-            )
+            z_rate = jnp.log(jnp.sqrt(jnp.log(1 + v / (m**2)))) * jnp.ones((self.n_cells, self.layer_sizes[layer_idx]))
             z_rates.append(z_rate)
-            rng_cnt += 1
 
         self.local_params.append(jnp.array((jnp.hstack(z_shapes), jnp.hstack(z_rates))))
-
-        # for layer_idx in range(
-        #     1, self.n_layers
-        # ):  # the w don't have a shared axis across all, so we can't vectorize
-        #     # Init w
-        #     layer_size = self.layer_sizes[layer_idx]
-
-        #     f_shape = jnp.log(
-        #         random.uniform(
-        #             rngs[rng_cnt],
-        #             minval=1.0,
-        #             maxval=1.0,
-        #             shape=[layer_size, 1],
-        #         )
-        #     * 1.#jnp.clip(self.w_priors[layer_idx][0], 1e-2, 1e2)
-        #     )
-        #     rng_cnt += 1
-
-        #     f_rate = jnp.log(
-        #         random.uniform(
-        #             rngs[rng_cnt],
-        #             minval=1.,
-        #             maxval=1.,
-        #             shape=[layer_size, 1],
-        #         )
-        #         * 1. # jnp.clip(self.w_priors[layer_idx][1], 1e-2, 1e2)
-        #     )
-        #     rng_cnt += 1
-
-        #     self.local_params.append(jnp.array((f_shape, f_rate)))
 
         for layer_idx in range(
             self.n_layers
@@ -530,133 +475,47 @@ class scDEF(object):
             else:
                 out_layer = self.layer_sizes[layer_idx - 1]
 
-            if layer_idx == 0 and self.use_brd:
-                fscale_samples = lognormal_sample(
-                    rngs[rng_cnt],
-                    self.global_params[1][0],
-                    jnp.exp(self.global_params[1][1]),
-                )
-                m = jnp.clip(
-                    tfd.Gamma(1.0, 1.0).sample(
-                        seed=rngs[rng_cnt], sample_shape=[in_layer, out_layer]
-                    ),
-                    1e-1,
-                    1e1,
-                )
-                v = 1.0  # fscale_samples
-                if nmf_init:
-                    m = jnp.clip(
-                        tfd.Gamma(1.0, 1.0 / init_w[layer_idx]).sample(
-                            seed=rngs[rng_cnt]
-                        ),
-                        1e-1,
-                        1e1,
-                    )
-                    v = 1.0
-                w_shape = jnp.log(
-                    random.uniform(
-                        rngs[rng_cnt],
-                        minval=1.0,
-                        maxval=1.0,
-                        shape=[in_layer, out_layer],
-                    )
-                    * 1.0  # jnp.clip(self.w_priors[layer_idx][0], 1e-2, 1e2)
-                ) + jnp.log(
-                    m**2 / jnp.sqrt(m**2 + v)
-                )  # jnp.log(1/jnp.sqrt(1+fscale_samples))
-                rng_cnt += 1
+            a = 100.
 
-                w_rate = jnp.log(
-                    random.uniform(
-                        rngs[rng_cnt],
-                        minval=1.0,
-                        maxval=1.0,
-                        shape=[in_layer, out_layer],
-                    )
-                    * jnp.sqrt(
-                        jnp.log(1 + v / (m**2))
-                    )  # jnp.sqrt(jnp.log(1+fscale_samples))# jnp.clip(self.w_priors[layer_idx][1], 1e-2, 1e2)
-                )
+            if init_w is not None and layer_idx == 0 and not nmf_init:
+                m = init_w.astype(jnp.float32)
+                v = m 
             else:
-                if layer_idx == 0:
-                    m = jnp.clip(
-                        tfd.Gamma(1.0, 1.0).sample(
-                            seed=rngs[rng_cnt], sample_shape=[in_layer, out_layer]
-                        ),
-                        1e-1,
-                        1e1,
-                    )  # self.factor_shapes[layer_idx]/self.factor_rates[layer_idx]
-                    v = 1.0
-                else:
-                    m = jnp.clip(
-                        tfd.Gamma(1.0, 1.0).sample(
-                            seed=rngs[rng_cnt], sample_shape=[in_layer, out_layer]
-                        ),
-                        1e-1,
-                        1e1,
-                    )
-                    v = 1.0
-                if nmf_init:
-                    m = jnp.clip(
-                        tfd.Gamma(1.0, 1.0 / init_w[layer_idx]).sample(
-                            seed=rngs[rng_cnt]
-                        ),
-                        1e-1,
-                        1e1,
-                    )
-                    v = 1.0
-                if layer_idx == self.n_layers - 1:
-                    m = 1.0
-                w_shape = jnp.log(
-                    random.uniform(
-                        rngs[rng_cnt],
-                        minval=1.0,
-                        maxval=1.0,
-                        shape=[in_layer, out_layer],
-                    )
-                    * 1.0  # jnp.clip(self.w_priors[layer_idx][0], 1e-2, 1e2)
-                ) + jnp.log(m**2 / jnp.sqrt(m**2 + v))
-                rng_cnt += 1
 
-                w_rate = jnp.log(
-                    random.uniform(
-                        rngs[rng_cnt],
-                        minval=1.0,
-                        maxval=1.0,
-                        shape=[in_layer, out_layer],
+                m = 1./self.layer_sizes[layer_idx] * jnp.ones((in_layer, out_layer))
+                m = m * self.w_priors[layer_idx][0]/self.w_priors[layer_idx][1]
+                v = m / 100.
+            if nmf_init:
+                iw = init_w[layer_idx].astype(jnp.float32)
+                # Rescale
+                iw = 1. * iw / np.max(iw, axis=1)[:, None] + 1. 
+                # iw = 10. * 100.**iw/100. + 1.
+                iw = jnp.clip(iw, 1e-6, 1e1) # need to set scales to avoid huge BRDs...
+                m = tfd.Gamma(100.0, 100.0 / (iw*1./self.layer_sizes[layer_idx]) ).sample(
+                        seed=rngs[rng_cnt]
                     )
-                    * jnp.sqrt(
-                        jnp.log(1 + v / (m**2))
-                    )  # jnp.clip(self.w_priors[layer_idx][1], 1e-2, 1e2)
-                )
-            rng_cnt += 1
+                rng_cnt += 1
+                v = m / 100.
+
+            w_shape = jnp.log(m**2 / jnp.sqrt(m**2 + v)) * jnp.ones((in_layer, out_layer))
+            w_rate = jnp.log(jnp.sqrt(jnp.log(1 + v / (m**2)))) * jnp.ones((in_layer, out_layer))
 
             self.global_params.append(jnp.array((w_shape, w_rate)))
 
         # Gamma(1e3, 1e3/m)
-        m = 1.0 * jnp.ones([1, 1])
-        v = m**2 / 1e0 * jnp.ones([1, 1])
+        m = 1.
+        v = m / 100. 
+
         self.global_params.append(
             jnp.array(
                 (
-                    jnp.log(m**2 / jnp.sqrt(m**2 + v)),
-                    jnp.log(jnp.sqrt(jnp.log(1 + v / (m**2)))),
+                    jnp.log(m**2 / jnp.sqrt(m**2 + v)) * jnp.ones((self.layer_sizes[0], 1)),
+                    jnp.log(jnp.sqrt(jnp.log(1 + v / (m**2)))) * jnp.ones((self.layer_sizes[0], 1)),
                 )
-            )
+            ),
         )
 
-        m = self.layer_concentration
-        v = 1.0  # m**2 / 1e0
-        self.global_params.append(
-            jnp.array(
-                (
-                    [[jnp.log(m**2 / jnp.sqrt(m**2 + v))]],
-                    [[jnp.log(jnp.sqrt(jnp.log(1 + v / (m**2))))]],
-                )
-            )
-        )
-
-    def get_nmf_init(self, max_cells=1000):
+    def get_nmf_init(self, max_cells=None):
         """Use NMF on the data to init the first layer and then recursively for the other layers"""
         init_z = []
         init_W = []
@@ -665,33 +524,52 @@ class scDEF(object):
         X = self.X
         X = X * 10_000 / np.sum(X, axis=1)[:, None]
         X = np.log(X + 1)
-        if max_cells < X.shape[0]:
-            key = jax.random.PRNGKey(self.seed)
-            cells = jax.random.choice(
-                key, X.shape[0], replace=False, shape=(max_cells,)
-            )
-            X = X[cells]
+        if max_cells is not None:
+            if max_cells < X.shape[0]:
+                key = jax.random.PRNGKey(self.seed)
+                cells = jax.random.choice(
+                    key, X.shape[0], replace=False, shape=(max_cells,)
+                )
+                X = X[cells]
         for layer_idx in range(self.n_layers):
             model = NMF(
                 n_components=self.layer_sizes[layer_idx],
                 random_state=self.seed,
-                beta_loss="kullback-leibler",
-                solver="mu",
             )
             z = model.fit_transform(X)
-            # z = z / np.max(z, axis=1)[:,None] # center each factor at 1
             W = model.components_
-            # W = W / np.max(W, axis=1)[:,None]
-            # W = W - np.mean(W,axis=1)[:,None] # center each factor at 1
-            # W += 1.
-            z = jnp.clip(z, 1e-2, 1e2)
-            W = W - np.min(W, axis=1)[:, None]
-            W = jnp.clip(W, 1e-2, 1e2)
             X = z
             init_z.append(z)
             init_W.append(W)
 
         return init_z, init_W
+
+    def identify_mixture_factors(self, max_n_genes=20, thres=.5):
+        """Identify factors that might be better if broken apart"""
+        # sparse_factors = np.where(self.pmeans['brd'].ravel() > 1.)[0]
+        kept_factors = self.factor_lists[0]
+        normed_factors = self.pmeans['L0W'][kept_factors] / self.pmeans['L0W'][kept_factors].max(axis=1)[:,None]
+        n_genes_per_factor = np.sum(normed_factors > thres, axis=1)
+        mixture_factors = kept_factors[np.where(n_genes_per_factor > max_n_genes)[0]]
+        return mixture_factors
+    
+    def reinit_factors(self, mixture_factors=None, init_budgets=False, exponent=1.1, **kwargs):
+        kept_factors = self.factor_lists[0]
+        if mixture_factors is None:
+            mixture_factors = self.identify_mixture_factors(**kwargs)
+        # Make W0 matrix with sparse factors, and with each mixture factor repeated twice
+        W0 = np.ones((self.layer_sizes[0], self.n_genes)) * 1./self.layer_sizes[0]
+        for i, factor in enumerate(kept_factors):
+            W0[i] = self.pmeans['L0W'][factor] ** exponent
+        
+        # If we can fit repetitions
+        if len(mixture_factors) <= self.layer_sizes[0]-len(kept_factors):
+            for factor in mixture_factors:
+                # Add another copy
+                W0[len(kept_factors) + i] = self.pmeans['L0W'][factor] ** exponent
+
+        self.init_var_params(init_budgets=init_budgets, init_w=W0, nmf_init=False)
+        return W0
 
     def elbo(
         self,
@@ -714,14 +592,8 @@ class scDEF(object):
 
         cell_budget_params = local_params[0]
         z_params = local_params[1]
-        # s_params = local_params[2]
         gene_budget_params = global_params[0]
         fscale_params = global_params[1]
-
-        # cell_budget_params = var_params[0]
-        # gene_budget_params = var_params[1]
-        # fscale_params = var_params[2]
-        # z_params = var_params[3]
 
         cell_budget_shape = jnp.clip(
             cell_budget_params[0][indices], min_shape, max_shape
@@ -765,10 +637,9 @@ class scDEF(object):
             lambda: jax.lax.stop_gradient(fscale_rates),
             lambda: fscale_rates,
         )
+        
         wm_shape = jnp.clip(global_params[2 + self.n_layers][0], min_shape, max_shape)
-        wm_rate = jnp.exp(
-            jnp.clip(global_params[2 + self.n_layers][1], min_rate, max_rate)
-        )
+        wm_rate = jnp.exp(jnp.clip(global_params[2 + self.n_layers][1], min_rate, max_rate))
 
         z_shapes = jnp.clip(z_params[0][indices], min_shape, max_shape)
         z_rates = jnp.exp(jnp.clip(z_params[1][indices], min_rate, max_rate))
@@ -799,19 +670,16 @@ class scDEF(object):
         if self.use_brd:
             fscale_samples = lognormal_sample(rng, fscale_shapes, fscale_rates)
             _wm_sample = lognormal_sample(rng, wm_shape, wm_rate)
+            brd_samples = fscale_samples / jnp.maximum(_wm_sample, 1.)
         # w will be sampled in a loop below because it cannot be vectorized
 
         # Compute ELBO
-        global_pl = 0.0
-        global_en = 0.0
         global_pl = gamma_logpdf(
             gene_budget_sample,
-            self.gene_scale_shape,  # * self.gene_ratio,
+            self.gene_scale_shape,  
             self.gene_scale_shape * self.gene_ratio,
         )
         global_en = lognormal_entropy(gene_budget_shape, gene_budget_rate)
-        local_pl = 0.0
-        local_en = 0.0
         local_pl = gamma_logpdf(
             cell_budget_sample,
             self.cell_scale_shape,
@@ -826,22 +694,11 @@ class scDEF(object):
             )
             global_en += lognormal_entropy(fscale_shapes, fscale_rates)
 
-            global_pl += gamma_logpdf(_wm_sample, 1.0, 1.0)
+            global_pl += gamma_logpdf(_wm_sample, .1, .1)
             global_en += lognormal_entropy(wm_shape, wm_rate)
-
-        s_shape = jnp.clip(
-            global_params[2 + self.n_layers + 1][0], min_shape, max_shape
-        )
-        s_rate = jnp.exp(
-            jnp.clip(global_params[2 + self.n_layers + 1][1], min_rate, max_rate)
-        )
-        _s_sample = lognormal_sample(rng, s_shape, s_rate)
-        global_pl += gamma_logpdf(_s_sample, 1.0, 1.0 / self.layer_concentration)
-        global_en += lognormal_entropy(s_shape, s_rate)
 
         z_mean = 1.0
         for idx in list(np.arange(0, self.n_layers)[::-1]):
-            # idx = 0
             start = np.sum(self.layer_sizes[:idx]).astype(int)
             end = start + self.layer_sizes[idx]
 
@@ -860,39 +717,36 @@ class scDEF(object):
                 lambda: _w_rate,
             )
 
-            # if idx == 0:
-            #     jax.debug.print("🤯 {a}, {b} 🤯", a=jnp.min(_w_shape), b=jnp.max(_w_shape))
-            #     jax.debug.print("🤯🤯 {a}, {b} 🤯🤯", a=jnp.min(_w_rate), b=jnp.max(_w_rate))
             _w_sample = lognormal_sample(rng, _w_shape, _w_rate)
 
             if idx == 0 and self.use_brd:
                 global_pl += gamma_logpdf(
                     _w_sample,
-                    1.0 / fscale_samples,
-                    (1.0 / fscale_samples) / _wm_sample,
+                    self.w_priors[idx][0] * (1.0 / fscale_samples),
+                    self.w_priors[idx][1] * (1.0 / fscale_samples) * (1./_wm_sample) * self.layer_sizes[idx],
                 )
+            elif idx == 0:
+                global_pl += gamma_logpdf(
+                    _w_sample,
+                    self.w_priors[idx][0] ,
+                    self.w_priors[idx][1] * self.layer_sizes[idx],
+                )                
             else:
-                # _f_shape = jnp.clip(local_params[2+idx-1][0], min_shape, max_shape)
-                # _f_rate = jnp.clip(jnp.exp(local_params[2+idx-1][1]), min_rate, max_rate)
-                # _f_sample = lognormal_sample(rng, _f_shape, _f_rate)
-                # global_pl += gamma_logpdf(_f_sample, 1., 1.)
-                # global_en += lognormal_entropy(_f_shape, _f_rate)
                 if idx == 1 and self.use_brd:
                     global_pl += gamma_logpdf(
                         _w_sample,
                         self.w_priors[idx][0],
-                        self.w_priors[idx][1] / fscale_samples.T,
+                        self.w_priors[idx][1] *  self.layer_sizes[idx] / brd_samples.T,
                     )
                 else:
                     global_pl += gamma_logpdf(
                         _w_sample,
                         self.w_priors[idx][0],
-                        self.w_priors[idx][1],  # / _f_sample,
+                        self.w_priors[idx][1]  * self.layer_sizes[idx],
                     )
             global_en += lognormal_entropy(_w_shape, _w_rate)
 
             # z
-            # _z_sample = z_samples[:, start:end]
             _z_shape = z_shapes[:, start:end]
             _z_rate = z_rates[:, start:end]
 
@@ -908,54 +762,34 @@ class scDEF(object):
             )
             _z_sample = lognormal_sample(rng, _z_shape, _z_rate)
 
-            shape_param = self.layer_shapes[idx]
-            rate_param = self.layer_shapes[idx] / 1.0
-            if idx < self.n_layers - 1:
-                shape_param = jax.lax.cond(
-                    stop_gradients[idx],
-                    lambda: 3.0,
-                    lambda: shape_param,
-                )
-                rate_param = jax.lax.cond(
-                    stop_gradients[idx],
-                    lambda: 3.0,
-                    lambda: rate_param,
-                )
-            # if idx > 0:
-            #     rate_param = 1./_f_sample.T
-            # else:
-            #     rate_param = 1./fscale_samples.T
-            # local_pl += gamma_logpdf(_z_sample, self.layer_concentration, self.layer_concentration)
+            rate_param = 1.
+            if idx > 0:
+                rate_param = 1.
+            elif self.n_layers == 1 and self.use_brd:
+                rate_param = brd_samples.T
+                
             local_pl += jax.lax.cond(
                 idx == self.n_layers - 1,
-                lambda: gamma_logpdf(_z_sample, _s_sample, _s_sample),
-                lambda: gamma_logpdf(_z_sample, _s_sample, _s_sample / z_mean),
+                lambda: gamma_logpdf(_z_sample, .1, .1 / rate_param),
+                lambda: gamma_logpdf(_z_sample, self.layer_concentration, self.layer_concentration / (rate_param * z_mean )),
             )
 
-            # local_pl += gamma_logpdf(
-            #     _z_sample, _s_sample, _s_sample / (z_mean * rate_param)
-            # )
             local_en += lognormal_entropy(_z_shape, _z_rate)
 
             z_mean = jnp.einsum("nk,kp->np", _z_sample, _w_sample)
 
-            z_mean = jax.lax.cond(
-                stop_gradients[idx], lambda: z_mean * 0.0 + 1, lambda: z_mean
-            )
-
-        # Compute log likelihood
-        # mean_bottom = jnp.einsum(
-        #     "nk,kg->ng", _z_sample , _w_sample
-        # )
         mean_bottom = jnp.einsum(
-            "nk,kg->ng", _z_sample / cell_budget_sample, _w_sample
-        ) / (batch_indices_onehot.dot(gene_budget_sample))
+            "nk,kg->ng", _z_sample, _w_sample
+        ) *  cell_budget_sample
+        mean_bottom = mean_bottom * (batch_indices_onehot.dot(gene_budget_sample))
+
         ll = jnp.sum(vmap(poisson.logpmf)(jnp.array(batch), mean_bottom))
         ll = jax.lax.cond(
             stop_gradients[0],
             lambda: ll * 0.0,
             lambda: ll,
         )
+
         # Anneal the entropy
         global_en *= annealing_parameter
         local_en *= annealing_parameter
@@ -965,12 +799,6 @@ class scDEF(object):
             + global_pl
             + global_en
         )
-
-        # return ll + (
-        #     local_pl
-        #     + local_en
-        #     + (indices.shape[0] / self.X.shape[0]) * (global_pl + global_en)
-        # )
 
     def batch_elbo(
         self,
@@ -1052,7 +880,7 @@ class scDEF(object):
         batches = data_stream()
 
         losses = []
-
+        global_grads = 0.
         annealing_parameter = jnp.array(annealing_parameter)
         stop_gradients = jnp.array(stop_gradients)
         stop_cell_budgets = jnp.array(stop_cell_budgets)
@@ -1086,7 +914,7 @@ class scDEF(object):
                             stop_gene_budgets,
                         )
                     if update_globals:
-                        loss, global_params, global_opt_state = global_update_func(
+                        loss, global_params, global_opt_state, global_grads = global_update_func(
                             X,
                             indices,
                             t,
@@ -1153,9 +981,44 @@ class scDEF(object):
         except KeyboardInterrupt:
             self.logger.info("Interrupted learning. Exiting safely...")
 
-        return losses, local_params, global_params, local_opt_state, global_opt_state
+        return losses, local_params, global_params, local_opt_state, global_opt_state, global_grads
 
-    def learn(
+    def fit(self, pretrain=False, nmf_init=False, max_cells_init=1024, unmix=False,**kwargs):
+        """Learn a one-layer scDEF with 100 factors with BRD to obtain 
+        cell and gene scale factors and an estimate of the effective number of factors. 
+        Update the sizes based on that estimate and re-init everything except the scale factors.
+        """
+        if pretrain:
+            self.logger.info(f"Pretraining to find initial estimate of number of factors")
+            self.update_model_size(self.n_factors, max_n_layers=1)
+            self.update_model_priors()
+            self.init_var_params(init_budgets=True, nmf_init=nmf_init, max_cells=max_cells_init)
+            self.elbos = []
+            self.step_sizes = []
+            self._learn(filter=False, annotate=False, **kwargs)
+            eff_factors = self.get_effective_factors(min_cells=.01)
+            mixture_factors = self.identify_mixture_factors()
+            if len(mixture_factors) > 0 and unmix:
+                self.logger.info(f"Found {len(mixture_factors)} factors that activate more than 10 genes. Re-fitting to enhance sparsity")
+                self.reinit_factors(mixture_factors=mixture_factors)
+                self._learn(filter=False, annotate=False, **kwargs)
+                eff_factors = self.get_effective_factors(min_cells=.01)
+            n_eff_factors = len(eff_factors)
+            self.logger.info(f"scDEF pretraining finished. Found {n_eff_factors} effective factors.")
+            self.update_model_size(n_eff_factors)
+            self.update_model_priors()
+            self.logger.info(f"Learning scDEF with layer sizes {self.layer_sizes}.")
+            init_budgets = False
+            init_w = self.pmeans["L0W"][eff_factors]
+        else:
+            init_budgets = True
+            init_w = None
+        self.init_var_params(init_budgets=init_budgets, init_w=init_w, nmf_init=nmf_init, max_cells=max_cells_init)
+        self.elbos = []
+        self.step_sizes = []
+        self._learn(**kwargs)
+
+    def _learn(
         self,
         n_epoch: Optional[Union[int, list]] = [1000],
         lr: Optional[Union[float, list]] = 1e-2,
@@ -1171,6 +1034,8 @@ class scDEF(object):
         stop_cell_budgets: Optional[int] = 0,
         stop_gene_budgets: Optional[int] = 0,
         opt_layer: Optional[int] = None,
+        filter: Optional[bool] = True,
+        annotate: Optional[bool] = True,
         **kwargs,
     ):
         """Fit a variational approximation to the posterior over scDEF parameters.
@@ -1265,9 +1130,9 @@ class scDEF(object):
             )  # minimize -ELBO
 
         def clip_params(
-            params, min_mu=-1e6, max_mu=1e2, min_logstd=-1e6, max_logstd=2e0
+            params, min_mu=-1e10, max_mu=1e2, min_logstd=-1e10, max_logstd=1e1
         ):
-            for i in range(len(params)):
+            for i in range(len(params))[:-2]:  # skip the last two params (w and s)
                 params[i] = (
                     params[i].at[0].set(jnp.clip(params[i][0], min_mu, max_mu))
                 )  # mu
@@ -1365,7 +1230,7 @@ class scDEF(object):
                 )
                 global_params = optax.apply_updates(global_params, updates)
                 global_params = clip_params(global_params)
-                return value, global_params, global_opt_state
+                return value, global_params, global_opt_state, gradient
 
             # local_opt_state = local_opt_init(self.local_params)
             local_opt_state = local_optimizer.init(self.local_params)
@@ -1378,6 +1243,7 @@ class scDEF(object):
                 global_params,
                 local_opt_state,
                 global_opt_state,
+                global_gradients,
             ) = self._optimize(
                 local_update,
                 global_update,
@@ -1406,32 +1272,41 @@ class scDEF(object):
             self.step_sizes.append(lr_schedule[i])
 
         self.set_posterior_means()
-        self.filter_factors()
+        if self.use_brd and filter:
+            self.filter_factors()
+        else:
+            if annotate:
+                self.make_layercolors(
+                    layer_cpal=self.layer_cpal, lightness_mult=self.lightness_mult
+                )
+                self.annotate_adata()
 
     def set_posterior_means(self):
         cell_budget_params = self.local_params[0]
         gene_budget_params = self.global_params[0]
         fscale_params = self.global_params[1]
+        wm_params = self.global_params[-1]
         z_params = self.local_params[1]
-        w_params = self.global_params[2]
 
         self.pmeans = {
             "cell_scale": np.array(
                 jnp.exp(
                     cell_budget_params[0] + 0.5 * jnp.exp(cell_budget_params[1]) ** 2
                 )
-                # np.exp(cell_budget_params[0]) / np.exp(cell_budget_params[1])
             ),
             "gene_scale": np.array(
                 jnp.exp(
                     gene_budget_params[0] + 0.5 * jnp.exp(gene_budget_params[1]) ** 2
                 )
-                # np.exp(gene_budget_params[0]) / np.exp(gene_budget_params[1])
             ),
-            "brd": jnp.exp(
+            "factor_concentrations": jnp.exp(
                 fscale_params[0] + 0.5 * jnp.exp(fscale_params[1]) ** 2
-            ),  # np.array(np.exp(fscale_params[0]) / np.exp(fscale_params[1])),
+            ), 
+            "factor_means": jnp.exp(
+                wm_params[0] + 0.5 * jnp.exp(wm_params[1]) ** 2
+            ),  
         }
+        self.pmeans['brd'] = self.pmeans['factor_concentrations'] / jnp.maximum(self.pmeans['factor_means'], 1.)
 
         for idx in range(self.n_layers):
             start = sum(self.layer_sizes[:idx])
@@ -1440,24 +1315,18 @@ class scDEF(object):
                 z_params[0][:, start:end]
                 + 0.5 * jnp.exp(z_params[1][:, start:end]) ** 2
             )
-            # self.pmeans[f"{self.layer_names[idx]}z"] = np.array(
-            #     np.exp(z_params[0][:, start:end]) / np.exp(z_params[1][:, start:end])
-            # )
             _w_shape = self.global_params[2 + idx][0]
             _w_rate = self.global_params[2 + idx][1]
             self.pmeans[f"{self.layer_names[idx]}W"] = jnp.exp(
                 _w_shape + 0.5 * jnp.exp(_w_rate) ** 2
             )
-            # self.pmeans[f"{self.layer_names[idx]}W"] = np.array(
-            #     np.exp(_w_shape) / np.exp(_w_rate)
-            # )
 
     def set_posterior_variances(self):
-        cell_budget_params = self.var_params[0]
-        gene_budget_params = self.var_params[1]
-        fscale_params = self.var_params[2]
-        z_params = self.var_params[3]
-        w_params = self.var_params[4]
+        cell_budget_params = self.local_params[0]
+        gene_budget_params = self.global_params[0]
+        fscale_params = self.global_params[1]
+        wm_params = self.global_params[-1]
+        z_params = self.local_params[1]
 
         self.pvars = {
             "cell_scale": np.array(
@@ -1466,7 +1335,10 @@ class scDEF(object):
             "gene_scale": np.array(
                 np.exp(gene_budget_params[0]) / np.exp(gene_budget_params[1]) ** 2
             ),
-            "brd": np.array(np.exp(fscale_params[0]) / np.exp(fscale_params[1]) ** 2),
+            "factor_concentrations": np.array(np.exp(fscale_params[0]) / np.exp(fscale_params[1]) ** 2),
+            "factor_means": jnp.exp(
+                wm_params[0] + 0.5 * jnp.exp(wm_params[1]) ** 2
+            ),              
         }
 
         for idx in range(self.n_layers):
@@ -1476,17 +1348,17 @@ class scDEF(object):
                 np.exp(z_params[0][:, start:end])
                 / np.exp(z_params[1][:, start:end]) ** 2
             )
-            _w_shape = self.var_params[4 + idx][0]
-            _w_rate = self.var_params[4 + idx][1]
+            _w_shape = self.global_params[2 + idx][0]
+            _w_rate = self.global_params[2 + idx][1]
             self.pvars[f"{self.layer_names[idx]}W"] = np.array(
                 np.exp(_w_shape) / np.exp(_w_rate) ** 2
             )
 
     def filter_factors(
         self,
-        thres: Optional[float] = 1.0,
-        iqr_mult: Optional[float] = 0.005,
-        min_cells: Optional[float] = 0.0,
+        thres: Optional[float] = 1.,
+        iqr_mult: Optional[float] = 0.0,
+        min_cells: Optional[float] = 0.001,
         filter_up: Optional[bool] = True,
         normalized: Optional[bool] = False,
     ):
@@ -1498,15 +1370,6 @@ class scDEF(object):
             min_cells: minimum number of cells that each factor must have attached to it for it to be kept. If between 0 and 1, fraction. Otherwise, absolute value
             filter_up: whether to remove factors in upper layers via inter-layer attachments
         """
-        ard = []
-        if thres is not None:
-            ard = thres
-        else:
-            ard = iqr_mult
-
-        if not self.use_brd:
-            ard = 0.0
-
         if min_cells != 0:
             if min_cells < 1.0:
                 min_cells = max(min_cells * self.adata.shape[0], 10)
@@ -1514,35 +1377,7 @@ class scDEF(object):
         self.factor_lists = []
         for i, layer_name in enumerate(self.layer_names):
             if i == 0:
-                normed = (
-                    self.pmeans[f"{layer_name}z"]
-                    / np.sum(self.pmeans[f"{layer_name}z"], axis=1)[:, None]
-                )
-                assignments = np.argmax(normed, axis=1)
-                counts = np.array(
-                    [
-                        np.count_nonzero(assignments == a)
-                        for a in range(self.layer_sizes[i])
-                    ]
-                )
-                masses = np.sum(normed, axis=0)
-                keep = np.array(range(self.layer_sizes[i]))[
-                    np.where(counts >= min_cells)[0]
-                ]
-                brd_keep = np.arange(self.layer_sizes[i])
-                if self.use_brd:
-                    rels = self.pmeans[f"brd"].ravel()
-                    if normalized:
-                        rels = rels - np.min(rels)
-                        rels = rels / np.max(rels)
-                    if thres is None:
-                        median = np.median(rels)
-                        q3 = np.percentile(rels, 75)
-                        cutoff = ard * (q3 - median)
-                    else:
-                        cutoff = ard
-                    brd_keep = np.where(rels >= cutoff)[0]
-                keep = np.unique(list(set(brd_keep).intersection(keep)))
+                keep = self.get_effective_factors(thres=thres, iqr_mult=iqr_mult, min_cells=min_cells, normalized=normalized)
             else:
                 assignments = np.argmax(self.pmeans[f"{layer_name}z"], axis=1)
                 counts = np.array(
@@ -1576,7 +1411,6 @@ class scDEF(object):
             layer_cpal=self.layer_cpal, lightness_mult=self.lightness_mult
         )
         self.annotate_adata()
-        self.make_graph()
 
     def set_factor_names(self):
         self.factor_names = [
@@ -1588,14 +1422,14 @@ class scDEF(object):
         ]
 
     def annotate_adata(self):
-        self.adata.obs["cell_scale"] = 1 / self.pmeans["cell_scale"]
+        self.adata.obs["cell_scale"] = self.pmeans["cell_scale"]
         if self.n_batches == 1:
-            self.adata.var["gene_scale"] = 1 / self.pmeans["gene_scale"][0]
+            self.adata.var["gene_scale"] =  self.pmeans["gene_scale"][0]
             self.logger.info("Updated adata.var: `gene_scale`")
         else:
             for batch_idx in range(self.n_batches):
                 name = f"gene_scale_{batch_idx}"
-                self.adata.var[name] = 1 / self.pmeans["gene_scale"][batch_idx]
+                self.adata.var[name] =  self.pmeans["gene_scale"][batch_idx]
                 self.logger.info(f"Updated adata.var: `{name}` for batch {batch_idx}.")
 
         self.set_factor_names()
@@ -1981,6 +1815,7 @@ class scDEF(object):
         if gene_rankings is None:
             gene_rankings = self.get_rankings(layer_idx=0)
 
+        enrichments = []
         for rank in tqdm(gene_rankings):
             enr = gp.enrichr(
                 gene_list=rank,
@@ -2020,445 +1855,6 @@ class scDEF(object):
         layer_factor_orders = layer_factor_orders[::-1]
         return layer_factor_orders
 
-    def make_graph(
-        self,
-        hierarchy: Optional[dict] = None,
-        show_all: Optional[bool] = False,
-        factor_annotations: Optional[dict] = None,
-        top_factor: Optional[str] = None,
-        show_signatures: Optional[bool] = True,
-        enrichments: Optional[pd.DataFrame] = None,
-        top_genes: Optional[int] = None,
-        show_batch_counts: Optional[bool] = False,
-        filled: Optional[str] = None,
-        wedged: Optional[str] = None,
-        color_edges: Optional[bool] = True,
-        show_confidences: Optional[bool] = False,
-        mc_samples: Optional[int] = 100,
-        n_cells_label: Optional[bool] = False,
-        n_cells: Optional[bool] = False,
-        node_size_max: Optional[int] = 2.0,
-        node_size_min: Optional[int] = 0.05,
-        scale_level: Optional[bool] = False,
-        show_label: Optional[bool] = True,
-        gene_score: Optional[str] = None,
-        gene_cmap: Optional[str] = "viridis",
-        shell: Optional[bool] = False,
-        r: Optional[float] = 2.0,
-        r_decay: Optional[float] = 0.8,
-        **fontsize_kwargs,
-    ):
-        """Make Graphviz-formatted scDEF graph.
-
-        Args:
-            hierarchy: a dictionary containing the polytree to draw instead of the whole graph
-            show_all: whether to show all factors even post filtering
-            factor_annotations: factor annotations to include in the node labels
-            top_factor: only include factors below this factor
-            show_signatures: whether to show the ranked gene signatures in the node labels
-            enrichments: enrichment results from gseapy to include in the node labels
-            top_genes: number of genes from each signature to be shown in the node labels
-            show_batch_counts: whether to show the number of cells from each batch that attach to each factor
-            filled: key from self.adata.obs to use to fill the nodes with, or dictionary of factor scores
-            wedged: key from self.adata.obs to use to wedge the nodes with
-            color_edges: whether to color the graph edges according to the upper factors
-            show_confidences: whether to show the confidence score for each signature
-            mc_samples: number of Monte Carlo samples to take from the posterior to compute signature confidences
-            n_cells_label: wether to show the number of cells that attach to the factor
-            n_cells: wether to scale the node sizes by the number of cells that attach to the factor
-            node_size_max: maximum node size when scaled by cell numbers
-            node_size_min: minimum node size when scaled by cell numbers
-            scale_level: wether to scale node sizes per level instead of across all levels
-            show_label: wether to show labels on nodes
-            gene_score: color the nodes by the score they attribute to a gene, normalized by layer. Overrides filled and wedged
-            gene_cmap: colormap to use for gene_score
-            **fontsize_kwargs: keyword arguments to adjust the fontsizes according to the gene scores
-        """
-        if top_genes is None:
-            top_genes = [10] * self.n_layers
-        elif isinstance(top_genes, float):
-            top_genes = [top_genes] * self.n_layers
-        elif len(top_genes) != self.n_layers:
-            raise IndexError("top_genes list must be of size scDEF.n_layers")
-
-        gene_cmap = matplotlib.colormaps[gene_cmap]
-        gene_scores = dict()
-        if gene_score is not None:
-            if gene_score not in self.adata.var_names:
-                raise ValueError("gene_score must be a gene name in self.adata")
-            else:
-                style = "filled"
-                gene_loc = np.where(self.adata.var_names == gene_score)[0][0]
-                scores_dict = self.get_signatures_dict(
-                    scores=True, layer_normalize=True
-                )[1]
-                for n in scores_dict:
-                    gene_scores[n] = scores_dict[n][gene_loc]
-        else:
-            if filled is None:
-                style = None
-            elif filled == "factor":
-                style = "filled"
-            else:
-                if isinstance(filled, str):
-                    if filled not in self.adata.obs:
-                        raise ValueError(
-                            "filled must be factor or any `obs` in self.adata"
-                        )
-                else:
-                    style = "filled"
-
-            if style is None:
-                if wedged is None:
-                    style = None
-                else:
-                    if wedged not in self.adata.obs:
-                        raise ValueError("wedged must be any `obs` in self.adata")
-                    else:
-                        style = "wedged"
-            else:
-                if wedged is not None:
-                    self.logger.info("Filled style takes precedence over wedged")
-
-        hierarchy_nodes = None
-        if hierarchy is not None:
-            if top_factor is None:
-                hierarchy_nodes = hierarchy_utils.get_nodes_from_hierarchy(hierarchy)
-            else:
-                flattened_hierarchy = hierarchy_utils.flatten_hierarchy(hierarchy)
-                hierarchy_nodes = flattened_hierarchy[top_factor] + [top_factor]
-
-        layer_factor_orders = []
-        for layer_idx in np.arange(0, self.n_layers)[::-1]:  # Go top down
-            if show_all:
-                factors = np.arange(self.layer_sizes[layer_idx])
-            else:
-                factors = self.factor_lists[layer_idx]
-            n_factors = len(factors)
-            if not show_all and layer_idx < self.n_layers - 1:
-                # Assign factors to upper factors to set the plotting order
-                if show_all:
-                    mat = self.pmeans[f"{self.layer_names[layer_idx+1]}W"]
-                else:
-                    mat = self.pmeans[f"{self.layer_names[layer_idx+1]}W"][
-                        self.factor_lists[layer_idx + 1]
-                    ][:, self.factor_lists[layer_idx]]
-                normalized_factor_weights = mat / np.sum(mat, axis=1).reshape(-1, 1)
-                assignments = []
-                for factor_idx in range(n_factors):
-                    assignments.append(
-                        np.argmax(normalized_factor_weights[:, factor_idx])
-                    )
-                assignments = np.array(assignments)
-
-                factor_order = []
-                for upper_factor_idx in layer_factor_orders[-1]:
-                    factor_order.append(np.where(assignments == upper_factor_idx)[0])
-                factor_order = np.concatenate(factor_order).astype(int)
-                layer_factor_orders.append(factor_order)
-            else:
-                layer_factor_orders.append(np.arange(n_factors))
-        layer_factor_orders = layer_factor_orders[::-1]
-
-        def map_scores_to_fontsizes(scores, max_fontsize=11, min_fontsize=5):
-            scores = scores - np.min(scores)
-            scores = scores / np.max(scores)
-            fontsizes = min_fontsize + scores * (max_fontsize - min_fontsize)
-            return fontsizes
-
-        g = Graph()
-        ordering = "out"
-        if shell:
-            g.engine = "neato"
-        else:
-            g.engine = "dot"
-        # g.node('root', style = 'invis')
-        angle_dict = dict()
-        for layer_idx in range(self.n_layers):
-            layer_name = self.layer_names[layer_idx]
-            if show_all:
-                factors = np.arange(self.layer_sizes[layer_idx])
-                layer_colors = []
-                f_idx = 0
-                for i in range(self.layer_sizes[layer_idx]):
-                    if i in self.factor_lists[layer_idx]:
-                        layer_colors.append(self.layer_colorpalettes[layer_idx][f_idx])
-                        f_idx += 1
-                    else:
-                        layer_colors.append("grey")
-            else:
-                factors = self.factor_lists[layer_idx]
-                layer_colors = self.layer_colorpalettes[layer_idx][: len(factors)]
-            n_factors = len(factors)
-
-            if show_signatures:
-                gene_rankings, gene_scores = self.get_rankings(
-                    layer_idx=layer_idx,
-                    genes=True,
-                    return_scores=True,
-                )
-
-            factor_order = layer_factor_orders[layer_idx]
-            for ii, factor_idx in enumerate(factor_order):
-                factor_idx = int(factor_idx)
-                alpha = "FF"
-                color = None
-                if show_all:
-                    factor_name = f"{self.layer_names[layer_idx]}{int(factor_idx)}"
-                else:
-                    factor_name = f"{self.factor_names[layer_idx][int(factor_idx)]}"
-
-                if hierarchy is not None and factor_name not in hierarchy_nodes:
-                    continue
-
-                label = factor_name
-                if factor_annotations is not None:
-                    if factor_name in factor_annotations:
-                        label = factor_annotations[factor_name]
-
-                cells = np.where(self.adata.obs[f"{layer_name}"] == factor_name)[0]
-                node_num_cells = len(cells)
-
-                if n_cells_label:
-                    label = f"{label}<br/>({node_num_cells} cells)"
-
-                if color_edges:
-                    color = matplotlib.colors.to_hex(layer_colors[factor_idx])
-                fillcolor = "#FFFFFF"
-                if style == "filled":
-                    if filled == "factor":
-                        fillcolor = matplotlib.colors.to_hex(layer_colors[factor_idx])
-                    elif gene_score is not None:
-                        # Color by gene score
-                        rgba = gene_cmap(gene_scores[factor_name])
-                        fillcolor = matplotlib.colors.rgb2hex(rgba)
-                    elif isinstance(filled, str):
-                        # cells attached to this factor
-                        original_factor_index = self.factor_lists[layer_idx][factor_idx]
-                        if len(cells) > 0:
-                            # cells in this factor that belong to each obs
-                            prevs = [
-                                np.count_nonzero(self.adata.obs[filled][cells] == b)
-                                / len(np.where(self.adata.obs[filled] == b)[0])
-                                for b in self.adata.obs[filled].cat.categories
-                            ]
-                            obs_idx = np.argmax(prevs)  # obs attachment
-                            label = f"{label}<br/>{self.adata.obs[filled].cat.categories[obs_idx]}"
-                            alpha = prevs[obs_idx] / np.sum(
-                                prevs
-                            )  # confidence on obs_idx attachment -- should I account for the number of cells in each batch in total?
-                            alpha = matplotlib.colors.rgb2hex(
-                                (0, 0, 0, alpha), keep_alpha=True
-                            )[-2:].upper()
-                            fillcolor = self.adata.uns[f"{filled}_colors"][obs_idx]
-                    elif isinstance(filled, dict):
-                        # Color by dictionary of signature values with gene_cmap
-                        rgba = gene_cmap(filled[factor_name])
-                        fillcolor = matplotlib.colors.rgb2hex(rgba)
-                    fillcolor = fillcolor + alpha
-                    color = fillcolor + alpha
-                elif style == "wedged":
-                    # cells attached to this factor
-                    original_factor_index = self.factor_lists[layer_idx][factor_idx]
-                    if len(cells) > 0:
-                        # cells in this factor that belong to each obs
-                        # normalized by total num of cells in each obs
-                        prevs = [
-                            np.count_nonzero(self.adata.obs[wedged][cells] == b)
-                            / len(np.where(self.adata.obs[wedged] == b)[0])
-                            for b in self.adata.obs[wedged].cat.categories
-                        ]
-                        fracs = prevs / np.sum(prevs)
-                        # make color string for pie chart
-                        fillcolor = ":".join(
-                            [
-                                f"{self.adata.uns[f'{wedged}_colors'][obs_idx]};{frac}"
-                                for obs_idx, frac in enumerate(fracs)
-                            ]
-                        )
-
-                if enrichments is not None:
-                    label += "<br/><br/>" + "<br/>".join(
-                        [
-                            enrichments[factor_idx].results["Term"].values[i]
-                            + f" ({enrichments[factor_idx].results['Adjusted P-value'][i]:.3f})"
-                            for i in range(top_genes[layer_idx])
-                        ]
-                    )
-                elif show_signatures:
-
-                    def print_signature(i):
-                        factor_gene_rankings = gene_rankings[i][: top_genes[layer_idx]]
-                        factor_gene_scores = gene_scores[i][: top_genes[layer_idx]]
-                        fontsizes = map_scores_to_fontsizes(
-                            gene_scores[i], **fontsize_kwargs
-                        )[: top_genes[layer_idx]]
-                        gene_labels = []
-                        for j, gene in enumerate(factor_gene_rankings):
-                            gene_labels.append(
-                                f'<FONT POINT-SIZE="{fontsizes[j]}">{gene}</FONT>'
-                            )
-                        return "<br/><br/>" + "<br/>".join(gene_labels)
-
-                    idx = factor_idx
-                    if show_all:
-                        if factor_idx in self.factor_lists[layer_idx]:
-                            idx = np.where(
-                                factor_idx == np.array(self.factor_lists[layer_idx])
-                            )[0][0]
-                            label += print_signature(idx)
-                            if show_confidences:
-                                confidence_score = self.get_signature_confidence(
-                                    idx,
-                                    layer_idx,
-                                    top_genes=top_genes[layer_idx],
-                                    mc_samples=mc_samples,
-                                )
-                                label += f"<br/><br/>({confidence_score:.3f})"
-                    else:
-                        label += print_signature(idx)
-                        if show_confidences:
-                            confidence_score = self.get_signature_confidence(
-                                idx,
-                                layer_idx,
-                                top_genes=top_genes[layer_idx],
-                                mc_samples=mc_samples,
-                            )
-                            label += f"<br/><br/>({confidence_score:.3f})"
-
-                elif isinstance(filled, str) and filled != "factor":
-                    label += "<br/><br/>" + ""
-
-                label = "<" + label + ">"
-                size = node_size_min
-                fixedsize = "false"
-                if n_cells:
-                    max_cells = self.n_cells
-                    if scale_level:
-                        max_cells = self.adata.obs[f"{layer_name}"].value_counts().max()
-                    size = np.maximum(
-                        node_size_max * np.sqrt((node_num_cells / max_cells)),
-                        node_size_min,
-                    )
-                    if len(self.factor_lists[layer_idx]) == 1:
-                        size = node_size_min
-                    fixedsize = "true"
-                elif show_all:
-                    if (
-                        factor_idx not in self.factor_lists[layer_idx]
-                        or len(self.factor_lists[layer_idx]) == 1
-                    ):
-                        size = node_size_min
-                        fixedsize = "true"
-                        color = "gray"
-                        fillcolor = "gray"
-                        if len(self.factor_lists[layer_idx]) == 1:
-                            label = ""
-
-                if not show_label:
-                    label = ""
-
-                if shell:
-                    radius = r * (layer_idx + 1) ** r_decay  # distance from root
-                    if layer_idx == 0:
-                        angle_dict[factor_name] = (
-                            ii * 2 * np.pi / len(self.factor_lists[0])
-                        )
-                    else:
-                        children_angles = [
-                            angle_dict[f] for f in hierarchy[factor_name]
-                        ]
-                        angle_dict[factor_name] = np.mean(children_angles)
-                    x = radius * np.cos(angle_dict[factor_name])
-                    y = radius * np.sin(angle_dict[factor_name])
-                    g.node(
-                        factor_name,
-                        label=label,
-                        fillcolor=fillcolor,
-                        color=color,
-                        ordering=ordering,
-                        style=style,
-                        width=str(size),
-                        height=str(size),
-                        fixedsize=fixedsize,
-                        pos=f"{x},{y}!",
-                        pin="true",
-                    )
-                else:
-                    g.node(
-                        factor_name,
-                        label=label,
-                        fillcolor=fillcolor,
-                        color=color,
-                        ordering=ordering,
-                        style=style,
-                        width=str(size),
-                        height=str(size),
-                        fixedsize=fixedsize,
-                    )
-
-                if not color_edges:
-                    color = None
-                if layer_idx > 0:
-                    if hierarchy is not None:
-                        if factor_name in hierarchy:
-                            lower_factor_names = hierarchy[factor_name]
-                            mat = np.array(
-                                [
-                                    self.compute_weight(factor_name, lower_factor_name)
-                                    for lower_factor_name in lower_factor_names
-                                ]
-                            )
-                            normalized_factor_weights = mat / np.sum(mat)
-                            for lower_factor_idx, lower_factor_name in enumerate(
-                                lower_factor_names
-                            ):
-                                normalized_weight = normalized_factor_weights[
-                                    lower_factor_idx
-                                ]
-                                g.edge(
-                                    factor_name,
-                                    lower_factor_name,
-                                    penwidth=str(4 * normalized_weight),
-                                    color=color,
-                                )
-                    else:
-                        if show_all:
-                            mat = self.pmeans[f"{self.layer_names[layer_idx]}W"]
-                        else:
-                            mat = self.pmeans[f"{self.layer_names[layer_idx]}W"][
-                                self.factor_lists[layer_idx]
-                            ][:, self.factor_lists[layer_idx - 1]]
-                        normalized_factor_weights = mat / np.sum(mat, axis=1).reshape(
-                            -1, 1
-                        )
-                        for lower_factor_idx in layer_factor_orders[layer_idx - 1]:
-                            if show_all:
-                                lower_factor_name = f"{self.layer_names[layer_idx-1]}{int(lower_factor_idx)}"
-                            else:
-                                lower_factor_name = self.factor_names[layer_idx - 1][
-                                    lower_factor_idx
-                                ]
-
-                            normalized_weight = normalized_factor_weights[
-                                factor_idx, lower_factor_idx
-                            ]
-
-                            if factor_idx not in self.factor_lists[layer_idx] or (
-                                len(self.factor_lists[layer_idx]) == 1 and show_all
-                            ):
-                                normalized_weight = normalized_weight / 5.0
-
-                            g.edge(
-                                factor_name,
-                                lower_factor_name,
-                                penwidth=str(4 * normalized_weight),
-                                color=color,
-                            )
-        self.graph = g
-
-        self.logger.info(f"Updated scDEF graph")
-
     def attach_factors_to_obs(self, obs_key):
         attachments = []
         for layer, layer_name in enumerate(self.layer_names):
@@ -2480,1347 +1876,3 @@ class scDEF(object):
                     )
             attachments.append(layer_attachments)
         return attachments
-
-    def plot_scales(
-        self, figsize=(8, 4), alpha=0.6, fontsize=12, legend_fontsize=10, show=True
-    ):
-        fig, axes = plt.subplots(1, 2, figsize=figsize)
-        self.plot_scale(
-            "cell", figsize, alpha, fontsize, legend_fontsize, axes[0], False
-        )
-        self.plot_scale(
-            "gene", figsize, alpha, fontsize, legend_fontsize, axes[1], False
-        )
-        if show:
-            fig.tight_layout()
-            plt.show()
-        else:
-            return fig
-
-    def plot_scale(
-        self,
-        scale_type,
-        figsize=(4, 4),
-        alpha=0.6,
-        fontsize=12,
-        legend_fontsize=10,
-        ax=None,
-        show=True,
-    ):
-        if ax is None:
-            fig, ax = plt.subplots(1, 1, figsize=figsize)
-        else:
-            fig = ax.get_figure()
-
-        if scale_type == "cell":
-            x_data = self.batch_lib_sizes
-            x_label = "Observed gene scale"
-
-            def get_x_data_batch(b_cells):
-                return self.batch_lib_sizes[np.where(b_cells)[0]]
-
-            def get_y_data_batch(_, b_cells):
-                return 1.0 / self.pmeans["cell_scale"].ravel()[np.where(b_cells)[0]]
-
-            x_label = "Observed library size"
-        else:
-            x_data = np.sum(self.X, axis=0)
-            x_label = "Observed gene scale"
-
-            def get_x_data_batch(b_cells):
-                return np.sum(self.X[b_cells], axis=0)
-
-            def get_y_data_batch(b_id, _):
-                return 1.0 / self.pmeans["gene_scale"][b_id].ravel()
-
-        if len(self.batches) > 1:
-            for b_id, b in enumerate(self.batches):
-                b_cells = self.adata.obs[self.batch_key] == b
-                ax.scatter(
-                    get_x_data_batch(b_cells),
-                    get_y_data_batch(b_id, b_cells),
-                    label=b,
-                    alpha=alpha,
-                )
-            ax.legend(fontsize=legend_fontsize)
-        else:
-            ax.scatter(
-                x_data,
-                1.0 / self.pmeans[f"{scale_type}_scale"].ravel(),
-                alpha=alpha,
-            )
-        ax.set_yscale("log")
-        ax.set_xscale("log")
-        ax.set_xlabel(x_label, fontsize=fontsize)
-        ax.set_ylabel(f"Learned {scale_type} size factor", fontsize=fontsize)
-
-        if show:
-            fig.tight_layout()
-            plt.show()
-        else:
-            return ax
-
-    def plot_brd(
-        self,
-        thres=1.0,
-        iqr_mult=None,
-        show_yticks=False,
-        scale="linear",
-        normalize=False,
-        fontsize=14,
-        legend_fontsize=12,
-        xlabel="Factor",
-        ylabel="Relevance",
-        title="Biological relevance determination",
-        color=False,
-        show=True,
-        ax=None,
-        **kwargs,
-    ):
-        if not self.use_brd:
-            raise ValueError("This model instance doesn't use the BRD prior.")
-
-        ard = []
-        if thres is not None:
-            ard = thres
-        else:
-            ard = iqr_mult
-
-        layer_size = self.layer_sizes[0]
-        scales = self.pmeans[f"brd"].ravel()
-        if normalize:
-            scales = scales - np.min(scales)
-            scales = scales / np.max(scales)
-        if thres is None:
-            if iqr_mult is not None:
-                median = np.median(scales)
-                q3 = np.percentile(scales, 75)
-                cutoff = ard * (q3 - median)
-        else:
-            cutoff = ard
-
-        if ax is None:
-            fig, ax = plt.subplots(**kwargs)
-        else:
-            fig = ax.get_figure()
-
-        below = []
-        if thres is None and iqr_mult is None:
-            l = np.arange(self.layer_sizes[0])
-            above = self.factor_lists[0]
-            below = np.array([f for f in l if f not in above])
-        else:
-            plt.axhline(cutoff, color="red", ls="--")
-            above = np.where(scales >= cutoff)[0]
-            below = np.where(scales < cutoff)[0]
-
-        if color:
-            colors = []
-            f_idx = 0
-            for i in range(self.layer_sizes[0]):
-                if i in self.factor_lists[0]:
-                    colors.append(self.layer_colorpalettes[0][f_idx])
-                    f_idx += 1
-                else:
-                    colors.append("grey")
-            ax.bar(np.arange(layer_size), scales, color=colors)
-        else:
-            ax.bar(np.arange(layer_size)[above], scales[above], label="Kept")
-            if len(below) > 0:
-                ax.bar(
-                    np.arange(layer_size)[below],
-                    scales[below],
-                    alpha=0.6,
-                    color="gray",
-                    label="Removed",
-                )
-        if len(scales) > 15:
-            ax.set_xticks(np.arange(0, layer_size, 2))
-        else:
-            ax.set_xticks(np.arange(layer_size))
-        if not show_yticks:
-            ax.set_yticks([])
-        ax.set_title(title, fontsize=fontsize)
-        ax.set_xlabel(xlabel, fontsize=fontsize)
-        ax.set_yscale(scale)
-        ax.set_ylabel(ylabel, fontsize=fontsize)
-        if not color:
-            ax.legend(fontsize=legend_fontsize)
-
-        if show:
-            plt.show()
-        else:
-            return ax
-
-    def plot_gini_brd(
-        self,
-        normalize=False,
-        figsize=(4, 4),
-        alpha=0.6,
-        fontsize=12,
-        legend_fontsize=10,
-        show=True,
-        ax=None,
-    ):
-        brds = self.pmeans["brd"].ravel()
-        if normalize:
-            brds = brds - np.min(brds)
-            brds = brds / np.max(brds)
-        ginis = np.array(
-            [
-                score_utils.gini(self.pmeans[f"{self.layer_names[0]}W"][k])
-                for k in range(self.layer_sizes[0])
-            ]
-        )
-        is_kept = np.zeros((self.layer_sizes[0]))
-        is_kept[self.factor_lists[0]] = 1
-
-        if ax is None:
-            fig, ax = plt.subplots(figsize=figsize)
-
-        for c in [1, 0]:
-            label = "Kept" if c == 1 else "Removed"
-            color = "C0" if c == 1 else "gray"
-            _alpha = 1 if c == 1 else alpha
-            ax.scatter(
-                ginis[np.where(is_kept == c)[0]],
-                brds[np.where(is_kept == c)[0]],
-                label=label,
-                color=color,
-                alpha=_alpha,
-            )
-        ax.set_xlabel("Gini index", fontsize=fontsize)
-        ax.set_ylabel("BRD posterior mean", fontsize=fontsize)
-        ax.legend(fontsize=legend_fontsize)
-
-        if show:
-            plt.show()
-        else:
-            return ax
-
-    def plot_loss(self, figsize=(4, 4), fontsize=12, ax=None, show=True):
-        if ax is None:
-            fig, ax = plt.subplots(figsize=figsize)
-        ax.plot(np.concatenate(self.elbos)[:])
-        ax.set_xlabel("Epoch", fontsize=fontsize)
-        ax.set_yscale("log")
-        ax.set_ylabel("Loss [log]", fontsize=fontsize)
-
-        if show:
-            plt.show()
-        else:
-            return ax
-
-    def plot_qc(self, figsize=(8, 12), show=True):
-        """Plot QC metrics for scDEF run:
-            top left: Loss (-1xELBO [log]) vs. Epoch
-            top right: Biological relevance det. (BRD) vs. Gini coefficient
-            middle left: Learned cell scale vs. Observed library size
-            middle right: Learned gene scale vs. Observed gene scale
-            bottom:  Biological relevance determination
-
-        Args:
-            figsize (tuple(float, float)): Figure size in inches
-            show (bool): whether to show the plot
-
-        Returns:
-            fig object if show is False and None otherwise
-        """
-
-        if self.use_brd:
-            fig = plt.figure(figsize=figsize)
-            gs = GridSpec(3, 2)
-            # First row
-            self.plot_loss(ax=fig.add_subplot(gs[0, 0]), show=False)
-            self.plot_gini_brd(ax=fig.add_subplot(gs[0, 1]), show=False)
-            # Second row
-            self.plot_scale("cell", ax=fig.add_subplot(gs[1, 0]), show=False)
-            self.plot_scale("gene", ax=fig.add_subplot(gs[1, 1]), show=False)
-            # Third row
-            self.plot_brd(ax=fig.add_subplot(gs[2, 0:2]), show=False)
-        else:
-            fig = plt.figure(figsize=(figsize[0], int(figsize[1] * 2 / 3)))
-            gs = GridSpec(2, 2)
-            # First row
-            self.plot_loss(ax=fig.add_subplot(gs[0, 0:2]), show=False)
-            # Second row
-            self.plot_scale("cell", ax=fig.add_subplot(gs[1, 0]), show=False)
-            self.plot_scale("gene", ax=fig.add_subplot(gs[1, 1]), show=False)
-
-        fig.tight_layout()
-        if show:
-            plt.show()
-        else:
-            return fig
-
-    def plot_obs_factor_dotplot(
-        self,
-        obs_key,
-        layer_idx,
-        cluster_rows=True,
-        cluster_cols=True,
-        figsize=(8, 2),
-        s_min=100,
-        s_max=500,
-        titlesize=12,
-        labelsize=12,
-        legend_fontsize=12,
-        legend_titlesize=12,
-        cmap="viridis",
-        logged=False,
-        width_ratios=[5, 1, 1],
-        show_ylabel=True,
-        show=True,
-    ):
-        # For each obs, compute the average cell score on each factor among the cells that attach to that obs, use as color
-        # And compute the fraction of cells in the obs that attach to each factor, use as circle size
-        layer_name = self.layer_names[layer_idx]
-
-        obs = self.adata.obs[obs_key].unique()
-        n_obs = len(obs)
-        n_factors = len(self.factor_lists[layer_idx])
-
-        df_rows = []
-        c = np.zeros((n_obs, n_factors))
-        s = np.zeros((n_obs, n_factors))
-        for i, obs_val in enumerate(obs):
-            cells_from_obs = self.adata.obs.index[
-                np.where(self.adata.obs[obs_key] == obs_val)[0]
-            ]
-            n_cells_obs = len(cells_from_obs)
-            for factor in range(n_factors):
-                factor_name = self.factor_names[layer_idx][factor]
-                cells_attached = self.adata.obs.index[
-                    np.where(
-                        self.adata.obs.loc[cells_from_obs][f"{layer_name}"]
-                        == factor_name
-                    )[0]
-                ]
-                if len(cells_attached) == 0:
-                    average_weight = 0  # np.nan
-                    fraction_attached = 0  # np.nan
-                else:
-                    average_weight = np.mean(
-                        self.adata.obs.loc[cells_from_obs][f"{factor_name}_score"]
-                    )
-                    fraction_attached = len(cells_attached) / n_cells_obs
-                c[i, factor] = average_weight
-                s[i, factor] = fraction_attached
-
-        ylabels = obs
-        xlabels = self.factor_names[layer_idx]
-
-        if cluster_rows:
-            Z = ward(pdist(s))
-            hclust_index = leaves_list(Z)
-            s = s[hclust_index]
-            c = c[hclust_index]
-            ylabels = ylabels[hclust_index]
-
-        if cluster_cols:
-            Z = ward(pdist(s.T))
-            hclust_index = leaves_list(Z)
-            s = s[:, hclust_index]
-            c = c[:, hclust_index]
-            xlabels = xlabels[hclust_index]
-
-        x, y = np.meshgrid(np.arange(len(xlabels)), np.arange(len(ylabels)))
-
-        fig, axes = plt.subplots(1, 3, figsize=figsize, width_ratios=width_ratios)
-        plt.sca(axes[0])
-        ax = plt.gca()
-        s = s / np.max(s)
-        s *= s_max
-        s += s_max / s_min
-        if logged:
-            c = np.log(c)
-        plt.scatter(x, y, c=c, s=s, cmap=cmap)
-
-        ax.set(
-            xticks=np.arange(n_factors),
-            yticks=np.arange(n_obs),
-            xticklabels=xlabels,
-            yticklabels=ylabels,
-        )
-        ax.tick_params(axis="both", which="major", labelsize=labelsize)
-        ax.set_xticks(np.arange(n_factors + 1) - 0.5, minor=True)
-        ax.set_yticks(np.arange(n_obs + 1) - 0.5, minor=True)
-        ax.grid(which="minor")
-
-        if show_ylabel:
-            ax.set_ylabel(obs_key, rotation=270, labelpad=20.0, fontsize=labelsize)
-        plt.xlabel("Factor", fontsize=labelsize)
-        plt.title(f"Layer {layer_idx}\n", fontsize=titlesize)
-
-        # Make legend
-        map_f_to_s = {"0": 5, "25": 7, "50": 9, "75": 11, "100": 13}
-        plt.sca(axes[1])
-        ax = plt.gca()
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
-        ax.spines["bottom"].set_visible(False)
-        ax.spines["left"].set_visible(False)
-
-        ax.get_xaxis().set_ticks([])
-        ax.get_yaxis().set_ticks([])
-        circles = [
-            Line2D(
-                [],
-                [],
-                color="white",
-                marker="o",
-                markersize=map_f_to_s[f],
-                markerfacecolor="gray",
-            )
-            for f in map_f_to_s.keys()
-        ]
-        lg = plt.legend(
-            circles[::-1],
-            list(map_f_to_s.keys())[::-1],
-            numpoints=1,
-            loc=2,
-            frameon=False,
-            fontsize=legend_fontsize,
-        )
-        plt.title("Fraction of \ncells in group (%)", fontsize=legend_titlesize)
-
-        plt.sca(axes[2])
-        ax = plt.gca()
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
-        ax.spines["bottom"].set_visible(False)
-        ax.spines["left"].set_visible(False)
-
-        ax.get_xaxis().set_ticks([])
-        ax.get_yaxis().set_ticks([])
-        cb = plt.colorbar(ax=axes[0], cmap=cmap)
-        cb.ax.set_title("Average\ncell score", fontsize=legend_titlesize)
-        cb.ax.tick_params(labelsize=legend_fontsize)
-        plt.grid("off")
-        if show:
-            plt.show()
-
-    def plot_multilevel_paga(
-        self,
-        neighbors_rep: Optional[str] = "X_L0",
-        layers: Optional[list] = None,
-        figsize: Optional[tuple] = (16, 4),
-        reuse_pos: Optional[bool] = True,
-        fontsize: Optional[int] = 12,
-        show: Optional[bool] = True,
-        **paga_kwargs,
-    ):
-        """Plot a PAGA graph from each scDEF layer.
-
-        Args:
-            neighbors_rep: the self.obsm key to use to compute the PAGA graphs
-            layers: which layers to plot
-            figsize: figure size
-            reuse_pos: whether to initialize each PAGA graph with the graph from the layer above
-            show: whether to show the plot
-            **paga_kwargs: keyword arguments to adjust the PAGA layouts
-        """
-
-        if layers is None:
-            layers = [
-                i
-                for i in range(self.n_layers - 1, -1, -1)
-                if len(self.factor_lists[i]) > 1
-            ]
-
-        if len(layers) == 0:
-            self.logger.info("Cannot run PAGA on 0 layers.")
-            return
-
-        n_layers = len(layers)
-
-        fig, axes = plt.subplots(1, n_layers, figsize=figsize)
-        sc.pp.neighbors(self.adata, use_rep=neighbors_rep)
-        pos = None
-        for i, layer_idx in enumerate(layers):
-            ax = axes[i]
-            new_layer_name = f"{self.layer_names[layer_idx]}"
-
-            self.logger.info(f"Computing PAGA graph of layer {layer_idx}")
-
-            # Use previous PAGA as initial positions for new PAGA
-            if layer_idx != layers[0] and reuse_pos:
-                self.logger.info(
-                    f"Re-using PAGA positions from layer {layer_idx+1} to init {layer_idx}"
-                )
-                matches = sc._utils.identify_groups(
-                    self.adata.obs[new_layer_name], self.adata.obs[old_layer_name]
-                )
-                pos = []
-                np.random.seed(0)
-                for c in self.adata.obs[new_layer_name].cat.categories:
-                    pos_coarse = self.adata.uns["paga"]["pos"]  # previous PAGA
-                    coarse_categories = self.adata.obs[old_layer_name].cat.categories
-                    idx = coarse_categories.get_loc(matches[c][0])
-                    pos_i = pos_coarse[idx] + np.random.random(2)
-                    pos.append(pos_i)
-                pos = np.array(pos)
-
-            sc.tl.paga(self.adata, groups=new_layer_name)
-            sc.pl.paga(
-                self.adata,
-                init_pos=pos,
-                layout="fa",
-                ax=ax,
-                show=False,
-                **paga_kwargs,
-            )
-            ax.set_title(f"Layer {layer_idx} PAGA", fontsize=fontsize)
-
-            old_layer_name = new_layer_name
-        if show:
-            plt.show()
-
-    def compute_weight(self, upper_factor_name, lower_factor_name):
-        # Computes the weight between two factors across any number of layers
-        upper_factor_idx = -1
-        upper_factor_layer_idx = -1
-        for layer_idx in range(self.n_layers):
-            layer_factor_names = np.array(self.factor_names[layer_idx])
-            if upper_factor_name in layer_factor_names:
-                upper_factor_idx = np.where(upper_factor_name == layer_factor_names)[0][
-                    0
-                ]
-                upper_factor_layer_idx = layer_idx
-                break
-
-        assert upper_factor_idx != -1
-
-        lower_factor_idx = -1
-        lower_factor_layer_idx = -1
-        for layer_idx in range(self.n_layers):
-            layer_factor_names = np.array(self.factor_names[layer_idx])
-            if lower_factor_name in layer_factor_names:
-                lower_factor_idx = np.where(lower_factor_name == layer_factor_names)[0][
-                    0
-                ]
-                lower_factor_layer_idx = layer_idx
-                break
-
-        assert lower_factor_idx != -1
-
-        upper_layer_name = self.layer_names[upper_factor_layer_idx]
-        mat = self.pmeans[f"{upper_layer_name}W"][
-            self.factor_lists[upper_factor_layer_idx]
-        ][:, self.factor_lists[upper_factor_layer_idx - 1]]
-        for layer_idx in range(upper_factor_layer_idx - 1, lower_factor_layer_idx, -1):
-            layer_name = self.layer_names[layer_idx]
-            lower_mat = self.pmeans[f"{layer_name}W"][self.factor_lists[layer_idx]][
-                :, self.factor_lists[layer_idx - 1]
-            ]
-            mat = mat.dot(lower_mat)
-
-        return mat[upper_factor_idx][lower_factor_idx]
-
-    def get_hierarchy(
-        self, simplified: Optional[bool] = True
-    ) -> Mapping[str, Sequence[str]]:
-        """Get a dictionary containing the polytree contained in the scDEF graph.
-
-        Args:
-            simplified: whether to collapse single-child nodes
-
-        Returns:
-            hierarchy: the dictionary containing the hierarchy
-        """
-        hierarchy = dict()
-        for layer_idx in range(0, self.n_layers - 1):
-            factors = self.factor_lists[layer_idx]
-            n_factors = len(factors)
-            if layer_idx < self.n_layers - 1:
-                # Assign factors to upper factors to set the plotting order
-                mat = self.pmeans[f"{self.layer_names[layer_idx+1]}W"][
-                    self.factor_lists[layer_idx + 1]
-                ][:, self.factor_lists[layer_idx]]
-                normalized_factor_weights = mat / np.sum(mat, axis=1).reshape(-1, 1)
-                assignments = []
-                for factor_idx in range(n_factors):
-                    assignments.append(
-                        np.argmax(normalized_factor_weights[:, factor_idx])
-                    )
-                assignments = np.array(assignments)
-
-                for upper_layer_factor in range(len(self.factor_lists[layer_idx + 1])):
-                    upper_layer_factor_name = self.factor_names[layer_idx + 1][
-                        upper_layer_factor
-                    ]
-                    assigned_lower = np.array(self.factor_names[layer_idx])[
-                        np.where(assignments == upper_layer_factor)[0]
-                    ].tolist()
-                    hierarchy[upper_layer_factor_name] = assigned_lower
-
-        if simplified:
-            layer_sizes = [len(self.factor_names[idx]) for idx in range(self.n_layers)]
-            hierarchy = hierarchy_utils.simplify_hierarchy(
-                hierarchy, self.layer_names, layer_sizes, factor_names=self.factor_names
-            )
-
-        return hierarchy
-
-    def compute_factor_obs_association_score(
-        self, layer_idx, factor_name, obs_key, obs_val
-    ):
-        layer_name = self.layer_names[layer_idx]
-
-        # Cells attached to factor
-        adata_cells_in_factor = self.adata[
-            np.where(self.adata.obs[f"{layer_name}"] == factor_name)[0]
-        ]
-
-        # Cells from obs_val
-        adata_cells_from_obs = self.adata[
-            np.where(self.adata.obs[obs_key] == obs_val)[0]
-        ]
-
-        cells_from_obs = float(adata_cells_from_obs.shape[0])
-
-        # Number of cells from obs_val that are not in factor
-        cells_not_in_factor_from_obs = float(
-            np.count_nonzero(adata_cells_from_obs.obs[f"{layer_name}"] != factor_name)
-        )
-
-        # Number of cells in factor that are obs_val
-        cells_in_factor_from_obs = float(
-            np.count_nonzero(adata_cells_in_factor.obs[obs_key] == obs_val)
-        )
-
-        # Number of cells in factor that are not obs_val
-        cells_in_factor_not_from_obs = float(
-            np.count_nonzero(adata_cells_in_factor.obs[obs_key] != obs_val)
-        )
-
-        return score_utils.compute_fscore(
-            cells_in_factor_from_obs,
-            cells_in_factor_not_from_obs,
-            cells_not_in_factor_from_obs,
-        )
-
-    def get_factor_obs_association_scores(self, obs_key, obs_val):
-        scores = []
-        factors = []
-        layers = []
-        for layer_idx in range(self.n_layers):
-            n_factors = len(self.factor_lists[layer_idx])
-            for factor in range(n_factors):
-                factor_name = self.factor_names[layer_idx][factor]
-                score = self.compute_factor_obs_association_score(
-                    layer_idx, factor_name, obs_key, obs_val
-                )
-                scores.append(score)
-                factors.append(factor_name)
-                layers.append(layer_idx)
-        return scores, factors, layers
-
-    def compute_factor_obs_assignment_fracs(
-        self, layer_idx, factor_name, obs_key, obs_val
-    ):
-        layer_name = self.layer_names[layer_idx]
-
-        # Cells attached to factor
-        adata_cells_in_factor = self.adata[
-            np.where(self.adata.obs[f"{layer_name}"] == factor_name)[0]
-        ]
-
-        # Cells in factor
-        cells_in_factor = float(adata_cells_in_factor.shape[0])
-
-        # Cells from factor in obs
-        cells_in_factor_from_obs = float(
-            np.count_nonzero(adata_cells_in_factor.obs[obs_key] == obs_val)
-        )
-
-        score = 0.0
-        if cells_in_factor != 0:
-            score = cells_in_factor_from_obs / cells_in_factor
-
-        return score
-
-    def get_factor_obs_assignment_fracs(self, obs_key, obs_val):
-        scores = []
-        factors = []
-        layers = []
-        for layer_idx in range(self.n_layers):
-            n_factors = len(self.factor_lists[layer_idx])
-            for factor in range(n_factors):
-                factor_name = self.factor_names[layer_idx][factor]
-                score = self.compute_factor_obs_assignment_fracs(
-                    layer_idx, factor_name, obs_key, obs_val
-                )
-                scores.append(score)
-                factors.append(factor_name)
-                layers.append(layer_idx)
-        return scores, factors, layers
-
-    def compute_factor_obs_weight_score(self, layer_idx, factor_name, obs_key, obs_val):
-        layer_name = self.layer_names[layer_idx]
-
-        # Cells from obs_val
-        adata_cells_from_obs = self.adata[
-            np.where(self.adata.obs[obs_key] == obs_val)[0]
-        ]
-        adata_cells_not_from_obs = self.adata[
-            np.where(self.adata.obs[obs_key] != obs_val)[0]
-        ]
-
-        # Weight of cells from obs in factor
-        avg_in = np.mean(adata_cells_from_obs.obs[f"{factor_name}_score"])
-
-        # Weight of cells not from obs in factor
-        avg_out = np.mean(adata_cells_not_from_obs.obs[f"{factor_name}_score"])
-
-        score = avg_in / np.sum(avg_in + avg_out)
-
-        return score
-
-    def get_factor_obs_weight_scores(self, obs_key, obs_val):
-        scores = []
-        factors = []
-        layers = []
-        for layer_idx in range(self.n_layers):
-            n_factors = len(self.factor_lists[layer_idx])
-            for factor in range(n_factors):
-                factor_name = self.factor_names[layer_idx][factor]
-                score = self.compute_factor_obs_weight_score(
-                    layer_idx, factor_name, obs_key, obs_val
-                )
-                scores.append(score)
-                factors.append(factor_name)
-                layers.append(layer_idx)
-        return scores, factors, layers
-
-    def compute_factor_obs_entropies(self, obs_key):
-        mats = self._get_weight_scores(obs_key, self.adata.obs[obs_key].unique())
-        mat = np.concatenate(mats, axis=1)
-        factors = [self.factor_names[idx] for idx in range(self.n_layers)]
-        flat_list = [item for sublist in factors for item in sublist]
-        entropies = scipy.stats.entropy(mat, axis=0)
-        return dict(zip(flat_list, entropies))
-
-    def assign_obs_to_factors(self, obs_keys, factor_names=[]):
-        if not isinstance(obs_keys, list):
-            obs_keys = [obs_keys]
-
-        # Sort obs_keys from broad to specific
-        sizes = [len(self.adata.obs[obs_key].unique()) for obs_key in obs_keys]
-        obs_keys = np.array(obs_keys)[np.argsort(sizes)].tolist()
-
-        obs_to_factor_assignments = []
-        obs_to_factor_matches = []
-        for obs_key in obs_keys:
-            obskey_to_factor_assignments = dict()
-            obskey_to_factor_matches = dict()
-            for obs in self.adata.obs[obs_key].unique():
-                scores, factors, layers = self.get_factor_obs_association_scores(
-                    obs_key, obs
-                )
-                if len(factor_names) > 0:
-                    # Subset to factor_names
-                    idx = np.array(
-                        [
-                            i
-                            for i, factor in enumerate(factors)
-                            if factor in factor_names
-                        ]
-                    )
-                    scores = np.array(scores)[idx]
-                    factors = np.array(factors)[idx]
-                    layers = np.array(layers)[idx]
-                obskey_to_factor_assignments[obs] = factors[np.argmax(scores)]
-                obskey_to_factor_matches[factors[np.argmax(scores)]] = obs
-            obs_to_factor_assignments.append(obskey_to_factor_assignments)
-            obs_to_factor_matches.append(obskey_to_factor_matches)
-
-        # Join them all up
-        from collections import ChainMap
-
-        factor_annotation_assignments = ChainMap(*obs_to_factor_assignments)
-        factor_annotation_matches = ChainMap(*obs_to_factor_matches)
-
-        return dict(factor_annotation_assignments), dict(factor_annotation_matches)
-
-    def complete_hierarchy(self, hierarchy, obs_keys):
-        obs_vals = [
-            self.adata.obs[obs_key].astype("category").cat.categories
-            for obs_key in obs_keys
-        ]
-        obs_vals = list(set([item for sublist in obs_vals for item in sublist]))
-        return hierarchy_utils.complete_hierarchy(hierarchy, obs_vals)
-
-    def _get_assignment_fracs(self, obs_key, obs_vals):
-        signatures_dict = self.get_signatures_dict()
-        n_obs = len(obs_vals)
-        mats = [
-            np.zeros((n_obs, len(self.factor_names[idx])))
-            for idx in range(self.n_layers)
-        ]
-        for i, obs in enumerate(obs_vals):
-            scores, factors, layers = self.get_factor_obs_assignment_fracs(obs_key, obs)
-            for j in range(self.n_layers):
-                indices = np.where(np.array(layers) == j)[0]
-                mats[j][i] = np.array(scores)[indices]
-        return mats
-
-    def _get_assignment_scores(self, obs_key, obs_vals):
-        signatures_dict = self.get_signatures_dict()
-        n_obs = len(obs_vals)
-        mats = [
-            np.zeros((n_obs, len(self.factor_names[idx])))
-            for idx in range(self.n_layers)
-        ]
-        for i, obs in enumerate(obs_vals):
-            scores, factors, layers = self.get_factor_obs_association_scores(
-                obs_key, obs
-            )
-            for j in range(self.n_layers):
-                indices = np.where(np.array(layers) == j)[0]
-                mats[j][i] = np.array(scores)[indices]
-        return mats
-
-    def _get_weight_scores(self, obs_key, obs_vals):
-        signatures_dict = self.get_signatures_dict()
-        n_obs = len(obs_vals)
-        mats = [
-            np.zeros((n_obs, len(self.factor_names[idx])))
-            for idx in range(self.n_layers)
-        ]
-        for i, obs in enumerate(obs_vals):
-            scores, factors, layers = self.get_factor_obs_weight_scores(obs_key, obs)
-            for j in range(self.n_layers):
-                indices = np.where(np.array(layers) == j)[0]
-                mats[j][i] = np.array(scores)[indices]
-        return mats
-
-    def _get_signature_scores(self, obs_key, obs_vals, markers, top_genes=10):
-        signatures_dict = self.get_signatures_dict()
-        n_obs = len(obs_vals)
-        mats = [
-            np.zeros((n_obs, len(self.factor_names[idx])))
-            for idx in range(self.n_layers)
-        ]
-        for i, obs in enumerate(obs_vals):
-            markers_type = markers[obs]
-            nonmarkers_type = [m for m in markers if m not in markers_type]
-            for layer_idx in range(self.n_layers):
-                for j, factor_name in enumerate(self.factor_names[layer_idx]):
-                    signature = signatures_dict[factor_name][:top_genes]
-                    mats[layer_idx][i, j] = score_utils.score_signature(
-                        signature, markers_type, nonmarkers_type
-                    )
-        return mats
-
-    def _prepare_obs_factor_scores(
-        self, obs_keys, get_scores_func, hierarchy=None, **kwargs
-    ):
-        if not isinstance(obs_keys, list):
-            obs_keys = [obs_keys]
-
-        factors = [self.factor_names[idx] for idx in range(self.n_layers)]
-        flat_list = [item for sublist in factors for item in sublist]
-        n_factors = len(flat_list)
-
-        obs_mats = dict()
-        obs_joined_mats = dict()
-        obs_clusters = dict()
-        obs_vals_dict = dict()
-        for idx, obs_key in enumerate(obs_keys):
-            obs_vals = self.adata.obs[obs_key].unique().tolist()
-
-            # Don't keep non-hierarchical levels
-            if idx > 0 and hierarchy is not None:
-                obs_vals = [val for val in obs_vals if len(hierarchy[val]) > 0]
-
-            obs_vals_dict[obs_key] = obs_vals
-            n_obs = len(obs_vals)
-
-            mats = get_scores_func(obs_key, obs_vals, **kwargs)
-
-            if np.max(mats[-1]) > 1.0:
-                for i in range(len(mats)):
-                    mats[i] = mats[i] / np.max(mats[i])
-
-            # Cluster rows across columns in all mats
-            joined_mats = np.hstack(mats)
-            Z = ward(pdist(joined_mats))
-            hclust_index = leaves_list(Z)
-
-            obs_mats[obs_key] = mats
-            obs_joined_mats[obs_key] = joined_mats
-            obs_clusters[obs_key] = hclust_index
-        return obs_mats, obs_clusters, obs_vals_dict
-
-    def plot_layers_obs(
-        self,
-        obs_keys,
-        obs_mats,
-        obs_clusters,
-        obs_vals_dict,
-        sort_layer_factors=True,
-        orders=None,
-        layers=None,
-        vmax=None,
-        vmin=None,
-        cb_title="",
-        cb_title_fontsize=10,
-        fontsize=12,
-        title_fontsize=12,
-        pad=0.1,
-        shrink=0.7,
-        figsize=(10, 4),
-        xticks_rotation=90.0,
-        cmap=None,
-        show=True,
-        rasterized=False,
-    ):
-        if not isinstance(obs_keys, list):
-            obs_keys = [obs_keys]
-
-        if layers is None:
-            layers = [
-                i for i in range(0, self.n_layers) if len(self.factor_lists[i]) > 1
-            ]
-
-        n_layers = len(layers)
-
-        if sort_layer_factors:
-            layer_factor_orders = self.get_layer_factor_orders()
-        else:
-            if orders is not None:
-                layer_factor_orders = orders
-            else:
-                layer_factor_orders = [
-                    np.arange(len(self.factor_lists[i])) for i in range(self.n_layers)
-                ]
-
-        n_factors = [len(self.factor_lists[idx]) for idx in layers]
-        n_obs = [len(obs_clusters[obs_key]) for obs_key in obs_keys]
-        fig, axs = plt.subplots(
-            len(obs_keys),
-            n_layers,
-            figsize=figsize,
-            gridspec_kw={"width_ratios": n_factors, "height_ratios": n_obs},
-        )
-        axs = axs.reshape((len(obs_keys), n_layers))
-        for i in layers:
-            axs[0][i].set_title(f"Layer {i}", fontsize=title_fontsize)
-            for j, obs_key in enumerate(obs_keys):
-                ax = axs[j][i]
-                mat = obs_mats[obs_key][i]
-                mat = mat[obs_clusters[obs_key]][:, layer_factor_orders[i]]
-                axplt = ax.pcolormesh(
-                    mat, vmax=vmax, vmin=vmin, cmap=cmap, rasterized=rasterized
-                )
-
-                if j == len(obs_keys) - 1:
-                    xlabels = self.factor_names[i]
-                    xlabels = np.array(xlabels)[layer_factor_orders[i]]
-                    ax.set_xticks(
-                        np.arange(len(xlabels)) + 0.5,
-                        xlabels,
-                        rotation=xticks_rotation,
-                        fontsize=fontsize,
-                    )
-                else:
-                    ax.set(xticks=[])
-
-                if i == 0:
-                    ylabels = np.array(obs_vals_dict[obs_keys[j]])[
-                        obs_clusters[obs_keys[j]]
-                    ]
-                    ax.set_yticks(
-                        np.arange(len(ylabels)) + 0.5,
-                        ylabels,
-                    )
-                else:
-                    ax.set(yticks=[])
-
-                if i == n_layers - 1:
-                    ax.yaxis.set_label_position("right")
-                    ax.set_ylabel(
-                        obs_key, rotation=270, labelpad=20.0, fontsize=fontsize
-                    )
-
-        plt.subplots_adjust(wspace=0.05)
-        plt.subplots_adjust(hspace=0.05)
-
-        cb = fig.colorbar(axplt, ax=axs.ravel().tolist(), pad=pad, shrink=shrink)
-        cb.ax.set_title(cb_title, fontsize=cb_title_fontsize)
-        if show:
-            plt.show()
-
-    def _prepare_pathway_factor_scores(
-        self,
-        pathways,
-        top_genes=20,
-        source="source",
-        target="target",
-        score="Combined score",
-        z_score=True,
-    ):
-        factors = [self.factor_names[idx] for idx in range(self.n_layers)]
-        flat_list = [item for sublist in factors for item in sublist]
-        n_factors = len(flat_list)
-
-        obs_mats = dict()
-        obs_joined_mats = dict()
-        obs_clusters = dict()
-        obs_vals_dict = dict()
-        obs_vals_dict["Pathway"] = pathways[source].unique().tolist()
-
-        n_pathways = len(obs_vals_dict["Pathway"])
-
-        mats = []
-        for layer in range(len(self.factor_names)):
-            _n_factors = len(self.factor_names[layer])
-            factor_vals = np.zeros((n_pathways, _n_factors))
-            for i, factor in enumerate(self.factor_names[layer]):
-                df = sc.get.rank_genes_groups_df(
-                    self.adata,
-                    group=factor,
-                    key=f"{self.layer_names[layer]}_signatures",
-                )
-                df = df.set_index("names")
-                df = df.iloc[:top_genes]
-                res = decoupler.get_ora_df(
-                    df, net=pathways, source=source, target=target, verbose=False
-                )
-                for term in res["Term"]:
-                    term_idx = np.where(np.array(obs_vals_dict["Pathway"]) == term)[0]
-                    factor_vals[term_idx, i] = res.loc[res["Term"] == term][
-                        score
-                    ].values[0]
-
-                if z_score:
-                    # Compute z-scores
-                    den = np.std(factor_vals, axis=0)
-                    den[den == 0] = 1e6
-                    factor_vals = (factor_vals - np.mean(factor_vals, axis=0)) / den[
-                        None, :
-                    ]
-            mats.append(factor_vals)
-
-        # Cluster rows across columns in all mats
-        joined_mats = np.hstack(mats)
-        Z = ward(pdist(joined_mats))
-        hclust_index = leaves_list(Z)
-
-        obs_mats["Pathway"] = mats
-        obs_joined_mats["Pathway"] = joined_mats
-        obs_clusters["Pathway"] = hclust_index
-        return obs_mats, obs_clusters, obs_vals_dict, joined_mats
-
-    def plot_pathway_scores(
-        self,
-        pathways: pd.DataFrame,
-        top_genes: Optional[int] = 20,
-        **kwargs,
-    ):
-        """Plot the association between a set of cell annotations and a set of gene signatures.
-
-        Args:
-            obs_keys: the keys in self.adata.obs to use
-            pathways: a pandas DataFrame containing PROGENy pathways
-            **kwargs: plotting keyword arguments
-        """
-        (
-            obs_mats,
-            obs_clusters,
-            obs_vals_dict,
-            joined_mats,
-        ) = self._prepare_pathway_factor_scores(
-            pathways,
-            top_genes=top_genes,
-        )
-
-        vmax = joined_mats.max()
-        vmin = joined_mats.min()
-        self.plot_layers_obs(
-            ["Pathway"],
-            obs_mats,
-            obs_clusters,
-            obs_vals_dict,
-            vmax=vmax,
-            vmin=vmin,
-            **kwargs,
-        )
-
-    def plot_signatures_scores(
-        self,
-        obs_keys: Sequence[str],
-        markers: Mapping[str, Sequence[str]],
-        top_genes: Optional[int] = 10,
-        hierarchy: Optional[dict] = None,
-        **kwargs,
-    ):
-        """Plot the association between a set of cell annotations and a set of gene signatures.
-
-        Args:
-            obs_keys: the keys in self.adata.obs to use
-            markers: a dictionary with keys corresponding to self.adata.obs[obs_keys] and values to gene lists
-            top_genes: number of genes to consider in the score computations
-            hierarchy: the polytree to restrict the associations to
-            **kwargs: plotting keyword arguments
-        """
-        obs_mats, obs_clusters, obs_vals_dict = self._prepare_obs_factor_scores(
-            obs_keys,
-            self._get_signature_scores,
-            markers=markers,
-            top_genes=top_genes,
-            hierarchy=hierarchy,
-        )
-        self.plot_layers_obs(obs_keys, obs_mats, obs_clusters, obs_vals_dict, **kwargs)
-
-    def plot_obs_scores(
-        self,
-        obs_keys: Sequence[str],
-        hierarchy: Optional[dict] = None,
-        mode: Literal["f1", "fracs", "weights"] = "fracs",
-        **kwargs,
-    ):
-        """Plot the association between a set of cell annotations and factors.
-
-        Args:
-            obs_keys: the keys in self.adata.obs to use
-            hierarchy: the polytree to restrict the associations to
-            mode: whether to compute scores based on assignments or weights
-            **kwargs: plotting keyword arguments
-        """
-        if mode == "f1":
-            f = self._get_assignment_scores
-        elif mode == "fracs":
-            f = self._get_assignment_fracs
-        elif mode == "weights":
-            f = self._get_weight_scores
-        else:
-            raise ValueError("`mode` must be one of ['f1', 'fracs', 'weights']")
-
-        obs_mats, obs_clusters, obs_vals_dict = self._prepare_obs_factor_scores(
-            obs_keys,
-            f,
-            hierarchy=hierarchy,
-        )
-        vmax = None
-        vmin = None
-        if mode == "f1" or mode == "fracs":
-            vmax = 1.0
-            vmin = 0.0
-
-        self.plot_layers_obs(
-            obs_keys,
-            obs_mats,
-            obs_clusters,
-            obs_vals_dict,
-            vmax=vmax,
-            vmin=vmin,
-            **kwargs,
-        )
-
-    def plot_umaps(
-        self,
-        color=[],
-        layers=None,
-        figsize=(16, 4),
-        fontsize=12,
-        legend_fontsize=10,
-        use_log=False,
-        metric="euclidean",
-        rasterized=True,
-        n_legend_cols=1,
-        show=True,
-    ):
-        if layers is None:
-            layers = [
-                i
-                for i in range(self.n_layers - 1, -1, -1)
-                if len(self.factor_lists[i]) > 1
-            ]
-
-        n_layers = len(layers)
-
-        if "X_umap" in self.adata.obsm:
-            self.adata.obsm["X_umap_original"] = self.adata.obsm["X_umap"].copy()
-
-        if not isinstance(color, list):
-            color = [color]
-
-        n_rows = len(color)
-        if n_rows == 0:
-            n_rows = 1
-
-        fig, axes = plt.subplots(n_rows, n_layers, figsize=figsize)
-        for layer in layers:
-            # Compute UMAP
-            self.adata.obsm[f"X_{self.layer_names[layer]}_log"] = np.log(
-                self.adata.obsm[f"X_{self.layer_names[layer]}"]
-            )
-            if use_log:
-                sc.pp.neighbors(self.adata, use_rep=f"X_{self.layer_names[layer]}_log")
-            else:
-                sc.pp.neighbors(
-                    self.adata,
-                    use_rep=f"X_{self.layer_names[layer]}",
-                    metric=metric,
-                )
-            sc.tl.umap(self.adata)
-
-            for row in range(len(color)):
-                if n_rows > 1:
-                    ax = axes[row, layer]
-                else:
-                    ax = axes[layer]
-                legend_loc = None
-                if layer == n_layers - 1:
-                    legend_loc = "right margin"
-                ax = sc.pl.umap(
-                    self.adata,
-                    color=[color[row]],
-                    frameon=False,
-                    show=False,
-                    ax=ax,
-                    legend_loc=legend_loc,
-                )
-                if row == 0:
-                    ax.set_title(f"Layer {layer}", fontsize=fontsize)
-                else:
-                    ax.set_title("")
-
-                if layer == n_layers - 1:
-                    leg = ax.legend(
-                        loc="center left",
-                        bbox_to_anchor=(1, 0.5),
-                        frameon=False,
-                        title_fontsize=legend_fontsize,
-                        fontsize=legend_fontsize,
-                        title=color[row],
-                        ncols=n_legend_cols,
-                    )
-                    leg._legend_box.align = "left"
-
-        # Put the original one back
-        if "X_umap_original" in self.adata.obsm:
-            self.adata.obsm["X_umap"] = self.adata.obsm["X_umap_original"].copy()
-
-        if show:
-            plt.show()
-
-    def plot_factors_bars(
-        self,
-        obs_keys,
-        sort_layer_factors=True,
-        orders=None,
-        sharey=True,
-        layers=None,
-        vmax=None,
-        vmin=None,
-        fontsize=12,
-        title_fontsize=12,
-        legend_fontsize=8,
-        pad=0.1,
-        figsize=(10, 4),
-        xticks_rotation=90.0,
-        hspace=0.05,
-        wspace=0.05,
-        wbox_anchor=2.0,
-        show=True,
-    ):
-        if not isinstance(obs_keys, list):
-            obs_keys = [obs_keys]
-
-        if layers is None:
-            layers = [
-                i for i in range(0, self.n_layers) if len(self.factor_lists[i]) > 1
-            ]
-
-        n_layers = len(layers)
-
-        if sort_layer_factors:
-            layer_factor_orders = self.get_layer_factor_orders()
-        else:
-            if orders is not None:
-                layer_factor_orders = orders
-            else:
-                layer_factor_orders = [
-                    np.arange(len(self.factor_lists[i])) for i in range(self.n_layers)
-                ]
-
-        obs_mats, obs_clusters, obs_vals_dict = self._prepare_obs_factor_scores(
-            obs_keys,
-            self._get_assignment_fracs,
-        )
-
-        n_factors = [len(self.factor_lists[idx]) for idx in layers]
-        n_obs = [len(obs_clusters[obs_key]) for obs_key in obs_keys]
-
-        fig, axs = plt.subplots(
-            len(obs_keys),
-            n_layers,
-            figsize=figsize,
-            gridspec_kw={"width_ratios": n_factors},
-            sharey=sharey,
-        )
-
-        axs = axs.reshape((len(obs_keys), n_layers))
-        for i in layers:
-            axs[0][i].set_title(f"Layer {i}", fontsize=title_fontsize)
-            layer_sizes = []
-            for factor in self.factor_names[i]:
-                layer_sizes.append(
-                    len(np.where(self.adata.obs[f"{self.layer_names[i]}"] == factor)[0])
-                )
-            layer_sizes = np.array(layer_sizes)[layer_factor_orders[i]]
-            xlabels = self.factor_names[i]
-            xlabels = np.array(xlabels)[layer_factor_orders[i]]
-            for j, obs_key in enumerate(obs_keys):
-                ax = axs[j][i]
-                plt.sca(ax)
-                mat = obs_mats[obs_key][i]
-                mat = mat[:, layer_factor_orders[i]]
-                for idx, obs in enumerate(obs_vals_dict[obs_key]):
-                    obs_idx = np.where(self.adata.obs[obs_key].cat.categories == obs)[
-                        0
-                    ][0]
-                    color = self.adata.uns[f"{obs_key}_colors"][obs_idx]
-                    y = mat[idx] * layer_sizes
-                    if idx == 0:
-                        plt.bar(xlabels, y, color=color, label=obs)
-                        y_ = y
-                    else:
-                        plt.bar(xlabels, y, bottom=y_, color=color, label=obs)
-                        y_ += y
-
-                if j == len(obs_keys) - 1:
-                    ax.set_xticks(
-                        np.arange(len(xlabels)),
-                        xlabels,
-                        rotation=xticks_rotation,
-                        fontsize=fontsize,
-                    )
-                else:
-                    ax.set(xticks=[])
-
-                if i == len(layers) - 1:
-                    leg = ax.legend(
-                        loc="center left",
-                        bbox_to_anchor=(wbox_anchor, 0.5),
-                        frameon=False,
-                        title_fontsize=title_fontsize,
-                        fontsize=legend_fontsize,
-                        title=obs_key,
-                    )
-                    leg._legend_box.align = "left"
-
-                if i == 0:
-                    ax.set_ylabel("Number of cells", fontsize=fontsize)
-
-                ax.spines["top"].set_visible(False)
-                ax.spines["right"].set_visible(False)
-
-        plt.subplots_adjust(wspace=wspace)
-        plt.subplots_adjust(hspace=hspace)
-
-        if show:
-            plt.show()
