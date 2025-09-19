@@ -1,3 +1,5 @@
+from .benchmark import run_methods, evaluate_methods
+
 import scanpy as sc
 import scdef
 import time
@@ -20,7 +22,7 @@ sc.pp.highly_variable_genes(
 methods_list = ["Scanorama"]
 scanorama_settings = dict()
 duration = time.time()
-methods_results = scdef.benchmark.run_methods(
+methods_results = run_methods(
     adata, methods_list, batch_key="Batch", **scanorama_settings
 )
 duration = time.time() - duration
@@ -31,7 +33,7 @@ true_hierarchy = scdef.hierarchy_utils.get_hierarchy_from_clusters(
     use_names=True,
 )
 
-df = scdef.benchmark.evaluate_methods(
+df = evaluate_methods(
     adata,
     snakemake.params["metrics"],
     methods_results,

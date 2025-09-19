@@ -155,53 +155,53 @@ def test_scdef():
 
     scd.pl.plot_factors_bars(model, ["celltypes", "celltypes_coarse"], show=False)
 
-    # Evaluate methods
-    methods_list = ["PCA", "Harmony", "NMF"]
-    metrics_list = [
-        "Cell Type ARI",
-        "Cell Type ASW",
-        "Batch ARI",
-        "Batch ASW",
-        "Hierarchical signature consistency",
-        "Hierarchy accuracy",
-        "Signature sparsity",
-        "Signature accuracy",
-    ]
+    # # Evaluate methods
+    # methods_list = ["PCA", "Harmony", "NMF"]
+    # metrics_list = [
+    #     "Cell Type ARI",
+    #     "Cell Type ASW",
+    #     "Batch ARI",
+    #     "Batch ASW",
+    #     "Hierarchical signature consistency",
+    #     "Hierarchy accuracy",
+    #     "Signature sparsity",
+    #     "Signature accuracy",
+    # ]
 
-    res_sweeps = dict(
-        zip(
-            scd.benchmark.OTHERS_LABELS,
-            [
-                [1.0, 0.6],
-                [1.0, 0.6],
-                [1.0, 0.6],
-                [1.0, 0.6],
-                [1.0, 0.6],
-                [10, 5],
-                [10, 5],
-                [10, 5],
-                [10, 5],
-            ],
-        )
-    )
-    methods_results = scd.benchmark.other_methods.run_methods(
-        adata,
-        methods_list,
-        res_sweeps=res_sweeps,
-        batch_key="batches",
-    )
+    # res_sweeps = dict(
+    #     zip(
+    #         scd.benchmark.OTHERS_LABELS,
+    #         [
+    #             [1.0, 0.6],
+    #             [1.0, 0.6],
+    #             [1.0, 0.6],
+    #             [1.0, 0.6],
+    #             [1.0, 0.6],
+    #             [10, 5],
+    #             [10, 5],
+    #             [10, 5],
+    #             [10, 5],
+    #         ],
+    #     )
+    # )
+    # methods_results = scd.benchmark.other_methods.run_methods(
+    #     adata,
+    #     methods_list,
+    #     res_sweeps=res_sweeps,
+    #     batch_key="batches",
+    # )
 
-    for k in methods_list:
-        assert "adata" in methods_results[k].keys()
+    # for k in methods_list:
+    #     assert "adata" in methods_results[k].keys()
 
-    methods_results["scDEF"] = model
-    df = scd.benchmark.evaluate.evaluate_methods(
-        adata,
-        metrics_list,
-        methods_results,
-        true_hierarchy=true_hierarchy,
-        hierarchy_obs_keys=["celltypes", "celltypes_coarse"],
-        markers=markers,
-        celltype_obs_key="celltypes",
-        batch_obs_key="batches",
-    )
+    # methods_results["scDEF"] = model
+    # df = scd.benchmark.evaluate.evaluate_methods(
+    #     adata,
+    #     metrics_list,
+    #     methods_results,
+    #     true_hierarchy=true_hierarchy,
+    #     hierarchy_obs_keys=["celltypes", "celltypes_coarse"],
+    #     markers=markers,
+    #     celltype_obs_key="celltypes",
+    #     batch_obs_key="batches",
+    # )

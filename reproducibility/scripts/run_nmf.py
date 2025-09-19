@@ -1,3 +1,5 @@
+from .benchmark import run_methods, evaluate_methods
+
 import scanpy as sc
 import scdef
 import time
@@ -20,9 +22,7 @@ sc.pp.highly_variable_genes(
 methods_list = ["NMF"]
 nmf_settings = dict(max_iter=snakemake.params["max_iter"])
 duration = time.time()
-methods_results = scdef.benchmark.run_methods(
-    adata, methods_list, batch_key="Batch", **nmf_settings
-)
+methods_results = run_methods(adata, methods_list, batch_key="Batch", **nmf_settings)
 duration = time.time() - duration
 
 hierarchy_obs = adata.uns["hierarchy_obs"]
@@ -31,7 +31,7 @@ true_hierarchy = scdef.hierarchy_utils.get_hierarchy_from_clusters(
     use_names=True,
 )
 
-df = scdef.benchmark.evaluate_methods(
+df = evaluate_methods(
     adata,
     snakemake.params["metrics"],
     methods_results,

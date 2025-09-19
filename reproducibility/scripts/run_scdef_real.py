@@ -1,41 +1,58 @@
+from .benchmark import evaluate_methods
+
 import scanpy as sc
-import scdef
+import scdef as scd
 
 brd_id = int(snakemake.params["brd_id"])
 brds = snakemake.params["brds"]
 mu, tau = brds[brd_id]
 kappa = float(snakemake.params["kappa"])
-n_layers = int(snakemake.params["n_layers"])
-layer_sizes = snakemake.params["layer_sizes"][n_layers - 1]
+n_factors = int(snakemake.params["n_factors"])
+decay_factor = float(snakemake.params["decay_factor"])
 seed = int(snakemake.params["seed"])
 n_epoch = int(snakemake.params["n_epoch"])
 
 adata = sc.read_h5ad(snakemake.input["fname"])
 
 # Run scDEF
-scd = scdef.scDEF(
+model = scd.scDEF(
     adata,
     counts_layer="counts",
-    layer_sizes=layer_sizes + [1],
-    layer_shapes=[1.0] * n_layers + [1.0],
-    layer_rates=[kappa] * n_layers + [1.0],
+    n_factors=n_factors,
+    decay_factor=decay_factor,
+    layer_concentration=kappa,
     brd_mean=mu,
     brd_strength=tau,
     seed=seed,
 )
-print(scd)
-scd.learn(
-    n_epoch=[n_epoch], patience=100, num_samples=10
+print(model)
+model.fit(
+    pretrain=True,
+    nmf_init=False,
+    batch_size=256,
+    n_epoch=[n_epoch],
+    lr=[0.01],
+    num_samples=100,
+    patience=50,
 )  # learn the hierarchical gene signatures
+
+g = scd.pl.make_graph(
+    model,
+    n_cells=True,
+    wedged="cell_state",
+    show_label=False,
+)
+g.render(snakemake.output["graph_fname"])
+
 hierarchy_scdef = scd.get_hierarchy()
-scd.make_graph(
+g = scd.pl.make_graph(
+    model,
     hierarchy=hierarchy_scdef,
     n_cells=True,
     wedged="cell_state",
     show_label=False,
 )
-scd.graph  # Graphviz object
-scd.graph.render(snakemake.output["graph_fname"])
+g.render(snakemake.output["hierarchy_graph_fname"])
 
 metrics_list = [
     "Cell Type ARI",
@@ -44,16 +61,22 @@ metrics_list = [
     "Batch ASW",
 ]
 
-df = scdef.benchmark.evaluate_methods(
+df = evaluate_methods(
     adata,
     metrics_list,
-    {"scDEF": scd},
+    {"scDEF": model},
     celltype_obs_key="cell_state",
-    batch_obs_key="stim",
+    batch_obs_key="batch",
 )
 df["brd"] = brd_id
 df["kappa"] = kappa
-df["n_layers"] = len(layer_sizes)
+df["n_factors"] = n_factors
+df["decay_factor"] = decay_factor
 df["rep"] = seed
-df["elbo"] = scd.elbos[-1][0]
+df["elbo"] = model.elbos[-1][0]
 df.to_csv(snakemake.output["scores_fname"])
+
+import pickle
+
+with open(snakemake.output["out_fname"], "wb") as f:
+    pickle.dump(model, f)

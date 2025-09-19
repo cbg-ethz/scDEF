@@ -1,3 +1,5 @@
+from .benchmark import evaluate_methods
+
 import scanpy as sc
 import scdef
 import time
@@ -8,10 +10,11 @@ adata = sc.read_h5ad(snakemake.input["fname"])
 model_settings = dict(
     brd_strength=snakemake.params["tau"],
     brd_mean=snakemake.params["mu"],
-    nmf_init=snakemake.params["nmf_init"],
-    layer_sizes=snakemake.params["layer_sizes"],
+    n_factors=snakemake.params["n_factors"],
+    decay_factor=snakemake.params["decay_factor"],
+    layer_concentration=snakemake.params["kappa"],
 )
-scd = scdef.scDEF(
+model = scdef.scDEF(
     adata,
     counts_layer="counts",
     seed=int(snakemake.params["seed"]),
@@ -19,15 +22,17 @@ scd = scdef.scDEF(
 )
 
 learning_settings = dict(
+    pretrain=True,
+    nmf_init=False,
     n_epoch=snakemake.params["n_epoch"],
     lr=snakemake.params["lr"],
     batch_size=snakemake.params["batch_size"],
     num_samples=snakemake.params["num_samples"],
 )
 duration = time.time()
-scd.learn(**learning_settings)
+model.fit(**learning_settings)
 duration = time.time() - duration
-scd.filter_factors()
+model.filter_factors()
 
 hierarchy_obs = adata.uns["hierarchy_obs"].tolist()
 true_hierarchy = scdef.hierarchy_utils.get_hierarchy_from_clusters(
@@ -35,10 +40,10 @@ true_hierarchy = scdef.hierarchy_utils.get_hierarchy_from_clusters(
     use_names=True,
 )
 
-df = scdef.benchmark.evaluate_methods(
+df = evaluate_methods(
     adata,
     snakemake.params["metrics"],
-    {"scDEF": scd},
+    {"scDEF": model},
     true_hierarchy=true_hierarchy,
     hierarchy_obs_keys=hierarchy_obs,
     markers=adata.uns["true_markers"],
@@ -52,7 +57,7 @@ if snakemake.params["store_full"]:
     with open(
         snakemake.output["out_fname"], "wb"
     ) as outp:  # Overwrites any existing file.
-        pickle.dump(scd, outp, pickle.HIGHEST_PROTOCOL)
+        pickle.dump(model, outp, pickle.HIGHEST_PROTOCOL)
 
 # Store scores
 df.to_csv(snakemake.output["scores_fname"])

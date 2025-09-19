@@ -1,8 +1,10 @@
+from .benchmark import evaluate_methods
+
 import numpy as np
 import pandas as pd
 import scanpy as sc
 import anndata
-import scdef
+import scdef as scd
 from sklearn.metrics import adjusted_rand_score, silhouette_score, roc_auc_score
 from sklearn.model_selection import train_test_split
 import time
@@ -11,11 +13,16 @@ tau = snakemake.params["tau"]
 mu = snakemake.params["mu"]
 kappa = snakemake.params["kappa"]
 seed = snakemake.params["seed"]
-layer_sizes = snakemake.params["layer_sizes"]
-factor_var = snakemake.params["factor_var"]
-n_layers = snakemake.params["n_layers"]
+n_factors = snakemake.params["n_factors"]
+decay_factor = snakemake.params["decay_factor"]
 
-model_params = dict(brd_strength=tau, brd_mean=mu, layer_rates=kappa)
+model_params = dict(
+    brd_strength=tau,
+    brd_mean=mu,
+    layer_concentration=kappa,
+    n_factors=n_factors,
+    decay_factor=decay_factor,
+)
 
 counts = pd.read_csv(snakemake.input["counts_fname"], index_col=0)
 meta = pd.read_csv(snakemake.input["meta_fname"])
@@ -48,26 +55,24 @@ sc.pp.highly_variable_genes(
 adata.obs["GroupA"] = adata.obs["GroupA"].apply(lambda row: f"hh{row}")
 adata.obs["GroupB"] = adata.obs["GroupB"].apply(lambda row: f"h{row}")
 
-# Add noise to layer sizes
-np.random.seed(seed)
-layer_sizes = [
-    l + np.random.randint(low=-factor_var, high=factor_var) * (l > 1)
-    for l in layer_sizes
-][n_layers]
-print(layer_sizes)
-
 # Run scDEF
 duration = time.time()
-scd = scdef.scDEF(
+model = scd.scDEF(
     adata,
     counts_layer="counts",
     batch_key="Batch",
     seed=seed,
-    layer_sizes=layer_sizes,
     **model_params,
 )
-scd.learn()
-scd.filter_factors(iqr_mult=0.0)
+model.fit(
+    pretrain=True,
+    nmf_init=False,
+    n_epoch=n_epoch,
+    lr=lr,
+    batch_size=batch_size,
+    num_samples=num_samples,
+)
+model.filter_factors(iqr_mult=0.0)
 duration = time.time() - duration
 
 metrics_list = [
@@ -81,7 +86,7 @@ metrics_list = [
     "Signature accuracy",
 ]
 
-true_hierarchy = scdef.hierarchy_utils.get_hierarchy_from_clusters(
+true_hierarchy = scd.hierarchy_utils.get_hierarchy_from_clusters(
     [
         adata.obs["GroupC"].values,
         adata.obs["GroupB"].values,
@@ -90,10 +95,10 @@ true_hierarchy = scdef.hierarchy_utils.get_hierarchy_from_clusters(
     use_names=True,
 )
 
-df = scdef.benchmark.evaluate_methods(
+df = evaluate_methods(
     adata,
     metrics_list,
-    {"scDEF": scd},
+    {"scDEF": model},
     true_hierarchy=true_hierarchy,
     hierarchy_obs_keys=["GroupA", "GroupB", "GroupC"],
     markers=markers,

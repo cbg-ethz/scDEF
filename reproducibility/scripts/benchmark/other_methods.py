@@ -1,5 +1,6 @@
+from .constants import *
+
 from scdef.utils import hierarchy_utils
-from scdef.benchmark.constants import *
 from scdef.models import scDEF
 
 import numpy as np

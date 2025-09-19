@@ -1,3 +1,5 @@
+from .benchmark import run_methods, evaluate_methods
+
 import scanpy as sc
 import scdef
 import time
@@ -24,9 +26,7 @@ muvi_settings = dict(
     n_epochs=snakemake.params["n_epochs"],
 )
 duration = time.time()
-methods_results = scdef.benchmark.run_methods(
-    adata, methods_list, batch_key="Batch", **muvi_settings
-)
+methods_results = run_methods(adata, methods_list, batch_key="Batch", **muvi_settings)
 duration = time.time() - duration
 
 hierarchy_obs = adata.uns["hierarchy_obs"]
@@ -35,7 +35,7 @@ true_hierarchy = scdef.hierarchy_utils.get_hierarchy_from_clusters(
     use_names=True,
 )
 
-df = scdef.benchmark.evaluate_methods(
+df = evaluate_methods(
     adata,
     snakemake.params["metrics"],
     methods_results,
