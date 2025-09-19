@@ -31,10 +31,6 @@ optional = true
 [tool.poetry.group.extras.dependencies]
 scikit-learn = '*'
 
-
-[tool.poetry.group.dev.dependencies]
-black = "^25.9.0"
-
 [tool.poetry.dev-dependencies]
 bump2version = "^1.0.1"
 black = "^23.3.0"
