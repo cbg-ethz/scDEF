@@ -21,7 +21,7 @@ seed <- as.numeric(snakemake@params[["seed"]])
 
 
 # Get 3k PBMCs
-InstallData("pbmc3k")
+# InstallData("pbmc3k")
 data("pbmc3k")
 c <- as.matrix(GetAssayData(object = pbmc3k, slot = "counts")) # Use 3k PBMCs data from 10x Genomics as reference
 params <- splatEstimate(c)

@@ -32,7 +32,7 @@ rule gather_results:
 
 rule prepare_input:
     conda:
-        "../../../envs/scdef.yml"
+        "../../../envs/PCA.yml"
     params:
         counts_fname = config['counts_path'],
         annotations_fname = config['annotations_path'],

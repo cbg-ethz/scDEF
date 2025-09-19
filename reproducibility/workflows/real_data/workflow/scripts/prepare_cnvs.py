@@ -6,7 +6,7 @@ import infercnvpy as cnv
 # Load full data
 adata = sc.read_h5ad(snakemake.params.data_fname)
 donor_1 = snakemake.params.donor_1
-donor_2 = snakemake.params.donor_1
+donor_2 = snakemake.params.donor_2
 
 # Select donors
 sub_adata = adata[
@@ -53,7 +53,7 @@ sc.pp.calculate_qc_metrics(
 # sub_adata = sub_adata[sub_adata.obs.pct_counts_mt < 8, :]
 
 sub_adata.layers["counts"] = sub_adata.X.toarray()  # Keep the counts, for scDEF
-sub_adata.X = sub_adata.layers["counts"]
+sub_adata.X = np.array(sub_adata.layers["counts"])
 sub_adata.raw = sub_adata
 
 # Keep only HVGs
@@ -104,6 +104,8 @@ cnv.tl.infercnv(
 #     sub_adata, groupby="author_cell_type", save=snakemake.output.cnv_full_fname
 # )
 
+print(sub_adata.obs.groupby('donor_id').value_counts(subset=['author_cell_type']))
+
 sub_adata.obs.index.name = "barcode"
 sub_adata.write_h5ad(snakemake.output.adata_full_fname)
 
@@ -124,7 +126,7 @@ sub_sub_adata = sub_adata[
 sc.pp.filter_cells(sub_sub_adata, min_genes=20)
 sc.pp.filter_genes(sub_sub_adata, min_cells=10)
 
-sub_sub_adata.X = sub_sub_adata.layers["counts"]
+sub_sub_adata.X = np.array(sub_sub_adata.layers["counts"])
 
 sub_sub_adata.obs["Cell types"] = sub_sub_adata.obs["author_cell_type"]
 sub_sub_adata.obs["Donor"] = sub_sub_adata.obs["donor_id"]

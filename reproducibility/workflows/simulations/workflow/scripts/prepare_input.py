@@ -40,5 +40,10 @@ true_hierarchy = scdef.hierarchy_utils.get_hierarchy_from_clusters(
 )
 adata.uns["true_hierarchy"] = true_hierarchy
 
+if "Batch" in adata.obs:
+    # Make batches contiguous
+    idx = adata.obs.sort_values("Batch").index
+    adata = adata[idx,]
+
 # Write new h5ad file
 adata.write(snakemake.output.fname)
