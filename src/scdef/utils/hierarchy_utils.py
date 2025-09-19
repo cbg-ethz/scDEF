@@ -1,6 +1,7 @@
 from scdef.utils.score_utils import *
 from collections import ChainMap
 import numpy as np
+from typing import Optional, Sequence, Mapping
 
 
 def get_hierarchy_from_clusters(clusters_levels, level_prefix="h", use_names=False):

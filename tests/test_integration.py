@@ -1,4 +1,4 @@
-import scdef
+import scdef as scd
 
 import scanpy as sc
 import numpy as np
@@ -87,70 +87,73 @@ def test_scdef():
     raw_adata = raw_adata[:, adata.var.highly_variable]
     adata = adata[:, adata.var.highly_variable]
 
-    scd = scdef.scDEF(
+    model = scd.scDEF(
         raw_adata,
         layer_sizes=[60, 30, 15],
         seed=1,
         batch_key="Experiment",
     )
-    assert hasattr(scd, "adata")
+    assert hasattr(model, "adata")
 
-    scd.learn(n_epoch=3)
+    model.fit(n_epoch=3)
 
-    scd.filter_factors(thres=0.0, min_cells=0)  # make sure we keep factors
+    model.filter_factors(thres=0.0, min_cells=0)  # make sure we keep factors
 
-    scd.logger.info(scd.factor_lists)
+    model.logger.info(model.factor_lists)
 
-    assert len(scd.elbos) == 1
-    assert "L0" in scd.adata.obs.columns
-    assert "L1" in scd.adata.obs.columns
-    assert "L2" in scd.adata.obs.columns
+    assert len(model.elbos) == 1
+    assert "L0" in model.adata.obs.columns
+    assert "L1" in model.adata.obs.columns
+    assert "L2" in model.adata.obs.columns
 
-    scd.plot_multilevel_paga(figsize=(16, 4), reuse_pos=True, frameon=False, show=False)
+    scd.pl.plot_qc(model, show=False)
 
-    scd.plot_signatures_scores("celltypes", markers, top_genes=10, show=False)
+    scd.pl.plot_multilevel_paga(model, figsize=(16, 4), reuse_pos=True, frameon=False, show=False)
+
+    scd.pl.plot_signatures_scores(model, "celltypes", markers, top_genes=10, show=False)
 
     for mode in ["f1", "fracs", "weights"]:
-        scd.plot_obs_scores(
+        scd.pl.plot_obs_scores(model,
             ["celltypes", "celltypes_coarse"],
             mode=mode,
             hierarchy=true_hierarchy,
             show=False,
         )
 
-    scdef.benchmark.evaluate_scdef_hierarchy(
-        scd, ["celltypes", "celltypes_coarse"], true_hierarchy
+    scd.benchmark.evaluate_scdef_hierarchy(
+        model, ["celltypes", "celltypes_coarse"], true_hierarchy
     )
 
-    scdef.benchmark.evaluate_scdef_signatures(scd, "celltypes", markers)
+    scd.benchmark.evaluate_scdef_signatures(model, "celltypes", markers)
 
-    simplified = scd.get_hierarchy(simplified=True)
-    scd.make_graph(hierarchy=simplified)
+    simplified = model.get_hierarchy(simplified=True)
+    g = scd.pl.make_graph(model, hierarchy=simplified)
 
-    assignments, matches = scd.assign_obs_to_factors(
+    assignments, matches = scd.utils.factor_utils.assign_obs_to_factors(
+        model,
         ["celltypes", "celltypes_coarse"],
-        factor_names=scdef.utils.hierarchy_utils.get_nodes_from_hierarchy(simplified),
+        factor_names=scd.utils.hierarchy_utils.get_nodes_from_hierarchy(simplified),
     )
-    scd.make_graph(hierarchy=simplified, factor_annotations=matches)
+    g = scd.pl.make_graph(model, hierarchy=simplified, factor_annotations=matches)
 
     if len(simplified.keys()) > 0:
         k = list(simplified.keys())[0]
-        scd.make_graph(hierarchy=simplified, top_factor=k, factor_annotations=matches)
+        g = scd.pl.make_graph(model, hierarchy=simplified, top_factor=k, factor_annotations=matches)
 
-    signatures, scores = scd.get_signatures_dict(scores=True, sorted_scores=False)
-    sizes = scd.get_sizes_dict()
-    scdef.benchmark.evaluate_hierarchical_signatures_consistency(
-        scd.adata.var_names, simplified, signatures, scores, sizes, top_genes=10
+    signatures, scores = model.get_signatures_dict(scores=True, sorted_scores=False)
+    sizes = model.get_sizes_dict()
+    scd.benchmark.evaluate_hierarchical_signatures_consistency(
+        model.adata.var_names, simplified, signatures, scores, sizes, top_genes=10
     )
 
-    scd.plot_umaps(
+    scd.pl.plot_umaps(model,
         color=["celltypes", "celltypes_coarse"],
         fontsize=16,
         legend_fontsize=14,
         show=False,
     )
 
-    scd.plot_factors_bars(["celltypes", "celltypes_coarse"], show=False)
+    scd.pl.plot_factors_bars(model, ["celltypes", "celltypes_coarse"], show=False)
 
     # Evaluate methods
     methods_list = ["PCA", "Harmony", "NMF"]
@@ -167,7 +170,7 @@ def test_scdef():
 
     res_sweeps = dict(
         zip(
-            scdef.benchmark.OTHERS_LABELS,
+            scd.benchmark.OTHERS_LABELS,
             [
                 [1.0, 0.6],
                 [1.0, 0.6],
@@ -181,7 +184,7 @@ def test_scdef():
             ],
         )
     )
-    methods_results = scdef.benchmark.other_methods.run_methods(
+    methods_results = scd.benchmark.other_methods.run_methods(
         adata,
         methods_list,
         res_sweeps=res_sweeps,
@@ -191,8 +194,8 @@ def test_scdef():
     for k in methods_list:
         assert "adata" in methods_results[k].keys()
 
-    methods_results["scDEF"] = scd
-    df = scdef.benchmark.evaluate.evaluate_methods(
+    methods_results["scDEF"] = model
+    df = scd.benchmark.evaluate.evaluate_methods(
         adata,
         metrics_list,
         methods_results,

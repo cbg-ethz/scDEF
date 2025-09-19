@@ -13,6 +13,7 @@ from scipy.cluster.hierarchy import ward, leaves_list
 from scipy.spatial.distance import pdist
 from typing import Optional, Union, Sequence, Literal, Mapping
 import pandas as pd
+from ..utils import data_utils, score_utils, hierarchy_utils
 
 
 def plot_obs_factor_dotplot(
@@ -362,7 +363,8 @@ def plot_pathway_scores(
         obs_clusters,
         obs_vals_dict,
         joined_mats,
-    ) = model._prepare_pathway_factor_scores(
+    ) = data_utils.prepare_pathway_factor_scores(
+        model,
         pathways,
         top_genes=top_genes,
     )
@@ -399,9 +401,10 @@ def plot_signatures_scores(
         hierarchy: the polytree to restrict the associations to
         **kwargs: plotting keyword arguments
     """
-    obs_mats, obs_clusters, obs_vals_dict = model._prepare_obs_factor_scores(
+    obs_mats, obs_clusters, obs_vals_dict = data_utils.prepare_obs_factor_scores(
+        model,
         obs_keys,
-        model._get_signature_scores,
+        data_utils.get_signature_scores,
         markers=markers,
         top_genes=top_genes,
         hierarchy=hierarchy,
@@ -426,15 +429,16 @@ def plot_obs_scores(
         **kwargs: plotting keyword arguments
     """
     if mode == "f1":
-        f = model._get_assignment_scores
+        f = data_utils.get_assignment_scores
     elif mode == "fracs":
-        f = model._get_assignment_fracs
+        f = data_utils.get_assignment_fracs
     elif mode == "weights":
-        f = model._get_weight_scores
+        f = data_utils.get_weight_scores
     else:
         raise ValueError("`mode` must be one of ['f1', 'fracs', 'weights']")
 
-    obs_mats, obs_clusters, obs_vals_dict = model._prepare_obs_factor_scores(
+    obs_mats, obs_clusters, obs_vals_dict = data_utils.prepare_obs_factor_scores(
+        model,
         obs_keys,
         f,
         hierarchy=hierarchy,
@@ -592,16 +596,31 @@ def plot_factors_bars(
         sharey=sharey,
     )
     axs = axs.reshape((len(obs_keys), n_layers))
+    # Get data using the new utility functions
+    obs_mats, obs_clusters, obs_vals_dict = data_utils.prepare_obs_factor_scores(
+        model,
+        obs_keys,
+        data_utils.get_assignment_fracs,
+    )
+
     for i in layers:
         axs[0][i].set_title(f"Layer {i}", fontsize=title_fontsize)
         for j, obs_key in enumerate(obs_keys):
             ax = axs[j][i]
-            mat = model._get_assignment_fracs(
-                obs_key, hierarchy=None, layer_idx=i
-            )
-            mat = mat[layer_factor_orders[i]]
-            ax.bar(np.arange(len(mat)), mat)
-            ax.set_xticks(np.arange(len(mat)))
+            mat = obs_mats[obs_key][i]
+            mat = mat[:, layer_factor_orders[i]]
+            
+            # Plot bars for each observation
+            for idx, obs in enumerate(obs_vals_dict[obs_key]):
+                obs_idx = np.where(model.adata.obs[obs_key].cat.categories == obs)[0][0]
+                color = model.adata.uns[f"{obs_key}_colors"][obs_idx]
+                y = mat[idx]
+                if idx == 0:
+                    ax.bar(np.arange(len(y)), y, color=color, label=obs)
+                else:
+                    ax.bar(np.arange(len(y)), y, bottom=mat[:idx].sum(axis=0), color=color, label=obs)
+            
+            ax.set_xticks(np.arange(len(model.factor_names[i])))
             ax.set_xticklabels(
                 np.array(model.factor_names[i])[layer_factor_orders[i]],
                 rotation=90,

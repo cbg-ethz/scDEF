@@ -194,9 +194,12 @@ def evaluate_methods(
 
 
 def evaluate_scdef_hierarchy(scd, obs_keys, true_hierarchy):
+    from scdef.utils.hierarchy_utils import get_nodes_from_hierarchy
+    from scdef.utils.factor_utils import assign_obs_to_factors
+    
     simplified = scd.get_hierarchy(simplified=True)
-    assignments, matches = scd.assign_obs_to_factors(
-        obs_keys, hierarchy_utils.get_nodes_from_hierarchy(simplified)
+    assignments, matches = assign_obs_to_factors(
+        scd, obs_keys, get_nodes_from_hierarchy(simplified)
     )
     annotated = hierarchy_utils.annotate_hierarchy(simplified, matches)
 
@@ -275,7 +278,8 @@ def evaluate_cluster_signatures(
 
 def evaluate_scdef_signatures(scd, obs_keys, markers, top_genes=20):
     # Assign factors to obs
-    assignments, matches = scd.assign_obs_to_factors(obs_keys)
+    from scdef.utils.factor_utils import assign_obs_to_factors
+    assignments, matches = assign_obs_to_factors(scd, obs_keys)
     signatures_dict = scd.get_signatures_dict()
 
     signature_scores = []

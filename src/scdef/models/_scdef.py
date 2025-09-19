@@ -1876,3 +1876,175 @@ class scDEF(object):
                     )
             attachments.append(layer_attachments)
         return attachments
+
+    def get_hierarchy(
+        self, simplified: Optional[bool] = True
+    ) -> Mapping[str, Sequence[str]]:
+        """Get a dictionary containing the polytree contained in the scDEF graph.
+
+        Args:
+            simplified: whether to collapse single-child nodes
+
+        Returns:
+            hierarchy: the dictionary containing the hierarchy
+        """
+        hierarchy = dict()
+        for layer_idx in range(0, self.n_layers - 1):
+            factors = self.factor_lists[layer_idx]
+            n_factors = len(factors)
+            if layer_idx < self.n_layers - 1:
+                # Assign factors to upper factors to set the plotting order
+                mat = self.pmeans[f"{self.layer_names[layer_idx+1]}W"][
+                    self.factor_lists[layer_idx + 1]
+                ][:, self.factor_lists[layer_idx]]
+                normalized_factor_weights = mat / np.sum(mat, axis=1).reshape(-1, 1)
+                assignments = []
+                for factor_idx in range(n_factors):
+                    assignments.append(
+                        np.argmax(normalized_factor_weights[:, factor_idx])
+                    )
+                assignments = np.array(assignments)
+
+                for upper_layer_factor in range(len(self.factor_lists[layer_idx + 1])):
+                    upper_layer_factor_name = self.factor_names[layer_idx + 1][
+                        upper_layer_factor
+                    ]
+                    assigned_lower = np.array(self.factor_names[layer_idx])[
+                        np.where(assignments == upper_layer_factor)[0]
+                    ].tolist()
+                    hierarchy[upper_layer_factor_name] = assigned_lower
+
+        if simplified:
+            layer_sizes = [len(self.factor_names[idx]) for idx in range(self.n_layers)]
+            hierarchy = hierarchy_utils.simplify_hierarchy(
+                hierarchy, self.layer_names, layer_sizes, factor_names=self.factor_names
+            )
+
+        return hierarchy
+
+    def compute_weight(self, upper_factor_name, lower_factor_name):
+        """Compute the weight between two factors across any number of layers."""
+        upper_factor_idx = -1
+        upper_factor_layer_idx = -1
+        for layer_idx in range(self.n_layers):
+            layer_factor_names = np.array(self.factor_names[layer_idx])
+            if upper_factor_name in layer_factor_names:
+                upper_factor_idx = np.where(upper_factor_name == layer_factor_names)[0][
+                    0
+                ]
+                upper_factor_layer_idx = layer_idx
+                break
+
+        assert upper_factor_idx != -1
+
+        lower_factor_idx = -1
+        lower_factor_layer_idx = -1
+        for layer_idx in range(self.n_layers):
+            layer_factor_names = np.array(self.factor_names[layer_idx])
+            if lower_factor_name in layer_factor_names:
+                lower_factor_idx = np.where(lower_factor_name == layer_factor_names)[0][
+                    0
+                ]
+                lower_factor_layer_idx = layer_idx
+                break
+
+        assert lower_factor_idx != -1
+
+        upper_layer_name = self.layer_names[upper_factor_layer_idx]
+        mat = self.pmeans[f"{upper_layer_name}W"][
+            self.factor_lists[upper_factor_layer_idx]
+        ][:, self.factor_lists[upper_factor_layer_idx - 1]]
+        for layer_idx in range(upper_factor_layer_idx - 1, lower_factor_layer_idx, -1):
+            layer_name = self.layer_names[layer_idx]
+            lower_mat = self.pmeans[f"{layer_name}W"][self.factor_lists[layer_idx]][
+                :, self.factor_lists[layer_idx - 1]
+            ]
+            mat = mat.dot(lower_mat)
+
+        return mat[upper_factor_idx][lower_factor_idx]
+
+
+    def compute_factor_obs_association_score(
+        self, layer_idx, factor_name, obs_key, obs_val
+    ):
+        layer_name = self.layer_names[layer_idx]
+
+        # Cells attached to factor
+        adata_cells_in_factor = self.adata[
+            np.where(self.adata.obs[f"{layer_name}"] == factor_name)[0]
+        ]
+
+        # Cells from obs_val
+        adata_cells_from_obs = self.adata[
+            np.where(self.adata.obs[obs_key] == obs_val)[0]
+        ]
+
+        cells_from_obs = float(adata_cells_from_obs.shape[0])
+
+        # Number of cells from obs_val that are not in factor
+        cells_not_in_factor_from_obs = float(
+            np.count_nonzero(adata_cells_from_obs.obs[f"{layer_name}"] != factor_name)
+        )
+
+        # Number of cells in factor that are obs_val
+        cells_in_factor_from_obs = float(
+            np.count_nonzero(adata_cells_in_factor.obs[obs_key] == obs_val)
+        )
+
+        # Number of cells in factor that are not obs_val
+        cells_in_factor_not_from_obs = float(
+            np.count_nonzero(adata_cells_in_factor.obs[obs_key] != obs_val)
+        )
+
+        return score_utils.compute_fscore(
+            cells_in_factor_from_obs,
+            cells_in_factor_not_from_obs,
+            cells_not_in_factor_from_obs,
+        )
+
+
+    def compute_factor_obs_assignment_fracs(
+        self, layer_idx, factor_name, obs_key, obs_val
+    ):
+        layer_name = self.layer_names[layer_idx]
+
+        # Cells attached to factor
+        adata_cells_in_factor = self.adata[
+            np.where(self.adata.obs[f"{layer_name}"] == factor_name)[0]
+        ]
+
+        # Cells in factor
+        cells_in_factor = float(adata_cells_in_factor.shape[0])
+
+        # Cells from factor in obs
+        cells_in_factor_from_obs = float(
+            np.count_nonzero(adata_cells_in_factor.obs[obs_key] == obs_val)
+        )
+
+        score = 0.0
+        if cells_in_factor != 0:
+            score = cells_in_factor_from_obs / cells_in_factor
+
+        return score
+
+
+    def compute_factor_obs_weight_score(self, layer_idx, factor_name, obs_key, obs_val):
+        layer_name = self.layer_names[layer_idx]
+
+        # Cells from obs_val
+        adata_cells_from_obs = self.adata[
+            np.where(self.adata.obs[obs_key] == obs_val)[0]
+        ]
+        adata_cells_not_from_obs = self.adata[
+            np.where(self.adata.obs[obs_key] != obs_val)[0]
+        ]
+
+        # Weight of cells from obs in factor
+        avg_in = np.mean(adata_cells_from_obs.obs[f"{factor_name}_score"])
+
+        # Weight of cells not from obs in factor
+        avg_out = np.mean(adata_cells_not_from_obs.obs[f"{factor_name}_score"])
+
+        score = avg_in / np.sum(avg_in + avg_out)
+
+        return score
