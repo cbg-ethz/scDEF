@@ -104,7 +104,7 @@ cnv.tl.infercnv(
 #     sub_adata, groupby="author_cell_type", save=snakemake.output.cnv_full_fname
 # )
 
-print(sub_adata.obs.groupby('donor_id').value_counts(subset=['author_cell_type']))
+print(sub_adata.obs.groupby("donor_id").value_counts(subset=["author_cell_type"]))
 
 sub_adata.obs.index.name = "barcode"
 sub_adata.write_h5ad(snakemake.output.adata_full_fname)

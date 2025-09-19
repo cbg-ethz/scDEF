@@ -30,9 +30,7 @@ import decoupler
 
 # Local imports
 from scdef.utils import score_utils, hierarchy_utils, color_utils
-from scdef.utils.jax_utils import (
-    lognormal_sample, lognormal_entropy, gamma_logpdf
-)
+from scdef.utils.jax_utils import lognormal_sample, lognormal_entropy, gamma_logpdf
 
 # Configure logging
 logging.basicConfig()
@@ -87,7 +85,7 @@ class scDEF(object):
         seed: Optional[int] = 42,
         logginglevel: Optional[int] = logging.INFO,
         layer_concentration: Optional[float] = 10.0,
-        factor_shape: Optional[float] = 0.1,        
+        factor_shape: Optional[float] = 0.1,
         brd_strength: Optional[float] = 0.1,
         brd_mean: Optional[float] = 10.0,
         use_brd: Optional[bool] = True,
@@ -103,13 +101,13 @@ class scDEF(object):
         self.batches = [""]
         self.batch_key = batch_key
 
-        self.load_adata(adata, layer=counts_layer, batch_key=batch_key)        
+        self.load_adata(adata, layer=counts_layer, batch_key=batch_key)
 
         self.logger = logging.getLogger("scDEF")
         self.logger.setLevel(logginglevel)
 
         self.layer_concentration = layer_concentration
-        self.factor_shape = factor_shape        
+        self.factor_shape = factor_shape
         self.brd = brd_strength
         self.brd_mean = brd_mean
         self.cell_scale_shape = cell_scale_shape
@@ -131,8 +129,8 @@ class scDEF(object):
         else:
             self.layer_names = [f"L{i}" for i in range(self.n_layers)]
         self.factor_lists = [np.arange(size) for size in self.layer_sizes]
-        
-        self.update_model_priors()        
+
+        self.update_model_priors()
 
         self.seed = seed
         self.batch_cpal = batch_cpal
@@ -140,9 +138,8 @@ class scDEF(object):
         self.lightness_mult = lightness_mult
         self.make_layercolors(layer_cpal=self.layer_cpal, lightness_mult=lightness_mult)
 
-        self.init_var_params(nmf_init=False) # just to get stub
+        self.init_var_params(nmf_init=False)  # just to get stub
         self.set_posterior_means()
-
 
     def __repr__(self):
         out = f"scDEF object with {self.n_layers} layers"
@@ -157,9 +154,8 @@ class scDEF(object):
             + ", ".join([str(len(factors)) for factors in self.factor_lists])
         )
         out += (
-            "\n\t"
-            + "Layer concentration parameter: " + str(self.layer_concentration)
-        )        
+            "\n\t" + "Layer concentration parameter: " + str(self.layer_concentration)
+        )
         out += (
             "\n\t"
             + "Layer factor shape parameters: "
@@ -203,10 +199,10 @@ class scDEF(object):
             for layer_idx, size in enumerate(layer_sizes):
                 for factor_idx in range(size):
                     col = self.layer_colorpalettes[layer_idx][factor_idx]
-                    self.layer_colorpalettes[layer_idx][
-                        factor_idx
-                    ] = color_utils.adjust_lightness(
-                        col, amount=1.0 + lightness_mult * layer_idx
+                    self.layer_colorpalettes[layer_idx][factor_idx] = (
+                        color_utils.adjust_lightness(
+                            col, amount=1.0 + lightness_mult * layer_idx
+                        )
                     )
 
     def load_adata(self, adata, layer=None, batch_key=None):
@@ -278,7 +274,11 @@ class scDEF(object):
         self.batch_lib_ratio = jnp.array(self.batch_lib_ratio)
         self.gene_ratio = jnp.array(self.gene_ratio)
 
-    def update_model_size(self, max_n_factors, max_n_layers=None,):
+    def update_model_size(
+        self,
+        max_n_factors,
+        max_n_layers=None,
+    ):
         if max_n_layers is None:
             max_n_layers = self.max_n_layers
         n_factors = int(max_n_factors)
@@ -297,11 +297,17 @@ class scDEF(object):
         self.layer_names = [f"L{i}" for i in range(self.n_layers)]
         self.factor_lists = [np.arange(size) for size in self.layer_sizes]
 
-    def update_model_priors(self):        
+    def update_model_priors(self):
         if self.use_brd:
-            self.factor_shapes = [1.0] + [self.factor_shape * self.layer_sizes[l]/self.layer_sizes[0] for l in range(1, self.n_layers)]
+            self.factor_shapes = [1.0] + [
+                self.factor_shape * self.layer_sizes[l] / self.layer_sizes[0]
+                for l in range(1, self.n_layers)
+            ]
         else:
-            self.factor_shapes = [self.factor_shape * self.layer_sizes[l]/self.layer_sizes[0] for l in range(self.n_layers)]
+            self.factor_shapes = [
+                self.factor_shape * self.layer_sizes[l] / self.layer_sizes[0]
+                for l in range(self.n_layers)
+            ]
 
         self.w_priors = []
         for idx in range(self.n_layers):
@@ -319,25 +325,24 @@ class scDEF(object):
                     * self.factor_shapes[idx]
                 )
                 for l in range(self.layer_sizes[idx]):
-                    prior_shapes[l, l] = (
-                        self.factor_shapes[idx]
-                    )
-                    prior_rates[l, l] = (
-                        self.factor_shapes[idx]
-                    )
+                    prior_shapes[l, l] = self.factor_shapes[idx]
+                    prior_rates[l, l] = self.factor_shapes[idx]
                 prior_shapes = jnp.clip(jnp.array(prior_shapes), 1e-12, 1e12)
                 prior_rates = jnp.clip(jnp.array(prior_rates), 1e-12, 1e12)
 
-            self.w_priors.append([prior_shapes, prior_rates])        
+            self.w_priors.append([prior_shapes, prior_rates])
 
-    def get_effective_factors(self,         
-            thres: Optional[float] = None,
-            iqr_mult: Optional[float] = 0.005,
-            min_cells: Optional[float] = 0.0,
-            normalized: Optional[bool] = False,
-        ):
+    def get_effective_factors(
+        self,
+        thres: Optional[float] = None,
+        iqr_mult: Optional[float] = 0.005,
+        min_cells: Optional[float] = 0.0,
+        normalized: Optional[bool] = False,
+    ):
         layer_name = self.layer_names[0]
-        min_cells = np.maximum(10, min_cells * self.n_cells) if min_cells < 1.0 else min_cells
+        min_cells = (
+            np.maximum(10, min_cells * self.n_cells) if min_cells < 1.0 else min_cells
+        )
         ard = []
         if thres is not None:
             ard = thres
@@ -353,15 +358,10 @@ class scDEF(object):
         )
         assignments = np.argmax(normed, axis=1)
         counts = np.array(
-            [
-                np.count_nonzero(assignments == a)
-                for a in range(self.layer_sizes[0])
-            ]
+            [np.count_nonzero(assignments == a) for a in range(self.layer_sizes[0])]
         )
         masses = np.sum(normed, axis=0)
-        keep = np.array(range(self.layer_sizes[0]))[
-            np.where(counts >= min_cells)[0]
-        ]
+        keep = np.array(range(self.layer_sizes[0]))[np.where(counts >= min_cells)[0]]
         brd_keep = np.arange(self.layer_sizes[0])
         if self.use_brd:
             rels = self.pmeans[f"brd"].ravel()
@@ -380,28 +380,33 @@ class scDEF(object):
         keep = np.unique(list(set(brd_keep).intersection(keep)))
         return keep
 
-
-    def init_var_params(self, init_budgets=True, init_z=None, init_w=None, nmf_init=False, **kwargs):
+    def init_var_params(
+        self, init_budgets=True, init_z=None, init_w=None, nmf_init=False, **kwargs
+    ):
         rngs = random.split(random.PRNGKey(self.seed), self.n_layers)
 
         if init_budgets:
-            m = 1.
-            v = m  
+            m = 1.0
+            v = m
             self.local_params = [
                 jnp.array(
                     (
-                        jnp.log(m**2 / jnp.sqrt(m**2 + v)) * jnp.ones((self.n_cells, 1)),  # cell_scales
-                        jnp.log(jnp.sqrt(jnp.log(1 + v / (m**2)))) * jnp.ones((self.n_cells, 1)),
+                        jnp.log(m**2 / jnp.sqrt(m**2 + v))
+                        * jnp.ones((self.n_cells, 1)),  # cell_scales
+                        jnp.log(jnp.sqrt(jnp.log(1 + v / (m**2))))
+                        * jnp.ones((self.n_cells, 1)),
                     )
                 ),
             ]
-            m = 1.
+            m = 1.0
             v = m
             self.global_params = [
                 jnp.array(
                     (
-                        jnp.log(m**2 / jnp.sqrt(m**2 + v)) * jnp.ones((1,self.n_genes)),  # gene_scales
-                        jnp.log(jnp.sqrt(jnp.log(1 + v / (m**2)))) * jnp.ones((1,self.n_genes)),
+                        jnp.log(m**2 / jnp.sqrt(m**2 + v))
+                        * jnp.ones((1, self.n_genes)),  # gene_scales
+                        jnp.log(jnp.sqrt(jnp.log(1 + v / (m**2))))
+                        * jnp.ones((1, self.n_genes)),
                     )
                 ),
             ]
@@ -410,13 +415,15 @@ class scDEF(object):
             self.global_params = [self.global_params[0]]
         # BRD
         m_brd = self.brd_mean
-        v_brd = m_brd / 100. 
+        v_brd = m_brd / 100.0
 
         self.global_params.append(
             jnp.array(
                 (
-                    jnp.log(m_brd**2 / jnp.sqrt(m_brd**2 + v_brd)) * jnp.ones((self.layer_sizes[0], 1)),
-                    jnp.log(jnp.sqrt(jnp.log(1 + v_brd / (m_brd**2)))) * jnp.ones((self.layer_sizes[0], 1)),
+                    jnp.log(m_brd**2 / jnp.sqrt(m_brd**2 + v_brd))
+                    * jnp.ones((self.layer_sizes[0], 1)),
+                    jnp.log(jnp.sqrt(jnp.log(1 + v_brd / (m_brd**2))))
+                    * jnp.ones((self.layer_sizes[0], 1)),
                 )
             ),
         )
@@ -432,35 +439,41 @@ class scDEF(object):
             self.n_layers
         ):  # we go from layer 0 (bottom) to layer L (top)
             # Init z
-            a = 1.
-            clip = 1e-6 # alpha=1 and clip=1e-6 allows for many factors to be learned, but leads to BRD becoming kind of big
+            a = 1.0
+            clip = 1e-6  # alpha=1 and clip=1e-6 allows for many factors to be learned, but leads to BRD becoming kind of big
 
-            if layer_idx > 0: # If the top layer inits to very small numbers, the loss goes crazy when MC=10...
+            if (
+                layer_idx > 0
+            ):  # If the top layer inits to very small numbers, the loss goes crazy when MC=10...
                 clip = 1e-6
-                a = 1.
+                a = 1.0
 
             if layer_idx == self.n_layers - 1:
                 clip = 1e-3
-            
+
             if init_z is not None and layer_idx == 0 and not nmf_init:
                 m = init_z.astype(jnp.float32)
-            else: 
+            else:
                 m = jnp.clip(
-                    tfd.Gamma(a, a / 1.).sample(
+                    tfd.Gamma(a, a / 1.0).sample(
                         seed=rngs[rng_cnt],
                         sample_shape=[self.n_cells, self.layer_sizes[layer_idx]],
                     ),
                     clip,
                     1e1,
-                ) 
+                )
                 rng_cnt += 1
 
-            v = m / 100. 
+            v = m / 100.0
             if layer_idx > 0:
-                v = m / 100.   
-            z_shape = jnp.log(m**2 / jnp.sqrt(m**2 + v)) * jnp.ones((self.n_cells, self.layer_sizes[layer_idx]))
+                v = m / 100.0
+            z_shape = jnp.log(m**2 / jnp.sqrt(m**2 + v)) * jnp.ones(
+                (self.n_cells, self.layer_sizes[layer_idx])
+            )
             z_shapes.append(z_shape)
-            z_rate = jnp.log(jnp.sqrt(jnp.log(1 + v / (m**2)))) * jnp.ones((self.n_cells, self.layer_sizes[layer_idx]))
+            z_rate = jnp.log(jnp.sqrt(jnp.log(1 + v / (m**2)))) * jnp.ones(
+                (self.n_cells, self.layer_sizes[layer_idx])
+            )
             z_rates.append(z_rate)
 
         self.local_params.append(jnp.array((jnp.hstack(z_shapes), jnp.hstack(z_rates))))
@@ -475,42 +488,48 @@ class scDEF(object):
             else:
                 out_layer = self.layer_sizes[layer_idx - 1]
 
-            a = 100.
+            a = 100.0
 
             if init_w is not None and layer_idx == 0 and not nmf_init:
                 m = init_w.astype(jnp.float32)
-                v = m 
+                v = m
             else:
 
-                m = 1./self.layer_sizes[layer_idx] * jnp.ones((in_layer, out_layer))
-                m = m * self.w_priors[layer_idx][0]/self.w_priors[layer_idx][1]
-                v = m / 100.
+                m = 1.0 / self.layer_sizes[layer_idx] * jnp.ones((in_layer, out_layer))
+                m = m * self.w_priors[layer_idx][0] / self.w_priors[layer_idx][1]
+                v = m / 100.0
             if nmf_init:
                 iw = init_w[layer_idx].astype(jnp.float32)
                 # Rescale
-                iw = 1. * iw / np.max(iw, axis=1)[:, None] + 1. 
+                iw = 1.0 * iw / np.max(iw, axis=1)[:, None] + 1.0
                 # iw = 10. * 100.**iw/100. + 1.
-                iw = jnp.clip(iw, 1e-6, 1e1) # need to set scales to avoid huge BRDs...
-                m = tfd.Gamma(100.0, 100.0 / (iw*1./self.layer_sizes[layer_idx]) ).sample(
-                        seed=rngs[rng_cnt]
-                    )
+                iw = jnp.clip(iw, 1e-6, 1e1)  # need to set scales to avoid huge BRDs...
+                m = tfd.Gamma(
+                    100.0, 100.0 / (iw * 1.0 / self.layer_sizes[layer_idx])
+                ).sample(seed=rngs[rng_cnt])
                 rng_cnt += 1
-                v = m / 100.
+                v = m / 100.0
 
-            w_shape = jnp.log(m**2 / jnp.sqrt(m**2 + v)) * jnp.ones((in_layer, out_layer))
-            w_rate = jnp.log(jnp.sqrt(jnp.log(1 + v / (m**2)))) * jnp.ones((in_layer, out_layer))
+            w_shape = jnp.log(m**2 / jnp.sqrt(m**2 + v)) * jnp.ones(
+                (in_layer, out_layer)
+            )
+            w_rate = jnp.log(jnp.sqrt(jnp.log(1 + v / (m**2)))) * jnp.ones(
+                (in_layer, out_layer)
+            )
 
             self.global_params.append(jnp.array((w_shape, w_rate)))
 
         # Gamma(1e3, 1e3/m)
-        m = 1.
-        v = m / 100. 
+        m = 1.0
+        v = m / 100.0
 
         self.global_params.append(
             jnp.array(
                 (
-                    jnp.log(m**2 / jnp.sqrt(m**2 + v)) * jnp.ones((self.layer_sizes[0], 1)),
-                    jnp.log(jnp.sqrt(jnp.log(1 + v / (m**2)))) * jnp.ones((self.layer_sizes[0], 1)),
+                    jnp.log(m**2 / jnp.sqrt(m**2 + v))
+                    * jnp.ones((self.layer_sizes[0], 1)),
+                    jnp.log(jnp.sqrt(jnp.log(1 + v / (m**2))))
+                    * jnp.ones((self.layer_sizes[0], 1)),
                 )
             ),
         )
@@ -544,29 +563,34 @@ class scDEF(object):
 
         return init_z, init_W
 
-    def identify_mixture_factors(self, max_n_genes=20, thres=.5):
+    def identify_mixture_factors(self, max_n_genes=20, thres=0.5):
         """Identify factors that might be better if broken apart"""
         # sparse_factors = np.where(self.pmeans['brd'].ravel() > 1.)[0]
         kept_factors = self.factor_lists[0]
-        normed_factors = self.pmeans['L0W'][kept_factors] / self.pmeans['L0W'][kept_factors].max(axis=1)[:,None]
+        normed_factors = (
+            self.pmeans["L0W"][kept_factors]
+            / self.pmeans["L0W"][kept_factors].max(axis=1)[:, None]
+        )
         n_genes_per_factor = np.sum(normed_factors > thres, axis=1)
         mixture_factors = kept_factors[np.where(n_genes_per_factor > max_n_genes)[0]]
         return mixture_factors
-    
-    def reinit_factors(self, mixture_factors=None, init_budgets=False, exponent=1.1, **kwargs):
+
+    def reinit_factors(
+        self, mixture_factors=None, init_budgets=False, exponent=1.1, **kwargs
+    ):
         kept_factors = self.factor_lists[0]
         if mixture_factors is None:
             mixture_factors = self.identify_mixture_factors(**kwargs)
         # Make W0 matrix with sparse factors, and with each mixture factor repeated twice
-        W0 = np.ones((self.layer_sizes[0], self.n_genes)) * 1./self.layer_sizes[0]
+        W0 = np.ones((self.layer_sizes[0], self.n_genes)) * 1.0 / self.layer_sizes[0]
         for i, factor in enumerate(kept_factors):
-            W0[i] = self.pmeans['L0W'][factor] ** exponent
-        
+            W0[i] = self.pmeans["L0W"][factor] ** exponent
+
         # If we can fit repetitions
-        if len(mixture_factors) <= self.layer_sizes[0]-len(kept_factors):
+        if len(mixture_factors) <= self.layer_sizes[0] - len(kept_factors):
             for factor in mixture_factors:
                 # Add another copy
-                W0[len(kept_factors) + i] = self.pmeans['L0W'][factor] ** exponent
+                W0[len(kept_factors) + i] = self.pmeans["L0W"][factor] ** exponent
 
         self.init_var_params(init_budgets=init_budgets, init_w=W0, nmf_init=False)
         return W0
@@ -637,9 +661,11 @@ class scDEF(object):
             lambda: jax.lax.stop_gradient(fscale_rates),
             lambda: fscale_rates,
         )
-        
+
         wm_shape = jnp.clip(global_params[2 + self.n_layers][0], min_shape, max_shape)
-        wm_rate = jnp.exp(jnp.clip(global_params[2 + self.n_layers][1], min_rate, max_rate))
+        wm_rate = jnp.exp(
+            jnp.clip(global_params[2 + self.n_layers][1], min_rate, max_rate)
+        )
 
         z_shapes = jnp.clip(z_params[0][indices], min_shape, max_shape)
         z_rates = jnp.exp(jnp.clip(z_params[1][indices], min_rate, max_rate))
@@ -670,13 +696,13 @@ class scDEF(object):
         if self.use_brd:
             fscale_samples = lognormal_sample(rng, fscale_shapes, fscale_rates)
             _wm_sample = lognormal_sample(rng, wm_shape, wm_rate)
-            brd_samples = fscale_samples / jnp.maximum(_wm_sample, 1.)
+            brd_samples = fscale_samples / jnp.maximum(_wm_sample, 1.0)
         # w will be sampled in a loop below because it cannot be vectorized
 
         # Compute ELBO
         global_pl = gamma_logpdf(
             gene_budget_sample,
-            self.gene_scale_shape,  
+            self.gene_scale_shape,
             self.gene_scale_shape * self.gene_ratio,
         )
         global_en = lognormal_entropy(gene_budget_shape, gene_budget_rate)
@@ -694,7 +720,7 @@ class scDEF(object):
             )
             global_en += lognormal_entropy(fscale_shapes, fscale_rates)
 
-            global_pl += gamma_logpdf(_wm_sample, .1, .1)
+            global_pl += gamma_logpdf(_wm_sample, 0.1, 0.1)
             global_en += lognormal_entropy(wm_shape, wm_rate)
 
         z_mean = 1.0
@@ -723,26 +749,29 @@ class scDEF(object):
                 global_pl += gamma_logpdf(
                     _w_sample,
                     self.w_priors[idx][0] * (1.0 / fscale_samples),
-                    self.w_priors[idx][1] * (1.0 / fscale_samples) * (1./_wm_sample) * self.layer_sizes[idx],
+                    self.w_priors[idx][1]
+                    * (1.0 / fscale_samples)
+                    * (1.0 / _wm_sample)
+                    * self.layer_sizes[idx],
                 )
             elif idx == 0:
                 global_pl += gamma_logpdf(
                     _w_sample,
-                    self.w_priors[idx][0] ,
+                    self.w_priors[idx][0],
                     self.w_priors[idx][1] * self.layer_sizes[idx],
-                )                
+                )
             else:
                 if idx == 1 and self.use_brd:
                     global_pl += gamma_logpdf(
                         _w_sample,
                         self.w_priors[idx][0],
-                        self.w_priors[idx][1] *  self.layer_sizes[idx] / brd_samples.T,
+                        self.w_priors[idx][1] * self.layer_sizes[idx] / brd_samples.T,
                     )
                 else:
                     global_pl += gamma_logpdf(
                         _w_sample,
                         self.w_priors[idx][0],
-                        self.w_priors[idx][1]  * self.layer_sizes[idx],
+                        self.w_priors[idx][1] * self.layer_sizes[idx],
                     )
             global_en += lognormal_entropy(_w_shape, _w_rate)
 
@@ -762,25 +791,27 @@ class scDEF(object):
             )
             _z_sample = lognormal_sample(rng, _z_shape, _z_rate)
 
-            rate_param = 1.
+            rate_param = 1.0
             if idx > 0:
-                rate_param = 1.
+                rate_param = 1.0
             elif self.n_layers == 1 and self.use_brd:
                 rate_param = brd_samples.T
-                
+
             local_pl += jax.lax.cond(
                 idx == self.n_layers - 1,
-                lambda: gamma_logpdf(_z_sample, .1, .1 / rate_param),
-                lambda: gamma_logpdf(_z_sample, self.layer_concentration, self.layer_concentration / (rate_param * z_mean )),
+                lambda: gamma_logpdf(_z_sample, 0.1, 0.1 / rate_param),
+                lambda: gamma_logpdf(
+                    _z_sample,
+                    self.layer_concentration,
+                    self.layer_concentration / (rate_param * z_mean),
+                ),
             )
 
             local_en += lognormal_entropy(_z_shape, _z_rate)
 
             z_mean = jnp.einsum("nk,kp->np", _z_sample, _w_sample)
 
-        mean_bottom = jnp.einsum(
-            "nk,kg->ng", _z_sample, _w_sample
-        ) *  cell_budget_sample
+        mean_bottom = jnp.einsum("nk,kg->ng", _z_sample, _w_sample) * cell_budget_sample
         mean_bottom = mean_bottom * (batch_indices_onehot.dot(gene_budget_sample))
 
         ll = jnp.sum(vmap(poisson.logpmf)(jnp.array(batch), mean_bottom))
@@ -880,7 +911,7 @@ class scDEF(object):
         batches = data_stream()
 
         losses = []
-        global_grads = 0.
+        global_grads = 0.0
         annealing_parameter = jnp.array(annealing_parameter)
         stop_gradients = jnp.array(stop_gradients)
         stop_cell_budgets = jnp.array(stop_cell_budgets)
@@ -914,19 +945,21 @@ class scDEF(object):
                             stop_gene_budgets,
                         )
                     if update_globals:
-                        loss, global_params, global_opt_state, global_grads = global_update_func(
-                            X,
-                            indices,
-                            t,
-                            rng_input,
-                            local_params,
-                            global_params,
-                            local_opt_state,
-                            global_opt_state,
-                            annealing_parameter,
-                            stop_gradients,
-                            stop_cell_budgets,
-                            stop_gene_budgets,
+                        loss, global_params, global_opt_state, global_grads = (
+                            global_update_func(
+                                X,
+                                indices,
+                                t,
+                                rng_input,
+                                local_params,
+                                global_params,
+                                local_opt_state,
+                                global_opt_state,
+                                annealing_parameter,
+                                stop_gradients,
+                                stop_cell_budgets,
+                                stop_gene_budgets,
+                            )
                         )
                     epoch_losses.append(loss)
                     t += 1
@@ -981,30 +1014,47 @@ class scDEF(object):
         except KeyboardInterrupt:
             self.logger.info("Interrupted learning. Exiting safely...")
 
-        return losses, local_params, global_params, local_opt_state, global_opt_state, global_grads
+        return (
+            losses,
+            local_params,
+            global_params,
+            local_opt_state,
+            global_opt_state,
+            global_grads,
+        )
 
-    def fit(self, pretrain=False, nmf_init=False, max_cells_init=1024, unmix=False,**kwargs):
-        """Learn a one-layer scDEF with 100 factors with BRD to obtain 
-        cell and gene scale factors and an estimate of the effective number of factors. 
+    def fit(
+        self, pretrain=True, nmf_init=False, max_cells_init=1024, unmix=False, **kwargs
+    ):
+        """Learn a one-layer scDEF with 100 factors with BRD to obtain
+        cell and gene scale factors and an estimate of the effective number of factors.
         Update the sizes based on that estimate and re-init everything except the scale factors.
         """
         if pretrain:
-            self.logger.info(f"Pretraining to find initial estimate of number of factors")
+            self.logger.info(
+                f"Pretraining to find initial estimate of number of factors"
+            )
             self.update_model_size(self.n_factors, max_n_layers=1)
             self.update_model_priors()
-            self.init_var_params(init_budgets=True, nmf_init=nmf_init, max_cells=max_cells_init)
+            self.init_var_params(
+                init_budgets=True, nmf_init=nmf_init, max_cells=max_cells_init
+            )
             self.elbos = []
             self.step_sizes = []
             self._learn(filter=False, annotate=False, **kwargs)
-            eff_factors = self.get_effective_factors(min_cells=.01)
+            eff_factors = self.get_effective_factors(min_cells=0.01)
             mixture_factors = self.identify_mixture_factors()
             if len(mixture_factors) > 0 and unmix:
-                self.logger.info(f"Found {len(mixture_factors)} factors that activate more than 10 genes. Re-fitting to enhance sparsity")
+                self.logger.info(
+                    f"Found {len(mixture_factors)} factors that activate more than 10 genes. Re-fitting to enhance sparsity"
+                )
                 self.reinit_factors(mixture_factors=mixture_factors)
                 self._learn(filter=False, annotate=False, **kwargs)
-                eff_factors = self.get_effective_factors(min_cells=.01)
+                eff_factors = self.get_effective_factors(min_cells=0.01)
             n_eff_factors = len(eff_factors)
-            self.logger.info(f"scDEF pretraining finished. Found {n_eff_factors} effective factors.")
+            self.logger.info(
+                f"scDEF pretraining finished. Found {n_eff_factors} effective factors."
+            )
             self.update_model_size(n_eff_factors)
             self.update_model_priors()
             self.logger.info(f"Learning scDEF with layer sizes {self.layer_sizes}.")
@@ -1013,7 +1063,12 @@ class scDEF(object):
         else:
             init_budgets = True
             init_w = None
-        self.init_var_params(init_budgets=init_budgets, init_w=init_w, nmf_init=nmf_init, max_cells=max_cells_init)
+        self.init_var_params(
+            init_budgets=init_budgets,
+            init_w=init_w,
+            nmf_init=nmf_init,
+            max_cells=max_cells_init,
+        )
         self.elbos = []
         self.step_sizes = []
         self._learn(**kwargs)
@@ -1301,12 +1356,12 @@ class scDEF(object):
             ),
             "factor_concentrations": jnp.exp(
                 fscale_params[0] + 0.5 * jnp.exp(fscale_params[1]) ** 2
-            ), 
-            "factor_means": jnp.exp(
-                wm_params[0] + 0.5 * jnp.exp(wm_params[1]) ** 2
-            ),  
+            ),
+            "factor_means": jnp.exp(wm_params[0] + 0.5 * jnp.exp(wm_params[1]) ** 2),
         }
-        self.pmeans['brd'] = self.pmeans['factor_concentrations'] / jnp.maximum(self.pmeans['factor_means'], 1.)
+        self.pmeans["brd"] = self.pmeans["factor_concentrations"] / jnp.maximum(
+            self.pmeans["factor_means"], 1.0
+        )
 
         for idx in range(self.n_layers):
             start = sum(self.layer_sizes[:idx])
@@ -1335,10 +1390,10 @@ class scDEF(object):
             "gene_scale": np.array(
                 np.exp(gene_budget_params[0]) / np.exp(gene_budget_params[1]) ** 2
             ),
-            "factor_concentrations": np.array(np.exp(fscale_params[0]) / np.exp(fscale_params[1]) ** 2),
-            "factor_means": jnp.exp(
-                wm_params[0] + 0.5 * jnp.exp(wm_params[1]) ** 2
-            ),              
+            "factor_concentrations": np.array(
+                np.exp(fscale_params[0]) / np.exp(fscale_params[1]) ** 2
+            ),
+            "factor_means": jnp.exp(wm_params[0] + 0.5 * jnp.exp(wm_params[1]) ** 2),
         }
 
         for idx in range(self.n_layers):
@@ -1356,7 +1411,7 @@ class scDEF(object):
 
     def filter_factors(
         self,
-        thres: Optional[float] = 1.,
+        thres: Optional[float] = 1.0,
         iqr_mult: Optional[float] = 0.0,
         min_cells: Optional[float] = 0.001,
         filter_up: Optional[bool] = True,
@@ -1377,7 +1432,12 @@ class scDEF(object):
         self.factor_lists = []
         for i, layer_name in enumerate(self.layer_names):
             if i == 0:
-                keep = self.get_effective_factors(thres=thres, iqr_mult=iqr_mult, min_cells=min_cells, normalized=normalized)
+                keep = self.get_effective_factors(
+                    thres=thres,
+                    iqr_mult=iqr_mult,
+                    min_cells=min_cells,
+                    normalized=normalized,
+                )
             else:
                 assignments = np.argmax(self.pmeans[f"{layer_name}z"], axis=1)
                 counts = np.array(
@@ -1424,12 +1484,12 @@ class scDEF(object):
     def annotate_adata(self):
         self.adata.obs["cell_scale"] = self.pmeans["cell_scale"]
         if self.n_batches == 1:
-            self.adata.var["gene_scale"] =  self.pmeans["gene_scale"][0]
+            self.adata.var["gene_scale"] = self.pmeans["gene_scale"][0]
             self.logger.info("Updated adata.var: `gene_scale`")
         else:
             for batch_idx in range(self.n_batches):
                 name = f"gene_scale_{batch_idx}"
-                self.adata.var[name] =  self.pmeans["gene_scale"][batch_idx]
+                self.adata.var[name] = self.pmeans["gene_scale"][batch_idx]
                 self.logger.info(f"Updated adata.var: `{name}` for batch {batch_idx}.")
 
         self.set_factor_names()
@@ -1963,7 +2023,6 @@ class scDEF(object):
 
         return mat[upper_factor_idx][lower_factor_idx]
 
-
     def compute_factor_obs_association_score(
         self, layer_idx, factor_name, obs_key, obs_val
     ):
@@ -2002,7 +2061,6 @@ class scDEF(object):
             cells_not_in_factor_from_obs,
         )
 
-
     def compute_factor_obs_assignment_fracs(
         self, layer_idx, factor_name, obs_key, obs_val
     ):
@@ -2026,7 +2084,6 @@ class scDEF(object):
             score = cells_in_factor_from_obs / cells_in_factor
 
         return score
-
 
     def compute_factor_obs_weight_score(self, layer_idx, factor_name, obs_key, obs_val):
         layer_name = self.layer_names[layer_idx]

@@ -1,4 +1,3 @@
-
 """Factor plotting functions for scDEF.
 
 This module provides factor-related plotting functions for scDEF models.
@@ -56,8 +55,7 @@ def plot_obs_factor_dotplot(
             factor_name = model.factor_names[layer_idx][factor]
             cells_attached = model.adata.obs.index[
                 np.where(
-                    model.adata.obs.loc[cells_from_obs][f"{layer_name}"]
-                    == factor_name
+                    model.adata.obs.loc[cells_from_obs][f"{layer_name}"] == factor_name
                 )[0]
             ]
             if len(cells_attached) == 0:
@@ -271,9 +269,7 @@ def plot_layers_obs(
         obs_keys = [obs_keys]
 
     if layers is None:
-        layers = [
-            i for i in range(0, model.n_layers) if len(model.factor_lists[i]) > 1
-        ]
+        layers = [i for i in range(0, model.n_layers) if len(model.factor_lists[i]) > 1]
 
     n_layers = len(layers)
 
@@ -331,9 +327,7 @@ def plot_layers_obs(
 
             if i == n_layers - 1:
                 ax.yaxis.set_label_position("right")
-                ax.set_ylabel(
-                    obs_key, rotation=270, labelpad=20.0, fontsize=fontsize
-                )
+                ax.set_ylabel(obs_key, rotation=270, labelpad=20.0, fontsize=fontsize)
 
     plt.subplots_adjust(wspace=0.05)
     plt.subplots_adjust(hspace=0.05)
@@ -571,9 +565,7 @@ def plot_factors_bars(
         obs_keys = [obs_keys]
 
     if layers is None:
-        layers = [
-            i for i in range(0, model.n_layers) if len(model.factor_lists[i]) > 1
-        ]
+        layers = [i for i in range(0, model.n_layers) if len(model.factor_lists[i]) > 1]
 
     n_layers = len(layers)
 
@@ -609,7 +601,7 @@ def plot_factors_bars(
             ax = axs[j][i]
             mat = obs_mats[obs_key][i]
             mat = mat[:, layer_factor_orders[i]]
-            
+
             # Plot bars for each observation
             for idx, obs in enumerate(obs_vals_dict[obs_key]):
                 obs_idx = np.where(model.adata.obs[obs_key].cat.categories == obs)[0][0]
@@ -618,8 +610,14 @@ def plot_factors_bars(
                 if idx == 0:
                     ax.bar(np.arange(len(y)), y, color=color, label=obs)
                 else:
-                    ax.bar(np.arange(len(y)), y, bottom=mat[:idx].sum(axis=0), color=color, label=obs)
-            
+                    ax.bar(
+                        np.arange(len(y)),
+                        y,
+                        bottom=mat[:idx].sum(axis=0),
+                        color=color,
+                        label=obs,
+                    )
+
             ax.set_xticks(np.arange(len(model.factor_names[i])))
             ax.set_xticklabels(
                 np.array(model.factor_names[i])[layer_factor_orders[i]],
@@ -640,7 +638,7 @@ def plot_factors_bars(
 
 def plot_cell_entropies(model, thres=0.9, show=True):
     """Plot cell entropies and factor numbers across layers.
-    
+
     Args:
         model: scDEF model instance
         thres: Threshold for cumulative sum calculation
@@ -680,7 +678,7 @@ def plot_cell_entropies(model, thres=0.9, show=True):
 
 def plot_factor_genes(model, thres=0.9, show=True):
     """Plot number of genes in factors across layers.
-    
+
     Args:
         model: scDEF model instance
         thres: Threshold for cumulative sum calculation
@@ -742,7 +740,7 @@ def plot_factor_genes(model, thres=0.9, show=True):
 
 def plot_factor_gini(model, idx, thres=0.9, show=True):
     """Plot Gini coefficient for a specific factor.
-    
+
     Args:
         model: scDEF model instance
         idx: Factor index to plot
@@ -759,5 +757,3 @@ def plot_factor_gini(model, idx, thres=0.9, show=True):
         plt.show()
     else:
         return plt.gca()
-
-

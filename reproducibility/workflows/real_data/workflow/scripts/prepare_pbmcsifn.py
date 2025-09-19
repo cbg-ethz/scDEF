@@ -32,9 +32,11 @@ adata.raw = adata
 # Update annotations
 adata.obs["Cell types"] = adata.obs["seurat_annotations"]
 adata.obs["Cell states"] = adata.obs.apply(
-    lambda r: f'{r["seurat_annotations"]}_{r["stim"]}'
-    if "CD14 Mono" in r["seurat_annotations"]
-    else r["seurat_annotations"],
+    lambda r: (
+        f'{r["seurat_annotations"]}_{r["stim"]}'
+        if "CD14 Mono" in r["seurat_annotations"]
+        else r["seurat_annotations"]
+    ),
     axis=1,
 )
 adata.obs["Batch"] = adata.obs["stim"]

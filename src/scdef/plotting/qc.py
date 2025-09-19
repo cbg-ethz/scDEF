@@ -11,15 +11,13 @@ from typing import Optional, Union, Sequence, Literal, Mapping
 import pandas as pd
 
 
-def plot_scales(model, figsize=(8, 4), alpha=0.6, fontsize=12, legend_fontsize=10, show=True):
+def plot_scales(
+    model, figsize=(8, 4), alpha=0.6, fontsize=12, legend_fontsize=10, show=True
+):
     """Plot both cell and gene scales."""
     fig, axes = plt.subplots(1, 2, figsize=figsize)
-    plot_scale(
-        model, "cell", figsize, alpha, fontsize, legend_fontsize, axes[0], False
-    )
-    plot_scale(
-        model, "gene", figsize, alpha, fontsize, legend_fontsize, axes[1], False
-    )
+    plot_scale(model, "cell", figsize, alpha, fontsize, legend_fontsize, axes[0], False)
+    plot_scale(model, "gene", figsize, alpha, fontsize, legend_fontsize, axes[1], False)
     if show:
         fig.tight_layout()
         plt.show()
@@ -52,6 +50,7 @@ def plot_scale(
 
         def get_y_data_batch(_, b_cells):
             return model.pmeans["cell_scale"].ravel()[np.where(b_cells)[0]]
+
     else:
         x_data = np.sum(model.X, axis=0)
         x_label = "Observed gene scale"
@@ -196,7 +195,7 @@ def plot_gini_brd(
 ):
     """Plot Gini coefficient vs BRD scores."""
     from ..utils import score_utils
-    
+
     brds = model.pmeans["brd"].ravel()
     if normalize:
         brds = brds - np.min(brds)
@@ -291,4 +290,3 @@ def plot_qc(model, figsize=(8, 12), show=True):
         plt.show()
     else:
         return fig
-

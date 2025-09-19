@@ -19,11 +19,11 @@ def get_assignment_fracs(model, obs_key, obs_vals):
     signatures_dict = model.get_signatures_dict()
     n_obs = len(obs_vals)
     mats = [
-        np.zeros((n_obs, len(model.factor_names[idx])))
-        for idx in range(model.n_layers)
+        np.zeros((n_obs, len(model.factor_names[idx]))) for idx in range(model.n_layers)
     ]
     for i, obs in enumerate(obs_vals):
         from .factor_utils import get_factor_obs_assignment_fracs
+
         scores, factors, layers = get_factor_obs_assignment_fracs(model, obs_key, obs)
         for j in range(model.n_layers):
             indices = np.where(np.array(layers) == j)[0]
@@ -36,11 +36,11 @@ def get_assignment_scores(model, obs_key, obs_vals):
     signatures_dict = model.get_signatures_dict()
     n_obs = len(obs_vals)
     mats = [
-        np.zeros((n_obs, len(model.factor_names[idx])))
-        for idx in range(model.n_layers)
+        np.zeros((n_obs, len(model.factor_names[idx]))) for idx in range(model.n_layers)
     ]
     for i, obs in enumerate(obs_vals):
         from .factor_utils import get_factor_obs_association_scores
+
         scores, factors, layers = get_factor_obs_association_scores(model, obs_key, obs)
         for j in range(model.n_layers):
             indices = np.where(np.array(layers) == j)[0]
@@ -53,11 +53,11 @@ def get_weight_scores(model, obs_key, obs_vals):
     signatures_dict = model.get_signatures_dict()
     n_obs = len(obs_vals)
     mats = [
-        np.zeros((n_obs, len(model.factor_names[idx])))
-        for idx in range(model.n_layers)
+        np.zeros((n_obs, len(model.factor_names[idx]))) for idx in range(model.n_layers)
     ]
     for i, obs in enumerate(obs_vals):
         from .factor_utils import get_factor_obs_weight_scores
+
         scores, factors, layers = get_factor_obs_weight_scores(model, obs_key, obs)
         for j in range(model.n_layers):
             indices = np.where(np.array(layers) == j)[0]
@@ -70,8 +70,7 @@ def get_signature_scores(model, obs_key, obs_vals, markers, top_genes=10):
     signatures_dict = model.get_signatures_dict()
     n_obs = len(obs_vals)
     mats = [
-        np.zeros((n_obs, len(model.factor_names[idx])))
-        for idx in range(model.n_layers)
+        np.zeros((n_obs, len(model.factor_names[idx]))) for idx in range(model.n_layers)
     ]
     for i, obs in enumerate(obs_vals):
         markers_type = markers[obs]
@@ -85,7 +84,9 @@ def get_signature_scores(model, obs_key, obs_vals, markers, top_genes=10):
     return mats
 
 
-def prepare_obs_factor_scores(model, obs_keys, get_scores_func, hierarchy=None, **kwargs):
+def prepare_obs_factor_scores(
+    model, obs_keys, get_scores_func, hierarchy=None, **kwargs
+):
     """Prepare observation-factor scores for plotting."""
     if not isinstance(obs_keys, list):
         obs_keys = [obs_keys]
@@ -164,9 +165,7 @@ def prepare_pathway_factor_scores(
             )
             for term in res["Term"]:
                 term_idx = np.where(np.array(obs_vals_dict["Pathway"]) == term)[0]
-                factor_vals[term_idx, i] = res.loc[res["Term"] == term][
-                    score
-                ].values[0]
+                factor_vals[term_idx, i] = res.loc[res["Term"] == term][score].values[0]
 
             if z_score:
                 # Compute z-scores

@@ -76,9 +76,9 @@ def make_graph(
         else:
             style = "filled"
             gene_loc = np.where(model.adata.var_names == gene_score)[0][0]
-            scores_dict = model.get_signatures_dict(
-                scores=True, layer_normalize=True
-            )[1]
+            scores_dict = model.get_signatures_dict(scores=True, layer_normalize=True)[
+                1
+            ]
             for n in scores_dict:
                 gene_scores[n] = scores_dict[n][gene_loc]
     else:
@@ -133,9 +133,7 @@ def make_graph(
             normalized_factor_weights = mat / np.sum(mat, axis=1).reshape(-1, 1)
             assignments = []
             for factor_idx in range(n_factors):
-                assignments.append(
-                    np.argmax(normalized_factor_weights[:, factor_idx])
-                )
+                assignments.append(np.argmax(normalized_factor_weights[:, factor_idx]))
             assignments = np.array(assignments)
 
             factor_order = []
@@ -352,9 +350,7 @@ def make_graph(
                         ii * 2 * np.pi / len(model.factor_lists[0])
                     )
                 else:
-                    children_angles = [
-                        angle_dict[f] for f in hierarchy[factor_name]
-                    ]
+                    children_angles = [angle_dict[f] for f in hierarchy[factor_name]]
                     angle_dict[factor_name] = np.mean(children_angles)
                 x = radius * np.cos(angle_dict[factor_name])
                 y = radius * np.sin(angle_dict[factor_name])
@@ -416,9 +412,7 @@ def make_graph(
                         mat = model.pmeans[f"{model.layer_names[layer_idx]}W"][
                             model.factor_lists[layer_idx]
                         ][:, model.factor_lists[layer_idx - 1]]
-                    normalized_factor_weights = mat / np.sum(mat, axis=1).reshape(
-                        -1, 1
-                    )
+                    normalized_factor_weights = mat / np.sum(mat, axis=1).reshape(-1, 1)
                     for lower_factor_idx in layer_factor_orders[layer_idx - 1]:
                         if show_all:
                             lower_factor_name = f"{model.layer_names[layer_idx-1]}{int(lower_factor_idx)}"
@@ -445,5 +439,5 @@ def make_graph(
     model.graph = g
 
     model.logger.info(f"Updated scDEF graph")
-    
+
     return g

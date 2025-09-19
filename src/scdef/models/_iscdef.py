@@ -44,12 +44,12 @@ class iscDEF(scDEF):
             int
         ] = 0,  # by default, use lower layer and learn a hierarchy
         cn_small_mean: Optional[float] = 1e-6,
-        cn_big_mean: Optional[float] = 1.,
+        cn_big_mean: Optional[float] = 1.0,
         cn_small_strength: Optional[float] = 1.0,
         cn_big_strength: Optional[float] = 0.1,
         gs_small_scale: Optional[float] = 1.0,
         gs_big_scale: Optional[float] = 100.0,
-        marker_strength: Optional[float] = 10.,
+        marker_strength: Optional[float] = 10.0,
         nonmarker_strength: Optional[float] = 0.1,
         other_strength: Optional[float] = 0.1,
         **kwargs,
@@ -59,10 +59,10 @@ class iscDEF(scDEF):
         self.markers_layer = markers_layer
 
         # Set w_priors
-        self.cn_small_strength=cn_small_strength
-        self.cn_big_strength=cn_big_strength
-        self.cn_small_mean=cn_small_mean
-        self.cn_big_mean=cn_big_mean
+        self.cn_small_strength = cn_small_strength
+        self.cn_big_strength = cn_big_strength
+        self.cn_small_mean = cn_small_mean
+        self.cn_big_mean = cn_big_mean
 
         self.gs_big_scale = gs_big_scale
         self.gs_small_scale = gs_small_scale
@@ -71,12 +71,18 @@ class iscDEF(scDEF):
         self.other_strength = other_strength
 
         # Marker names and n_markers logic
-        self.other_names = [f"other{i}" for i in range(self.add_other)] if self.add_other > 0 else []
+        self.other_names = (
+            [f"other{i}" for i in range(self.add_other)] if self.add_other > 0 else []
+        )
         self.marker_names = list(self.markers_dict.keys()) + self.other_names
         self.n_markers = len(self.marker_names)
 
-        self.decay_factor = 2 if "decay_factor" not in kwargs else kwargs["decay_factor"]
-        self.max_n_layers = 5 if "max_n_layers" not in kwargs else kwargs["max_n_layers"]
+        self.decay_factor = (
+            2 if "decay_factor" not in kwargs else kwargs["decay_factor"]
+        )
+        self.max_n_layers = (
+            5 if "max_n_layers" not in kwargs else kwargs["max_n_layers"]
+        )
         if markers_layer == 0:
             if "use_brd" not in kwargs:
                 kwargs["use_brd"] = False
@@ -96,8 +102,10 @@ class iscDEF(scDEF):
 
         self.set_layer_sizes()
 
-        super(iscDEF, self).__init__(adata, layer_sizes=self.layer_sizes, layer_names=self.layer_names, **kwargs)
-        
+        super(iscDEF, self).__init__(
+            adata, layer_sizes=self.layer_sizes, layer_names=self.layer_names, **kwargs
+        )
+
         logginglevel = self.logger.level
         self.logger = logging.getLogger("iscDEF")
         self.logger.setLevel(logginglevel)
@@ -185,8 +193,7 @@ class iscDEF(scDEF):
             + ", ".join([str(len(factors)) for factors in self.factor_lists])
         )
         out += (
-            "\n\t"
-            + "Layer concentration parameter: " + str(self.layer_concentration)
+            "\n\t" + "Layer concentration parameter: " + str(self.layer_concentration)
         )
         if self.markers_layer == 0:
             out += (
@@ -197,7 +204,7 @@ class iscDEF(scDEF):
         else:
             out += "\n\t" + "Connectivity mean: " + str(self.cn_big_mean)
         if self.use_brd == True:
-            out += "\n\t" + "Using BRD"            
+            out += "\n\t" + "Using BRD"
         out += "\n\t" + "Number of batches: " + str(self.n_batches)
         out += "\n" + "Contains " + self.adata.__str__()
         return out
@@ -205,7 +212,7 @@ class iscDEF(scDEF):
     def set_connectivity_prior(
         self,
         cn_small_mean: Optional[float] = 1e-6,
-        cn_big_mean: Optional[float] = 1.,
+        cn_big_mean: Optional[float] = 1.0,
         cn_small_strength: Optional[float] = 1.0,
         cn_big_strength: Optional[float] = 0.1,
     ):
@@ -239,20 +246,25 @@ class iscDEF(scDEF):
                 local_start = i * n_lower_factors_per_set
                 local_end = (i + 1) * n_lower_factors_per_set
 
-                connectivity_matrix[
-                    upper_start:upper_end, local_start:local_end
-                ] = cn_big_mean
+                connectivity_matrix[upper_start:upper_end, local_start:local_end] = (
+                    cn_big_mean
+                )
 
-                strength_matrix[
-                    upper_start:upper_end, local_start:local_end
-                ] = cn_big_strength * self.layer_sizes[layer_idx] / self.layer_sizes[0]
+                strength_matrix[upper_start:upper_end, local_start:local_end] = (
+                    cn_big_strength * self.layer_sizes[layer_idx] / self.layer_sizes[0]
+                )
 
             # If "other" factors are present in layer 0, connect them weakly to upper layers (or not at all)
             if self.add_other > 0 and layer_idx > 0:
-                other_start = self.layer_sizes[layer_idx] - self.add_other*n_local_factors_per_set
+                other_start = (
+                    self.layer_sizes[layer_idx]
+                    - self.add_other * n_local_factors_per_set
+                )
                 other_end = self.layer_sizes[layer_idx]
                 connectivity_matrix[other_start:other_end, :] = cn_big_mean
-                strength_matrix[other_start:other_end, :] = cn_big_strength * self.layer_sizes[layer_idx] / self.layer_sizes[0]
+                strength_matrix[other_start:other_end, :] = (
+                    cn_big_strength * self.layer_sizes[layer_idx] / self.layer_sizes[0]
+                )
 
             self.w_priors[layer_idx][0] = strength_matrix
             self.w_priors[layer_idx][1] = strength_matrix / connectivity_matrix
@@ -261,7 +273,7 @@ class iscDEF(scDEF):
         self,
         gs_small_scale: Optional[float] = 1.0,
         gs_big_scale: Optional[float] = 100.0,
-        marker_strength: Optional[float] = 10.,
+        marker_strength: Optional[float] = 10.0,
         nonmarker_strength: Optional[float] = 0.1,
         other_strength: Optional[float] = 0.1,
     ):
@@ -274,9 +286,7 @@ class iscDEF(scDEF):
         # Do gene sets
         n_factors_layer0 = self.layer_sizes[0]
         self.gene_sets = np.ones((n_factors_layer0, self.n_genes)) * gs_small_scale
-        self.strengths = (
-            np.ones((n_factors_layer0, self.n_genes)) * nonmarker_strength
-        )
+        self.strengths = np.ones((n_factors_layer0, self.n_genes)) * nonmarker_strength
         self.marker_gene_locs = []
 
         if self.markers_layer == 0:
@@ -314,26 +324,26 @@ class iscDEF(scDEF):
                         if "other" not in cellgroup:
                             if gene not in marker_dict[cellgroup]:
                                 loc = np.where(self.adata.var.index == gene)[0]
-                                self.gene_sets[factors_start:factors_end, loc] = (
-                                    1e-6
+                                self.gene_sets[factors_start:factors_end, loc] = 1e-6
+                                self.strengths[factors_start:factors_end, loc] = (
+                                    other_strength
                                 )
-                                self.strengths[
-                                    factors_start:factors_end, loc
-                                ] = other_strength
                         else:
                             loc = np.where(self.adata.var.index == gene)[0]
-                            self.gene_sets[factors_start:factors_end, loc] = (
-                                1e-6
+                            self.gene_sets[factors_start:factors_end, loc] = 1e-6
+                            self.strengths[factors_start:factors_end, loc] = (
+                                other_strength
                             )
-                            self.strengths[
-                                factors_start:factors_end, loc
-                            ] = other_strength    
-
 
         if self.n_layers == 1:
-            self.w_priors = [[jnp.array(self.strengths), jnp.array(self.strengths / self.gene_sets)]]
+            self.w_priors = [
+                [jnp.array(self.strengths), jnp.array(self.strengths / self.gene_sets)]
+            ]
         else:
-            self.w_priors[0] = [jnp.array(self.strengths), jnp.array(self.strengths / self.gene_sets)]
+            self.w_priors[0] = [
+                jnp.array(self.strengths),
+                jnp.array(self.strengths / self.gene_sets),
+            ]
 
     def set_factor_names(self):
         self.factor_names = []
@@ -406,7 +416,9 @@ class iscDEF(scDEF):
             self.max_n_layers = 1
             self.set_layer_sizes()
             self.update_model_priors()
-            self.init_var_params(init_budgets=True, nmf_init=nmf_init, max_cells=max_cells_init)
+            self.init_var_params(
+                init_budgets=True, nmf_init=nmf_init, max_cells=max_cells_init
+            )
             self.elbos = []
             self.step_sizes = []
             self._learn(filter=False, annotate=False, **kwargs)
@@ -414,13 +426,18 @@ class iscDEF(scDEF):
             self.max_n_layers = max_n_layers
             self.set_layer_sizes()
             # self.update_model_size(self.n_factors)
-            self.update_model_priors() 
+            self.update_model_priors()
             init_budgets = False
             init_w = self.pmeans["markerW"]
         else:
             init_budgets = True
             init_w = None
-        self.init_var_params(init_budgets=init_budgets, init_w=init_w, nmf_init=nmf_init, max_cells=max_cells_init)            
+        self.init_var_params(
+            init_budgets=init_budgets,
+            init_w=init_w,
+            nmf_init=nmf_init,
+            max_cells=max_cells_init,
+        )
         self.elbos = []
         self.step_sizes = []
         self._learn(**kwargs)

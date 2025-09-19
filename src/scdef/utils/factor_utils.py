@@ -10,7 +10,9 @@ from typing import Optional, Sequence, Mapping
 from .data_utils import get_weight_scores
 
 
-def compute_factor_obs_association_score(model, layer_idx, factor_name, obs_key, obs_val):
+def compute_factor_obs_association_score(
+    model, layer_idx, factor_name, obs_key, obs_val
+):
     """Compute association score between a factor and observation value."""
     layer_name = model.layer_names[layer_idx]
 
@@ -20,9 +22,7 @@ def compute_factor_obs_association_score(model, layer_idx, factor_name, obs_key,
     ]
 
     # Cells from obs_val
-    adata_cells_from_obs = model.adata[
-        np.where(model.adata.obs[obs_key] == obs_val)[0]
-    ]
+    adata_cells_from_obs = model.adata[np.where(model.adata.obs[obs_key] == obs_val)[0]]
 
     cells_from_obs = float(adata_cells_from_obs.shape[0])
 
@@ -42,6 +42,7 @@ def compute_factor_obs_association_score(model, layer_idx, factor_name, obs_key,
     )
 
     from .score_utils import compute_fscore
+
     return compute_fscore(
         cells_in_factor_from_obs,
         cells_in_factor_not_from_obs,
@@ -67,7 +68,9 @@ def get_factor_obs_association_scores(model, obs_key, obs_val):
     return scores, factors, layers
 
 
-def compute_factor_obs_assignment_fracs(model, layer_idx, factor_name, obs_key, obs_val):
+def compute_factor_obs_assignment_fracs(
+    model, layer_idx, factor_name, obs_key, obs_val
+):
     """Compute assignment fraction for a factor and observation value."""
     layer_name = model.layer_names[layer_idx]
 
@@ -114,9 +117,7 @@ def compute_factor_obs_weight_score(model, layer_idx, factor_name, obs_key, obs_
     layer_name = model.layer_names[layer_idx]
 
     # Cells from obs_val
-    adata_cells_from_obs = model.adata[
-        np.where(model.adata.obs[obs_key] == obs_val)[0]
-    ]
+    adata_cells_from_obs = model.adata[np.where(model.adata.obs[obs_key] == obs_val)[0]]
     adata_cells_not_from_obs = model.adata[
         np.where(model.adata.obs[obs_key] != obs_val)[0]
     ]
@@ -181,11 +182,7 @@ def assign_obs_to_factors(model, obs_keys, factor_names=[]):
             if len(factor_names) > 0:
                 # Subset to factor_names
                 idx = np.array(
-                    [
-                        i
-                        for i, factor in enumerate(factors)
-                        if factor in factor_names
-                    ]
+                    [i for i, factor in enumerate(factors) if factor in factor_names]
                 )
                 scores = np.array(scores)[idx]
                 factors = np.array(factors)[idx]

@@ -17,7 +17,9 @@ def gamma_logpdf(x, shape, rate):
     # shape = shape * jnp.ones(x.shape)
     # rate = rate * jnp.ones(x.shape)
     return jnp.sum(
-        vmap(vmap(_gamma_logpdf, in_axes=(0, None, None)), in_axes=(0, None, None))(x, shape, rate)
+        vmap(vmap(_gamma_logpdf, in_axes=(0, None, None)), in_axes=(0, None, None))(
+            x, shape, rate
+        )
     )
 
 
