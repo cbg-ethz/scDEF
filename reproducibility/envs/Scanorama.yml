@@ -10,4 +10,4 @@ dependencies:
   - pip
   - pip:
     - scanorama
-    - scdef==0.1.6
+    - scdef==0.2.0

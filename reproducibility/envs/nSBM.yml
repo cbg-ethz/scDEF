@@ -13,5 +13,5 @@ dependencies:
   - pip:
     - leidenalg
     - harmonypy
-    - scdef==0.1.8
+    - scdef==0.2.0
     - scikit-learn==1.1.0

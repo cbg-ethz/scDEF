@@ -9,5 +9,5 @@ dependencies:
   - leidenalg
   - pip
   - pip:
-    - scdef==0.1.7
+    - scdef==0.2.0
     - jax[cuda12]
