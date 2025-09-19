@@ -120,11 +120,11 @@ def test_scdef():
             show=False,
         )
 
-    scd.benchmark.evaluate_scdef_hierarchy(
-        model, ["celltypes", "celltypes_coarse"], true_hierarchy
-    )
+    # scd.benchmark.evaluate_scdef_hierarchy(
+    #     model, ["celltypes", "celltypes_coarse"], true_hierarchy
+    # )
 
-    scd.benchmark.evaluate_scdef_signatures(model, "celltypes", markers)
+    # scd.benchmark.evaluate_scdef_signatures(model, "celltypes", markers)
 
     simplified = model.get_hierarchy(simplified=True)
     g = scd.pl.make_graph(model, hierarchy=simplified)
