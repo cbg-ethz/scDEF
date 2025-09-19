@@ -3,6 +3,8 @@ misc/
 default.profraw
 results/
 figures/
+site/
 .snakemake/
+.DS_Store
 *.txt
 *.pdf
