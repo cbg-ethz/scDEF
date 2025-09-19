@@ -16,7 +16,7 @@ jax = ">=0.4.13"
 jaxlib = ">=0.4.13"
 optax = "^0.2.3"
 tensorflow-probability = "^0.24.0"
-scanpy = {extras = ["leidenalg"], version =  "^1.9.5"}
+scanpy = "^1.9.5"
 anndata = "^0.10.5"
 click = "^8.0.1"
 tqdm = "^4.64.0"
@@ -29,9 +29,6 @@ decoupler = "^1.7.0"
 optional = true
 
 [tool.poetry.group.extras.dependencies]
-leidenalg = '*'
-harmonypy = '*'
-scanorama = '*'
 scikit-learn = '*'
 
 
