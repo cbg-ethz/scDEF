@@ -9,4 +9,4 @@ dependencies:
   - pip
   - pip:
     - "git+https://github.com/simslab/scHPF.git"
-    - scdef==0.2.0
+    - scdef==0.3.1
