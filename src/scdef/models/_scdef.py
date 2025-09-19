@@ -335,7 +335,7 @@ class scDEF(object):
     def get_effective_factors(
         self,
         thres: Optional[float] = None,
-        iqr_mult: Optional[float] = 0.005,
+        iqr_mult: Optional[float] = 0.0,
         min_cells: Optional[float] = 0.0,
         normalized: Optional[bool] = False,
     ):
@@ -1052,6 +1052,12 @@ class scDEF(object):
                 self._learn(filter=False, annotate=False, **kwargs)
                 eff_factors = self.get_effective_factors(min_cells=0.01)
             n_eff_factors = len(eff_factors)
+            if n_eff_factors == 0:
+                self.logger.info(
+                    "No effective factors found. Using all factors."
+                )
+                n_eff_factors = self.n_factors
+                eff_factors = np.arange(n_eff_factors)
             self.logger.info(
                 f"scDEF pretraining finished. Found {n_eff_factors} effective factors."
             )
