@@ -748,7 +748,6 @@ def run_nsbm(
     # Get good lowest resolution level for fairness
     min_level = 0
     for level in range(n_levels):
-        print(ad.obs[f"nsbm_level_{level}"].value_counts())
         avg_cluster_size = np.mean(ad.obs[f"nsbm_level_{level}"].value_counts())
         min_cluster_size = np.min(ad.obs[f"nsbm_level_{level}"].value_counts())
         if avg_cluster_size > 0.01 * ad.shape[0] and min_cluster_size > 1:
