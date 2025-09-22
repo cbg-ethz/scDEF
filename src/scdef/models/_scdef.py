@@ -101,10 +101,10 @@ class scDEF(object):
         self.batches = [""]
         self.batch_key = batch_key
 
-        self.load_adata(adata, layer=counts_layer, batch_key=batch_key)
-
         self.logger = logging.getLogger("scDEF")
         self.logger.setLevel(logginglevel)
+
+        self.load_adata(adata, layer=counts_layer, batch_key=batch_key)
 
         self.layer_concentration = layer_concentration
         self.factor_shape = factor_shape
@@ -324,9 +324,6 @@ class scDEF(object):
                     np.ones((self.layer_sizes[idx], self.layer_sizes[idx - 1]))
                     * self.factor_shapes[idx]
                 )
-                for l in range(self.layer_sizes[idx]):
-                    prior_shapes[l, l] = self.factor_shapes[idx]
-                    prior_rates[l, l] = self.factor_shapes[idx]
                 prior_shapes = jnp.clip(jnp.array(prior_shapes), 1e-12, 1e12)
                 prior_rates = jnp.clip(jnp.array(prior_rates), 1e-12, 1e12)
 
@@ -404,9 +401,9 @@ class scDEF(object):
                 jnp.array(
                     (
                         jnp.log(m**2 / jnp.sqrt(m**2 + v))
-                        * jnp.ones((1, self.n_genes)),  # gene_scales
+                        * jnp.ones((self.n_batches, self.n_genes)),  # gene_scales
                         jnp.log(jnp.sqrt(jnp.log(1 + v / (m**2))))
-                        * jnp.ones((1, self.n_genes)),
+                        * jnp.ones((self.n_batches, self.n_genes)),
                     )
                 ),
             ]
