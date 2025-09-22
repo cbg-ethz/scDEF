@@ -1,0 +1,19 @@
+name: scvi
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults  ## block user/system channels
+dependencies:
+  - python=3.10
+  - scanpy
+  - pip
+  - pip:
+    - scdef==0.3.1
+    # - jax[cuda12]
+    - --extra-index-url https://download.pytorch.org/whl/cu121
+    - torch
+    - torchvision
+    - torchaudio
+    - scvi-tools
+    - leidenalg
+    - scikit-misc

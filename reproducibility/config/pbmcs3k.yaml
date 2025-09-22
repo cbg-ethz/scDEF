@@ -1,0 +1,14 @@
+data_path: '/Users/pedrof/Projects/PhD/projects/scDEF/repo/data/pbmcs3k.h5ad'
+methods: ["scDEF_un", "PCA", "NMF", "scHPF", "nSBM", "fscLVM"]
+seed: 42
+min_genes: 200
+min_cells: 3
+genes_to_remove: ['MALAT1']
+n_top_genes: 4000
+metrics:
+    - "Cell Type ARI"
+    - "Cell Type ASW"
+    - "Hierarchy accuracy"
+    - "Hierarchical signature consistency"
+    - "Signature sparsity"
+    - "Signature accuracy"

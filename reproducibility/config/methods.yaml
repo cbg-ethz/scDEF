@@ -1,0 +1,50 @@
+scDEF:
+  n_factors: 100
+  tau: 0.1
+  mu: 10.
+  kappa: 10.
+  decay_factor: 2.
+  nmf_init: False
+  pretrain: True
+  batch_size: 256
+  num_samples: 10
+  n_epoch: [1]
+  lr: [0.01]
+scDEF_un:
+  n_factors: 100
+  tau: 0.1
+  mu: 10.
+  kappa: 10.
+  decay_factor: 2.
+  nmf_init: False
+  pretrain: True
+  batch_size: 256
+  num_samples: 10
+  n_epoch: [1]
+  lr: [0.01]
+PCA:
+  n_top_genes: 2000
+nSBM:
+  n_top_genes: 2000
+  n_init: 10
+NMF:
+  n_top_genes: 4000
+  max_iter: 10
+scHPF:
+  n_top_genes: 4000
+  min_iter: 10
+  max_iter: 20
+scVI:
+  n_top_genes: 2000
+  max_epochs: 10
+  batch_size: 128
+  early_stopping: True
+fscLVM:
+  n_top_genes: 4000
+  batch_size: 256
+  n_epochs: 10
+  seed: 42
+Harmony:
+  n_top_genes: 2000
+Scanorama:
+  n_top_genes: 2000

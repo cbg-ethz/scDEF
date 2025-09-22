@@ -1,0 +1,14 @@
+name: schpf
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults  ## block user/system channels
+dependencies:
+  - python=3.10
+  - scanpy
+  - leidenalg
+  - pip
+  - pip:
+    - scikit-misc
+    - "git+https://github.com/simslab/scHPF.git"
+    - scdef==0.3.1

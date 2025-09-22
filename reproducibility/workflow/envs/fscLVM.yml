@@ -1,0 +1,21 @@
+name: fsclvm
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - bioconda
+  - nodefaults  ## block user/system channels
+dependencies:
+  - python=3.10
+  - scanpy
+  - leidenalg
+  - pip
+  - pip:
+    - muvi
+    - anndata==0.10.8
+    - scdef==0.3.1
+    - --extra-index-url https://download.pytorch.org/whl/cu121
+    - torch
+    - torchvision
+    - torchaudio
+    - scikit-misc
