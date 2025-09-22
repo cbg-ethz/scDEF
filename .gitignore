@@ -4,6 +4,9 @@ default.profraw
 results/
 figures/
 site/
+build/
+data/
+dist/
 .snakemake/
 .DS_Store
 *.txt
