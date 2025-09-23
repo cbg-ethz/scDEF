@@ -10,7 +10,7 @@ METRICS = config["metrics"]
 
 rule all:
     input:
-        output_path + '/scores.csv'
+        output_path + '/walltime_scores.csv'
 
 rule gather_scores:
     resources:
@@ -23,7 +23,7 @@ rule gather_scores:
             cellno=N_CELLS,
             rep_id=[r for r in range(N_REPS)],)
     output:
-        output_path + '/scores.csv'
+        output_path + '/walltime_scores.csv'
     run:
         import pandas as pd
 
