@@ -100,6 +100,11 @@ class scDEF(object):
         self.n_batches = 1
         self.batches = [""]
         self.batch_key = batch_key
+        
+        self.seed = seed
+        self.batch_cpal = batch_cpal
+        self.layer_cpal = layer_cpal
+        self.lightness_mult = lightness_mult
 
         self.logger = logging.getLogger("scDEF")
         self.logger.setLevel(logginglevel)
@@ -132,10 +137,6 @@ class scDEF(object):
 
         self.update_model_priors()
 
-        self.seed = seed
-        self.batch_cpal = batch_cpal
-        self.layer_cpal = layer_cpal
-        self.lightness_mult = lightness_mult
         self.make_layercolors(layer_cpal=self.layer_cpal, lightness_mult=lightness_mult)
 
         self.init_var_params(nmf_init=False)  # just to get stub
