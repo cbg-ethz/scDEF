@@ -5,6 +5,7 @@ rule run_scdef:
     conda:
         envs_path + "/scdef.yml"
     params:
+        n_layers = config['scDEF']['n_layers'],
         n_factors = config['scDEF']['n_factors'],
         nmf_init = config['scDEF']['nmf_init'],
         pretrain = config['scDEF']['pretrain'],
@@ -32,6 +33,7 @@ rule run_scdef_un:
     conda:
         envs_path + "/scdef.yml"        
     params:
+        n_layers = config['scDEF_un']['n_layers'],
         n_factors = config['scDEF_un']['n_factors'],
         nmf_init = config['scDEF_un']['nmf_init'],
         pretrain = config['scDEF_un']['pretrain'],

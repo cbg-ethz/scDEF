@@ -2,7 +2,16 @@ de_fscale: 2.
 de_prob: .2
 batch_facscale: 0.4
 n_cells: [100, 1_000, 10_000, 100_000]
-n_reps: 5
+n_reps: 1
 n_batches: 4
-frac_shared: 1.
+frac_shared: .5
 methods: ["scDEF", "scDEF_un", "PCA", "NMF", "scHPF", "scVI", "Harmony", "Scanorama", "nSBM", "fscLVM"]
+metrics:
+    - "Cell Type ARI"
+    - "Cell Type ASW"
+    - "Batch ARI"
+    - "Batch ASW"    
+    - "Hierarchy accuracy"
+    - "Hierarchical signature consistency"
+    - "Signature sparsity"
+    - "Signature accuracy"

@@ -100,7 +100,7 @@ def run_unintegrated(
     latent = ad.obsm["X_pca"]
     # Cluster
     sc.pp.neighbors(ad)
-    sc.tl.leiden(ad, resolution=resolution)
+    sc.tl.leiden(ad, resolution=resolution, **kwargs)
     # Get gene signatures
     sc.tl.rank_genes_groups(ad, "leiden", method="wilcoxon")
     gene_scores = []
@@ -422,6 +422,7 @@ def run_scvi(
         layer=layer,
         batch_key=batch_key,
     )
+    scvi.settings.seed = kwargs["seed"]
     model = scvi.model.SCVI(ad)
     model.train(**kwargs)
     latent = model.get_latent_representation()

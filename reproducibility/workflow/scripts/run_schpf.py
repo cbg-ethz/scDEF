@@ -23,6 +23,7 @@ def main():
     methods_list = ["scHPF"]
     schpf_settings = dict(max_iter=snakemake.params["max_iter"])
     duration = time.time()
+    np.random.seed(snakemake.params["seed"])
     methods_results = run_methods(adata, methods_list, batch_key=batch_key, **schpf_settings)
     duration = time.time() - duration
 

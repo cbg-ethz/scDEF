@@ -25,7 +25,7 @@ def main():
     sc.pp.log1p(adata)
 
     methods_list = ["nSBM"]
-    nsbm_settings = dict(n_init=snakemake.params["n_init"])
+    nsbm_settings = dict(n_init=snakemake.params["n_init"], random_seed=snakemake.params["seed"])
     duration = time.time()
     methods_results = run_methods(adata, methods_list, batch_key=batch_key, **nsbm_settings)
     duration = time.time() - duration

@@ -6,9 +6,15 @@ n_cells: 4000
 n_reps: 5
 n_batches: 4
 frac_shared: .5
-methods: ["scDEF", "scDEF_un"]
-layer_sizes: [100, 60, 30, 10, 1]
-default_tau: 0.01
-default_mu: 0.01
-tau: [0.01, 0.1, 0.001, 1.]
-mu: [0.01, 0.1, 0.001, 1.]
+tau: [0.1, 1., 10., 100.]
+mu: [0.1, 1., 10., 100.]
+kappa: [0.1, 1., 10., 20., 50., 100.]
+metrics:
+    - "Cell Type ARI"
+    - "Cell Type ASW"
+    - "Batch ARI"
+    - "Batch ASW"    
+    - "Hierarchy accuracy"
+    - "Hierarchical signature consistency"
+    - "Signature sparsity"
+    - "Signature accuracy"

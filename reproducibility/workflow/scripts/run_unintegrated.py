@@ -25,9 +25,13 @@ def main():
     sc.pp.normalize_total(adata, target_sum=1e4)
     sc.pp.log1p(adata)
 
+    leiden_settings = dict(
+        seed=snakemake.params["seed"]
+    )
+
     methods_list = ["PCA"]
     duration = time.time()
-    methods_results = run_methods(adata, methods_list, batch_key=batch_key)
+    methods_results = run_methods(adata, methods_list, batch_key=batch_key, **leiden_settings)
     duration = time.time() - duration
 
     hierarchy_obs = adata.uns["hierarchy_obs"].tolist()

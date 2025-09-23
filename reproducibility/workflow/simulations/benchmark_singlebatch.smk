@@ -1,10 +1,9 @@
+output_path = "results/benchmark_singlebatch"
+
+localrules: gather_singlebatch_scores
+
 configfile: "config/benchmark_singlebatch.yaml"
 configfile: "config/methods.yaml"
-
-output_path = "results/singlebatch"
-scripts_path = "scripts"
-envs_path = "../../../envs"
-methods_scripts_path = "../../../scripts"
 
 METHODS = config["methods"]
 METRICS = config["metrics"]
@@ -18,7 +17,7 @@ rule all:
 
 rule gather_singlebatch_scores:
     conda:
-        envs_path + "/PCA.yml"
+        "../envs/PCA.yml"
     input:
         fname_list = expand(
             output_path + '/{method}/sep_{separability}/rep_{rep_id}_scores.csv',
@@ -27,11 +26,11 @@ rule gather_singlebatch_scores:
     output:
         output_path + '/singlebatch_scores.csv',
     script:
-        scripts_path + '/gather_singlebatch_scores.py'
+        '../scripts/gather_singlebatch_scores.py'
 
 rule generate_singlebatch_data:
     conda:
-        envs_path + "/splatter.yml"
+        "../envs/splatter.yml"
     params:
         de_fscale = "{separability}",
         de_prob = config["de_prob"],
@@ -47,11 +46,11 @@ rule generate_singlebatch_data:
         markers_fname = output_path + '/data/sep_{separability}/rep_{rep_id}_markers.csv',
         umap_fname = output_path + '/data/sep_{separability}/rep_{rep_id}_umap.png',
     script:
-        scripts_path + '/splatter_hierarchical.R'
+        '../scripts/splatter_hierarchical.R'
 
 rule prepare_input:
     conda:
-        envs_path + "/PCA.yml"
+        "../envs/PCA.yml"
     params:
         seed = "{rep_id}",
     input:
@@ -61,128 +60,121 @@ rule prepare_input:
     output:
         fname = output_path + '/data/sep_{separability}/rep_{rep_id}.h5ad'
     script:
-        scripts_path + '/prepare_input.py'
+        '../scripts/prepare_input.py'
 
 rule run_scdef_un:
     conda:
-        envs_path + "/scdef.yml"        
+        "../envs/scdef.yml"        
     params:
+        n_factors = config['scDEF_un']['n_factors'],
         nmf_init = config['scDEF_un']['nmf_init'],
+        pretrain = config['scDEF_un']['pretrain'],
         tau = config['scDEF_un']['tau'],
         mu = config['scDEF_un']['mu'],
-        layer_sizes = config['scDEF_un']['layer_sizes'],
+        decay_factor = config['scDEF_un']['decay_factor'],
+        kappa = config['scDEF_un']['kappa'],
         n_epoch = config['scDEF_un']['n_epoch'],
         lr = config['scDEF_un']['lr'],
         batch_size = config['scDEF_un']['batch_size'],
         num_samples = config['scDEF_un']['num_samples'],  
         metrics = METRICS,        
         seed = "{rep_id}",
-        store_full = False
+        store_full = True
     input:
-        fname = output_path + '/data/sep_{separability}/rep_{rep_id}.h5ad'
+        adata = output_path + '/data/sep_{separability}/rep_{rep_id}.h5ad',
     output:
+        out_fname = output_path + '/scDEF_un/sep_{separability}/rep_{rep_id}.pkl',
         scores_fname = output_path + '/scDEF_un/sep_{separability}/rep_{rep_id}_scores.csv',
     script:
-        methods_scripts_path + "/run_scdef_un.py"
+        '../scripts/run_scdef_un.py'
 
-# rule run_method:
-#     conda:
-#         envs_path + "/{method}.yml"        
-#     params:
-#         metrics = METRICS,    
-#         seed = "{rep_id}",
-#         method = "{method}",
-#         n_top_genes = lambda wildcards: config[wildcards.method]['n_top_genes'],
-#         settings = lambda wildcards: config[wildcards.method]['settings'],
-#         store_full = False
-#     input:
-#         fname = output_path + '/data/sep_{separability}/rep_{rep_id}.h5ad'
-#     output:
-#         scores_fname = output_path + '/{method}/sep_{separability}/rep_{rep_id}_scores.csv',
-#     script:
-#         methods_scripts_path + "/run_method.py"
-      
 rule run_pca:
     conda:
-        envs_path + "/PCA.yml"        
+        "../envs/PCA.yml"        
     params:
         metrics = METRICS,    
         seed = "{rep_id}",
         method = "PCA",
         n_top_genes = config["PCA"]['n_top_genes'],
-        settings = config["PCA"]['settings'],
-        store_full = False
+        store_full = True
     input:
-        fname = output_path + '/data/sep_{separability}/rep_{rep_id}.h5ad'
+        adata = output_path + '/data/sep_{separability}/rep_{rep_id}.h5ad',
     output:
+        out_fname = output_path + '/PCA/sep_{separability}/rep_{rep_id}.h5ad',
         scores_fname = output_path + '/PCA/sep_{separability}/rep_{rep_id}_scores.csv',
     script:
-        methods_scripts_path + "/run_method.py"
+        '../scripts/run_unintegrated.py'
 
 rule run_nmf:
     conda:
-        envs_path + "/NMF.yml"        
+        "../envs/NMF.yml"        
     params:
         metrics = METRICS,    
         seed = "{rep_id}",
         method = "NMF",
+        max_iter = config["NMF"]['max_iter'],
         n_top_genes = config["NMF"]['n_top_genes'],
-        settings = config["NMF"]['settings'],
-        store_full = False
+        store_full = True
     input:
-        fname = output_path + '/data/sep_{separability}/rep_{rep_id}.h5ad'
+        adata = output_path + '/data/sep_{separability}/rep_{rep_id}.h5ad',
     output:
+        out_fname = output_path + '/NMF/sep_{separability}/rep_{rep_id}.h5ad',
         scores_fname = output_path + '/NMF/sep_{separability}/rep_{rep_id}_scores.csv',
     script:
-        methods_scripts_path + "/run_method.py"
+        '../scripts/run_nmf.py'
 
 rule run_schpf:
     conda:
-        envs_path + "/scHPF.yml"        
+        "../envs/scHPF.yml"        
     params:
         metrics = METRICS,    
         seed = "{rep_id}",
         method = "scHPF",
+        max_iter = config["scHPF"]['max_iter'],
+        min_iter = config["scHPF"]['min_iter'],
         n_top_genes = config["scHPF"]['n_top_genes'],
-        settings = config["scHPF"]['settings'],
-        store_full = False
+        store_full = True
     input:
-        fname = output_path + '/data/sep_{separability}/rep_{rep_id}.h5ad'
+        adata = output_path + '/data/sep_{separability}/rep_{rep_id}.h5ad',
     output:
+        out_fname = output_path + '/scHPF/sep_{separability}/rep_{rep_id}.h5ad',
         scores_fname = output_path + '/scHPF/sep_{separability}/rep_{rep_id}_scores.csv',
-    script:
-        methods_scripts_path + "/run_method.py"
+    script:    
+        '../scripts/run_schpf.py'
 
 rule run_nsbm:
     conda:
-        envs_path + "/nSBM.yml"        
+        "../envs/nSBM.yml"        
     params:
         metrics = METRICS,    
         seed = "{rep_id}",
         method = "nSBM",
         n_top_genes = config["nSBM"]['n_top_genes'],
-        settings = config["nSBM"]['settings'],
-        store_full = False
+        n_init = config["nSBM"]['n_init'],
+        store_full = True
     input:
-        fname = output_path + '/data/sep_{separability}/rep_{rep_id}.h5ad'
+        adata = output_path + '/data/sep_{separability}/rep_{rep_id}.h5ad',
     output:
+        out_fname = output_path + '/nSBM/sep_{separability}/rep_{rep_id}.h5ad',
         scores_fname = output_path + '/nSBM/sep_{separability}/rep_{rep_id}_scores.csv',
     script:
-        methods_scripts_path + "/run_method.py"
+        '../scripts/run_nsbm.py'
 
 rule run_fsclvm:
     conda:
-        envs_path + "/fscLVM.yml"        
+        "../envs/fscLVM.yml"        
     params:
         metrics = METRICS,    
         seed = "{rep_id}",
         method = "fscLVM",
+        batch_size = config["fscLVM"]['batch_size'],
+        n_epochs = config["fscLVM"]['n_epochs'],
         n_top_genes = config["fscLVM"]['n_top_genes'],
-        settings = config["fscLVM"]['settings'],
-        store_full = False
+        store_full = True
     input:
-        fname = output_path + '/data/sep_{separability}/rep_{rep_id}.h5ad'
+        adata = output_path + '/data/sep_{separability}/rep_{rep_id}.h5ad',
     output:
+        out_fname = output_path + '/fscLVM/sep_{separability}/rep_{rep_id}.h5ad',
         scores_fname = output_path + '/fscLVM/sep_{separability}/rep_{rep_id}_scores.csv',
     script:
-        methods_scripts_path + "/run_method.py"  
+        '../scripts/run_muvi.py'

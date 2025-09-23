@@ -1,5 +1,6 @@
 scDEF:
   n_factors: 100
+  n_layers: 5
   tau: 0.1
   mu: 10.
   kappa: 10.
@@ -12,6 +13,7 @@ scDEF:
   lr: [0.01]
 scDEF_un:
   n_factors: 100
+  n_layers: 5
   tau: 0.1
   mu: 10.
   kappa: 10.
