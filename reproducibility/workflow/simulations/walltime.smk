@@ -13,9 +13,8 @@ rule all:
         output_path + '/walltime_scores.csv'
 
 rule gather_scores:
-    resources:
-        time = "03:40:00",
-        mem_per_cpu = 12000,
+    conda:
+        "../envs/PCA.yml"
     input:
         fname_list = expand(
             output_path + '/{method}/cellno_{cellno}/rep_{rep_id}_scores.csv',
@@ -76,9 +75,8 @@ rule gather_scores:
 
 
 rule generate_multibatch_data:
-    resources:
-        mem_per_cpu=10000,
-        threads=10,
+    conda:
+        "../envs/splatter.yml"
     params:
         de_fscale = config["de_fscale"],
         de_prob = config["de_prob"],
@@ -121,6 +119,7 @@ rule run_scdef:
         pretrain = config['scDEF']['pretrain'],
         tau = config['scDEF']['tau'],
         mu = config['scDEF']['mu'],
+        n_layers = config['scDEF']['n_layers'],
         decay_factor = config['scDEF']['decay_factor'],
         kappa = config['scDEF']['kappa'],
         n_epoch = config['scDEF']['n_epoch'],
@@ -131,7 +130,7 @@ rule run_scdef:
         seed = "{rep_id}",
         store_full = True
     input:
-        fname = output_path + '/data/cellno_{n_cells}/rep_{rep_id}.h5ad'
+        adata = output_path + '/data/cellno_{n_cells}/rep_{rep_id}.h5ad'
     output:
         out_fname = output_path + '/scDEF/cellno_{n_cells}/rep_{rep_id}.pkl',
         scores_fname = output_path + '/scDEF/cellno_{n_cells}/rep_{rep_id}_scores.csv',
@@ -148,6 +147,7 @@ rule run_scdef_un:
         pretrain = config['scDEF_un']['pretrain'],
         tau = config['scDEF_un']['tau'],
         mu = config['scDEF_un']['mu'],
+        n_layers = config['scDEF_un']['n_layers'],
         decay_factor = config['scDEF_un']['decay_factor'],
         kappa = config['scDEF_un']['kappa'],
         n_epoch = config['scDEF_un']['n_epoch'],
@@ -158,7 +158,7 @@ rule run_scdef_un:
         seed = "{rep_id}",
         store_full = True
     input:
-        fname = output_path + '/data/cellno_{n_cells}/rep_{rep_id}.h5ad'
+        adata = output_path + '/data/cellno_{n_cells}/rep_{rep_id}.h5ad'
     output:
         out_fname = output_path + '/scDEF_un/cellno_{n_cells}/rep_{rep_id}.pkl',
         scores_fname = output_path + '/scDEF_un/cellno_{n_cells}/rep_{rep_id}_scores.csv',
@@ -175,7 +175,7 @@ rule run_pca:
         n_top_genes = config["PCA"]['n_top_genes'],
         store_full = True
     input:
-        fname = output_path + '/data/cellno_{n_cells}/rep_{rep_id}.h5ad'
+        adata = output_path + '/data/cellno_{n_cells}/rep_{rep_id}.h5ad'
     output:
         out_fname = output_path + '/PCA/cellno_{n_cells}/rep_{rep_id}.h5ad',
         scores_fname = output_path + '/PCA/cellno_{n_cells}/rep_{rep_id}_scores.csv',
@@ -193,7 +193,7 @@ rule run_nmf:
         n_top_genes = config["NMF"]['n_top_genes'],
         store_full = True
     input:
-        fname = output_path + '/data/cellno_{n_cells}/rep_{rep_id}.h5ad'
+        adata = output_path + '/data/cellno_{n_cells}/rep_{rep_id}.h5ad'
     output:
         out_fname = output_path + '/NMF/cellno_{n_cells}/rep_{rep_id}.h5ad',
         scores_fname = output_path + '/NMF/cellno_{n_cells}/rep_{rep_id}_scores.csv',
@@ -212,7 +212,7 @@ rule run_schpf:
         n_top_genes = config["scHPF"]['n_top_genes'],
         store_full = True
     input:
-        fname = output_path + '/data/cellno_{n_cells}/rep_{rep_id}.h5ad'
+        adata = output_path + '/data/cellno_{n_cells}/rep_{rep_id}.h5ad'
     output:
         out_fname = output_path + '/scHPF/cellno_{n_cells}/rep_{rep_id}.h5ad',
         scores_fname = output_path + '/scHPF/cellno_{n_cells}/rep_{rep_id}_scores.csv',
@@ -232,7 +232,7 @@ rule run_scvi:
         early_stopping = config["scVI"]['early_stopping'],
         store_full = True
     input:
-        fname = output_path + '/data/cellno_{n_cells}/rep_{rep_id}.h5ad'
+        adata = output_path + '/data/cellno_{n_cells}/rep_{rep_id}.h5ad'
     output:
         out_fname = output_path + '/scVI/cellno_{n_cells}/rep_{rep_id}.h5ad',
         scores_fname = output_path + '/scVI/cellno_{n_cells}/rep_{rep_id}_scores.csv',
@@ -249,7 +249,7 @@ rule run_harmony:
         n_top_genes = config["Harmony"]['n_top_genes'],
         store_full = True
     input:
-        fname = output_path + '/data/cellno_{n_cells}/rep_{rep_id}.h5ad'
+        adata = output_path + '/data/cellno_{n_cells}/rep_{rep_id}.h5ad'
     output:
         out_fname = output_path + '/Harmony/cellno_{n_cells}/rep_{rep_id}.h5ad',
         scores_fname = output_path + '/Harmony/cellno_{n_cells}/rep_{rep_id}_scores.csv',
@@ -266,7 +266,7 @@ rule run_scanorama:
         n_top_genes = config["Scanorama"]['n_top_genes'],
         store_full = True
     input:
-        fname = output_path + '/data/cellno_{n_cells}/rep_{rep_id}.h5ad'
+        adata = output_path + '/data/cellno_{n_cells}/rep_{rep_id}.h5ad'
     output:
         out_fname = output_path + '/Scanorama/cellno_{n_cells}/rep_{rep_id}.h5ad',
         scores_fname = output_path + '/Scanorama/cellno_{n_cells}/rep_{rep_id}_scores.csv',
@@ -284,7 +284,7 @@ rule run_nsbm:
         n_init = config["nSBM"]['n_init'],
         store_full = True
     input:
-        fname = output_path + '/data/cellno_{n_cells}/rep_{rep_id}.h5ad'
+        adata = output_path + '/data/cellno_{n_cells}/rep_{rep_id}.h5ad'
     output:
         out_fname = output_path + '/nSBM/cellno_{n_cells}/rep_{rep_id}.h5ad',
         scores_fname = output_path + '/nSBM/cellno_{n_cells}/rep_{rep_id}_scores.csv',
@@ -303,7 +303,7 @@ rule run_fsclvm:
         n_top_genes = config["fscLVM"]['n_top_genes'],
         store_full = True
     input:
-        fname = output_path + '/data/cellno_{n_cells}/rep_{rep_id}.h5ad'
+        adata = output_path + '/data/cellno_{n_cells}/rep_{rep_id}.h5ad'
     output:
         out_fname = output_path + '/fscLVM/cellno_{n_cells}/rep_{rep_id}.h5ad',
         scores_fname = output_path + '/fscLVM/cellno_{n_cells}/rep_{rep_id}_scores.csv',

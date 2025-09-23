@@ -21,9 +21,8 @@ rule all:
         output_path + '/factors_scores.csv'
 
 rule gather_layers_scores:
-    resources:
-        time = "03:40:00",
-        mem_per_cpu = 12000,
+    conda:
+        "../envs/PCA.yml"
     input:
         fname_list = expand(
             output_path + '/{n_layers}_layers/rep_{rep_id}_scores.csv',
@@ -84,9 +83,8 @@ rule gather_layers_scores:
         scores.to_csv(snakemake.output[0], index=False)        
 
 rule gather_factors_scores:
-    resources:
-        time = "03:40:00",
-        mem_per_cpu = 12000,
+    conda:
+        "../envs/PCA.yml"
     input:
         fname_list = expand(
             output_path + '/decay_{decay_factor}/rep_{rep_id}_scores.csv',
@@ -150,9 +148,8 @@ rule gather_factors_scores:
 
 
 rule generate_data:
-    resources:
-        mem_per_cpu=10000,
-        threads=10,
+    conda:
+        "../envs/splatter.yml"
     params:
         de_fscale = config["de_fscale"],
         de_prob = config["de_prob"],
@@ -161,8 +158,6 @@ rule generate_data:
         n_batches = config["n_batches"],
         frac_shared = config["frac_shared"],
         seed = "{rep_id}",
-    conda:
-        "../envs/splatter.yml"
     output:
         counts_fname = output_path + '/data/rep_{rep_id}_counts.csv',
         meta_fname = output_path + '/data/rep_{rep_id}_meta.csv',

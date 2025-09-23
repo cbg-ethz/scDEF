@@ -8,8 +8,8 @@ suppressMessages(library(dplyr))
 
 
 n_groups <- 8
-n_cells_per_batch <- snakemake@params[["n_cells"]]
-n_batches <- snakemake@params[["n_batches"]]
+n_cells_per_batch <- as.integer(snakemake@params[["n_cells"]])
+n_batches <- as.integer(snakemake@params[["n_batches"]])
 n_cells <- rep(n_cells_per_batch, n_batches)
 n_total_cells <- as.integer(n_cells_per_batch) * as.integer(n_batches)
 frac_shared <- as.numeric(snakemake@params[["frac_shared"]])

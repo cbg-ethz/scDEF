@@ -26,7 +26,7 @@ def main():
     )
     duration = time.time()
     methods_results = run_methods(
-        adata, methods_list,batch_key=batch_key, **scvi_settings
+        adata, methods_list, batch_key=batch_key, seed=int(snakemake.params["seed"]), **scvi_settings
     )
     duration = time.time() - duration
 

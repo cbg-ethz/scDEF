@@ -93,9 +93,8 @@ rule gather_tau_mu_scores:
                 scores.to_csv(output['mu_output'], index=False)   
 
 rule gather_kappa_scores:
-    resources:
-        time = "03:40:00",
-        mem_per_cpu = 12000,
+    conda:
+        "../envs/PCA.yml"
     input:
         fname_list = expand(
             f'hyperparam_results/kappa/den_{DENSITY_DEFAULT}/' + 'kappa_{kappa}/rep_{rep_id}_scores.csv',
@@ -199,6 +198,7 @@ rule run_scdef_tau:
         tau = "{tau}",
         mu = config['scDEF']['mu'],
         kappa = config['scDEF']['kappa'],
+        n_layers = config['scDEF']['n_layers'],
         n_factors = config['scDEF']['n_factors'],
         decay_factor = config['scDEF']['decay_factor'],
         pretrain = config['scDEF']['pretrain'],
@@ -224,6 +224,7 @@ rule run_scdef_mu:
         tau = config['scDEF']['tau'],
         mu = "{mu}",
         kappa = config['scDEF']['kappa'],
+        n_layers = config['scDEF']['n_layers'],
         n_factors = config['scDEF']['n_factors'],
         decay_factor = config['scDEF']['decay_factor'],
         pretrain = config['scDEF']['pretrain'],
@@ -249,6 +250,7 @@ rule run_scdef_kappa:
         tau = config['scDEF']['tau'],
         mu = config['scDEF']['mu'],
         kappa = "{kappa}",
+        n_layers = config['scDEF']['n_layers'],
         n_factors = config['scDEF']['n_factors'],
         decay_factor = config['scDEF']['decay_factor'],
         pretrain = config['scDEF']['pretrain'],

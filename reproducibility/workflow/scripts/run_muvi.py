@@ -22,7 +22,7 @@ def main():
 
     methods_list = ["fscLVM"]
     muvi_settings = dict(
-        seed=snakemake.params["seed"],
+        seed=int(snakemake.params["seed"]),
         batch_size=snakemake.params["batch_size"],
         n_epochs=snakemake.params["n_epochs"],
     )

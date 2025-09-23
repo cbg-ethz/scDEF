@@ -26,7 +26,7 @@ def main():
     sc.pp.log1p(adata)
 
     methods_list = ["Harmony"]
-    harmony_settings = dict()
+    harmony_settings = dict(random_state=int(snakemake.params["seed"]))
     duration = time.time()
     methods_results = run_methods(
         adata, methods_list, batch_key=batch_key, **harmony_settings

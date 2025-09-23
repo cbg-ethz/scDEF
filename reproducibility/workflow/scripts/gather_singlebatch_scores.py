@@ -1,6 +1,3 @@
-import sys
-import os
-import glob
 import pandas as pd
 import numpy as np
 
@@ -44,4 +41,4 @@ columns = [
 
 scores = pd.DataFrame.from_records(rows, columns=columns)
 print(scores)
-scores.to_csv(outFileName, index=False)
+scores.to_csv(snakemake.output["fname"], index=False)

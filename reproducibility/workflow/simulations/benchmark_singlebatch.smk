@@ -24,7 +24,7 @@ rule gather_singlebatch_scores:
             method=METHODS, separability=SEPARABILITY,
             rep_id=[r for r in range(N_REPS)],)
     output:
-        output_path + '/singlebatch_scores.csv',
+        fname = output_path + '/singlebatch_scores.csv',
     script:
         '../scripts/gather_singlebatch_scores.py'
 
@@ -67,6 +67,7 @@ rule run_scdef_un:
         "../envs/scdef.yml"        
     params:
         n_factors = config['scDEF_un']['n_factors'],
+        n_layers = config['scDEF_un']['n_layers'],
         nmf_init = config['scDEF_un']['nmf_init'],
         pretrain = config['scDEF_un']['pretrain'],
         tau = config['scDEF_un']['tau'],

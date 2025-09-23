@@ -26,10 +26,10 @@ def main():
     sc.pp.log1p(adata)
 
     methods_list = ["Scanorama"]
-    scanorama_settings = dict(seed=snakemake.params["seed"])
+    scanorama_settings = dict()
     duration = time.time()
     methods_results = run_methods(
-        adata, methods_list, batch_key=batch_key, **scanorama_settings
+        adata, methods_list, batch_key=batch_key, seed=int(snakemake.params["seed"]), **scanorama_settings
     )
     duration = time.time() - duration
 

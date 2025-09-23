@@ -6,6 +6,7 @@ from scdef.models import scDEF
 import numpy as np
 from anndata import AnnData
 import scanpy as sc
+import random
 
 from typing import Optional, Sequence, Mapping, Callable
 
@@ -207,6 +208,7 @@ def run_schpf(
     return_signatures=True,
     return_cluster_assignments=True,
     batch_key=None,
+    seed=1,
     **kwargs,
 ):
     try:
@@ -225,6 +227,7 @@ def run_schpf(
     k_range = (
         np.arange(max(resolution - k_extra, 2), resolution + k_extra + 1)
     ).astype(int)
+    np.random.seed(seed)
     for k in k_range:
         sch = schpf.scHPF(k, **kwargs)
         sch.fit(X)
@@ -357,6 +360,7 @@ def run_scanorama(
     resolution=1.0,
     return_signatures=True,
     return_cluster_assignments=True,
+    seed=1,
     **kwargs,
 ):
     try:
@@ -369,6 +373,8 @@ def run_scanorama(
     # PCA
     sc.tl.pca(ad)
     # scanorama
+    np.random.seed(seed)
+    random.seed(seed)
     sc.external.pp.scanorama_integrate(ad, batch_key, **kwargs)
     latent = ad.obsm["X_scanorama"]
     # Compute neighbors and do Leiden clustering
@@ -406,6 +412,7 @@ def run_scvi(
     resolution=1.0,
     return_signatures=True,
     return_cluster_assignments=True,
+    seed=1,
     **kwargs,
 ):
     try:
@@ -422,7 +429,7 @@ def run_scvi(
         layer=layer,
         batch_key=batch_key,
     )
-    scvi.settings.seed = kwargs["seed"]
+    scvi.settings.seed = seed
     model = scvi.model.SCVI(ad)
     model.train(**kwargs)
     latent = model.get_latent_representation()

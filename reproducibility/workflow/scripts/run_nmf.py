@@ -21,7 +21,7 @@ def main():
     )
 
     methods_list = ["NMF"]
-    nmf_settings = dict(max_iter=snakemake.params["max_iter"], random_state=snakemake.params["seed"])
+    nmf_settings = dict(max_iter=snakemake.params["max_iter"], random_state=int(snakemake.params["seed"]))
     duration = time.time()
     methods_results = run_methods(adata, methods_list, batch_key=batch_key, **nmf_settings)
     duration = time.time() - duration

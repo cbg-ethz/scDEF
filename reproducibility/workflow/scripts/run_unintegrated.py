@@ -26,7 +26,7 @@ def main():
     sc.pp.log1p(adata)
 
     leiden_settings = dict(
-        seed=snakemake.params["seed"]
+        seed=int(snakemake.params["seed"])
     )
 
     methods_list = ["PCA"]
