@@ -13,12 +13,12 @@ def main():
 
     # Run scDEF
     model_settings = dict(
-        brd_strength=snakemake.params["tau"],
-        brd_mean=snakemake.params["mu"],
-        n_factors=snakemake.params["n_factors"],
-        max_n_layers=snakemake.params["n_layers"],
-        decay_factor=snakemake.params["decay_factor"],
-        layer_concentration=snakemake.params["kappa"],
+        brd_strength=float(snakemake.params["tau"]),
+        brd_mean=float(snakemake.params["mu"]),
+        n_factors=int(snakemake.params["n_factors"]),
+        max_n_layers=int(snakemake.params["n_layers"]),
+        decay_factor=float(snakemake.params["decay_factor"]),
+        layer_concentration=float(snakemake.params["kappa"]),
     )
     model = scd.scDEF(
         adata,
@@ -33,8 +33,8 @@ def main():
         nmf_init=snakemake.params["nmf_init"],
         n_epoch=snakemake.params["n_epoch"],
         lr=snakemake.params["lr"],
-        batch_size=snakemake.params["batch_size"],
-        num_samples=snakemake.params["num_samples"],
+        batch_size=int(snakemake.params["batch_size"]),
+        num_samples=int(snakemake.params["num_samples"]),
     )
     duration = time.time()
     model.fit(**learning_settings)
