@@ -4,6 +4,7 @@ import scanpy as sc
 import scdef
 import time
 
+
 def main():
     adata = sc.read_h5ad(snakemake.input["adata"])
 
@@ -29,7 +30,11 @@ def main():
     scanorama_settings = dict()
     duration = time.time()
     methods_results = run_methods(
-        adata, methods_list, batch_key=batch_key, seed=int(snakemake.params["seed"]), **scanorama_settings
+        adata,
+        methods_list,
+        batch_key=batch_key,
+        seed=int(snakemake.params["seed"]),
+        **scanorama_settings
     )
     duration = time.time() - duration
 
@@ -53,10 +58,13 @@ def main():
 
     if snakemake.params["store_full"]:
         # Store anndata
-        methods_results[methods_list[0]]["adata"].write_h5ad(snakemake.output["out_fname"])
+        methods_results[methods_list[0]]["adata"].write_h5ad(
+            snakemake.output["out_fname"]
+        )
 
     # Store scores
     df.to_csv(snakemake.output["scores_fname"])
+
 
 if __name__ == "__main__":
     main()

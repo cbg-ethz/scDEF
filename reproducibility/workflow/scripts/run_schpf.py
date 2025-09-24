@@ -4,6 +4,7 @@ import scanpy as sc
 import scdef as scd
 import time
 
+
 def main():
     adata = sc.read_h5ad(snakemake.input["adata"])
 
@@ -23,7 +24,13 @@ def main():
     methods_list = ["scHPF"]
     schpf_settings = dict(max_iter=snakemake.params["max_iter"])
     duration = time.time()
-    methods_results = run_methods(adata, methods_list, batch_key=batch_key, seed=int(snakemake.params["seed"]), **schpf_settings)
+    methods_results = run_methods(
+        adata,
+        methods_list,
+        batch_key=batch_key,
+        seed=int(snakemake.params["seed"]),
+        **schpf_settings
+    )
     duration = time.time() - duration
 
     hierarchy_obs = adata.uns["hierarchy_obs"].tolist()
@@ -46,10 +53,13 @@ def main():
 
     if snakemake.params["store_full"]:
         # Store anndata
-        methods_results[methods_list[0]]["adata"].write_h5ad(snakemake.output["out_fname"])
+        methods_results[methods_list[0]]["adata"].write_h5ad(
+            snakemake.output["out_fname"]
+        )
 
     # Store scores
     df.to_csv(snakemake.output["scores_fname"])
+
 
 if __name__ == "__main__":
     main()

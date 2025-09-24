@@ -5,9 +5,7 @@ import numpy as np
 
 def main():
     np.random.seed(snakemake.params.seed)
-    adata = anndata.read_h5ad(
-        snakemake.params.data_fname
-    )
+    adata = anndata.read_h5ad(snakemake.params.data_fname)
 
     # Remove some genes
     for gene in ["MALAT1"]:
@@ -46,24 +44,32 @@ def main():
         adata.obs[obs] = "h" * i + adata.obs[obs].astype(str)
 
     # Store true markers for the cell types
-    markers = {'Memory CD4 T': ['IL7R', 'CD3D', 'CD3E', 'IL32', 'CD2'], 'Naive CD4 T': ['IL7R', 'CD3D', 'CD3E', 'TCF7', 'CCR7', 'CD2'],  
-            'CD8 T': ['CD8B', 'CCL5', 'CD2', 'CD3D', 'CD3E'], 
-            'NK': ['GNLY', 'NKG7', 'CD2'], 
-            'B': ['MS4A1', 'CD79A', 'CD79B', 'CD74'], 
-            'CD14+ Mono': ['CD14', 'LYZ'],  'FCGR3A+ Mono': ['CD14', 'FCGR3A', 'MS4A7', 'LYZ'],  'DC': ['CD14', 'FCER1A', 'CST3', 'CD74'], 
-            'Platelet': ['PPBP', 'PF4']}
+    markers = {
+        "Memory CD4 T": ["IL7R", "CD3D", "CD3E", "IL32", "CD2"],
+        "Naive CD4 T": ["IL7R", "CD3D", "CD3E", "TCF7", "CCR7", "CD2"],
+        "CD8 T": ["CD8B", "CCL5", "CD2", "CD3D", "CD3E"],
+        "NK": ["GNLY", "NKG7", "CD2"],
+        "B": ["MS4A1", "CD79A", "CD79B", "CD74"],
+        "CD14+ Mono": ["CD14", "LYZ"],
+        "FCGR3A+ Mono": ["CD14", "FCGR3A", "MS4A7", "LYZ"],
+        "DC": ["CD14", "FCER1A", "CST3", "CD74"],
+        "Platelet": ["PPBP", "PF4"],
+    }
     adata.uns["true_markers"] = markers
 
     # Keep only HVGs
     sc.pp.normalize_total(adata, target_sum=1e4)
     sc.pp.log1p(adata)
     sc.pp.highly_variable_genes(
-        adata, flavor="seurat_v3", layer="counts", n_top_genes=snakemake.params.n_top_genes
+        adata,
+        flavor="seurat_v3",
+        layer="counts",
+        n_top_genes=snakemake.params.n_top_genes,
     )  # Not required, but makes scDEF faster
     # Make sure marker genes are present
     markers_list = list(set([x for sub in [markers[n] for n in markers] for x in sub]))
     for marker in markers_list:
-        adata.var.loc[marker, 'highly_variable'] = True
+        adata.var.loc[marker, "highly_variable"] = True
     adata = adata[:, adata.var.highly_variable]
 
     # Process and visualize the data
@@ -79,6 +85,7 @@ def main():
 
     # Write new h5ad file
     adata.write(snakemake.output.fname)
+
 
 if __name__ == "__main__":
     main()

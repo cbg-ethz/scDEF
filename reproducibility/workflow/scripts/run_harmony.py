@@ -4,6 +4,7 @@ import scanpy as sc
 import scdef
 import time
 
+
 def main():
     adata = sc.read_h5ad(snakemake.input["adata"])
 
@@ -57,6 +58,7 @@ def main():
 
     # Store scores
     df.to_csv(snakemake.output["scores_fname"])
+
 
 if __name__ == "__main__":
     main()

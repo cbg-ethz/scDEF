@@ -4,6 +4,7 @@ import scanpy as sc
 import scdef
 import time
 
+
 def main():
     adata = sc.read_h5ad(snakemake.input["adata"])
 
@@ -25,9 +26,13 @@ def main():
     sc.pp.log1p(adata)
 
     methods_list = ["nSBM"]
-    nsbm_settings = dict(n_init=snakemake.params["n_init"], random_seed=int(snakemake.params["seed"]))
+    nsbm_settings = dict(
+        n_init=snakemake.params["n_init"], random_seed=int(snakemake.params["seed"])
+    )
     duration = time.time()
-    methods_results = run_methods(adata, methods_list, batch_key=batch_key, **nsbm_settings)
+    methods_results = run_methods(
+        adata, methods_list, batch_key=batch_key, **nsbm_settings
+    )
     duration = time.time() - duration
 
     hierarchy_obs = adata.uns["hierarchy_obs"].tolist()
@@ -50,10 +55,13 @@ def main():
 
     if snakemake.params["store_full"]:
         # Store anndata
-        methods_results[methods_list[0]]["adata"].write_h5ad(snakemake.output["out_fname"])
+        methods_results[methods_list[0]]["adata"].write_h5ad(
+            snakemake.output["out_fname"]
+        )
 
     # Store scores
     df.to_csv(snakemake.output["scores_fname"])
+
 
 if __name__ == "__main__":
     main()

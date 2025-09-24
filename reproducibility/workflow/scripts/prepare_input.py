@@ -3,6 +3,7 @@ import scanpy as sc
 import pandas as pd
 import scdef
 
+
 def main():
     counts = pd.read_csv(snakemake.input["counts_fname"], index_col=0)
     meta = pd.read_csv(snakemake.input["meta_fname"])
@@ -10,7 +11,10 @@ def main():
 
     groups = markers["cluster"].unique()
     markers = dict(
-        zip(groups, [markers.loc[markers["cluster"] == g]["gene"].tolist() for g in groups])
+        zip(
+            groups,
+            [markers.loc[markers["cluster"] == g]["gene"].tolist() for g in groups],
+        )
     )
 
     adata = anndata.AnnData(X=counts.values.T, obs=meta)
@@ -48,6 +52,7 @@ def main():
 
         # Write new h5ad file
         adata.write(snakemake.output.fname)
+
 
 if __name__ == "__main__":
     main()

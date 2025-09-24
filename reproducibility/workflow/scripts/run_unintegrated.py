@@ -4,6 +4,7 @@ import scanpy as sc
 import scdef
 import time
 
+
 def main():
     adata = sc.read_h5ad(snakemake.input["adata"])
 
@@ -25,13 +26,13 @@ def main():
     sc.pp.normalize_total(adata, target_sum=1e4)
     sc.pp.log1p(adata)
 
-    leiden_settings = dict(
-        seed=int(snakemake.params["seed"])
-    )
+    leiden_settings = dict(seed=int(snakemake.params["seed"]))
 
     methods_list = ["PCA"]
     duration = time.time()
-    methods_results = run_methods(adata, methods_list, batch_key=batch_key, **leiden_settings)
+    methods_results = run_methods(
+        adata, methods_list, batch_key=batch_key, **leiden_settings
+    )
     duration = time.time() - duration
 
     hierarchy_obs = adata.uns["hierarchy_obs"].tolist()
@@ -54,10 +55,13 @@ def main():
 
     if snakemake.params["store_full"]:
         # Store anndata
-        methods_results[methods_list[0]]["adata"].write_h5ad(snakemake.output["out_fname"])
+        methods_results[methods_list[0]]["adata"].write_h5ad(
+            snakemake.output["out_fname"]
+        )
 
     # Store scores
     df.to_csv(snakemake.output["scores_fname"])
+
 
 if __name__ == "__main__":
     main()
