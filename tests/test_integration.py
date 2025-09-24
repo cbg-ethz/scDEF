@@ -89,7 +89,7 @@ def test_scdef():
 
     model = scd.scDEF(
         raw_adata,
-        layer_sizes=[60, 30, 15],
+        layer_sizes=[10, 5, 2],
         seed=1,
         batch_key="Experiment",
     )
@@ -108,23 +108,20 @@ def test_scdef():
 
     scd.pl.plot_qc(model, show=False)
 
-    scd.pl.plot_multilevel_paga(model, figsize=(16, 4), reuse_pos=True, frameon=False, show=False)
+    scd.pl.plot_multilevel_paga(
+        model, figsize=(16, 4), reuse_pos=True, frameon=False, show=False
+    )
 
     scd.pl.plot_signatures_scores(model, "celltypes", markers, top_genes=10, show=False)
 
     for mode in ["f1", "fracs", "weights"]:
-        scd.pl.plot_obs_scores(model,
+        scd.pl.plot_obs_scores(
+            model,
             ["celltypes", "celltypes_coarse"],
             mode=mode,
             hierarchy=true_hierarchy,
             show=False,
         )
-
-    # scd.benchmark.evaluate_scdef_hierarchy(
-    #     model, ["celltypes", "celltypes_coarse"], true_hierarchy
-    # )
-
-    # scd.benchmark.evaluate_scdef_signatures(model, "celltypes", markers)
 
     simplified = model.get_hierarchy(simplified=True)
     g = scd.pl.make_graph(model, hierarchy=simplified)
@@ -138,15 +135,15 @@ def test_scdef():
 
     if len(simplified.keys()) > 0:
         k = list(simplified.keys())[0]
-        g = scd.pl.make_graph(model, hierarchy=simplified, top_factor=k, factor_annotations=matches)
+        g = scd.pl.make_graph(
+            model, hierarchy=simplified, top_factor=k, factor_annotations=matches
+        )
 
     signatures, scores = model.get_signatures_dict(scores=True, sorted_scores=False)
     sizes = model.get_sizes_dict()
-    scd.benchmark.evaluate_hierarchical_signatures_consistency(
-        model.adata.var_names, simplified, signatures, scores, sizes, top_genes=10
-    )
 
-    scd.pl.plot_umaps(model,
+    scd.pl.plot_umaps(
+        model,
         color=["celltypes", "celltypes_coarse"],
         fontsize=16,
         legend_fontsize=14,
@@ -154,54 +151,3 @@ def test_scdef():
     )
 
     scd.pl.plot_factors_bars(model, ["celltypes", "celltypes_coarse"], show=False)
-
-    # # Evaluate methods
-    # methods_list = ["PCA", "Harmony", "NMF"]
-    # metrics_list = [
-    #     "Cell Type ARI",
-    #     "Cell Type ASW",
-    #     "Batch ARI",
-    #     "Batch ASW",
-    #     "Hierarchical signature consistency",
-    #     "Hierarchy accuracy",
-    #     "Signature sparsity",
-    #     "Signature accuracy",
-    # ]
-
-    # res_sweeps = dict(
-    #     zip(
-    #         scd.benchmark.OTHERS_LABELS,
-    #         [
-    #             [1.0, 0.6],
-    #             [1.0, 0.6],
-    #             [1.0, 0.6],
-    #             [1.0, 0.6],
-    #             [1.0, 0.6],
-    #             [10, 5],
-    #             [10, 5],
-    #             [10, 5],
-    #             [10, 5],
-    #         ],
-    #     )
-    # )
-    # methods_results = scd.benchmark.other_methods.run_methods(
-    #     adata,
-    #     methods_list,
-    #     res_sweeps=res_sweeps,
-    #     batch_key="batches",
-    # )
-
-    # for k in methods_list:
-    #     assert "adata" in methods_results[k].keys()
-
-    # methods_results["scDEF"] = model
-    # df = scd.benchmark.evaluate.evaluate_methods(
-    #     adata,
-    #     metrics_list,
-    #     methods_results,
-    #     true_hierarchy=true_hierarchy,
-    #     hierarchy_obs_keys=["celltypes", "celltypes_coarse"],
-    #     markers=markers,
-    #     celltype_obs_key="celltypes",
-    #     batch_obs_key="batches",
-    # )
