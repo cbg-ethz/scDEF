@@ -11,3 +11,6 @@ dist/
 .DS_Store
 *.txt
 *.pdf
+*.csv
+*.h5ad
+*.pkl
