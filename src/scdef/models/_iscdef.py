@@ -246,9 +246,9 @@ class iscDEF(scDEF):
                 local_start = i * n_lower_factors_per_set
                 local_end = (i + 1) * n_lower_factors_per_set
 
-                connectivity_matrix[upper_start:upper_end, local_start:local_end] = (
-                    cn_big_mean
-                )
+                connectivity_matrix[
+                    upper_start:upper_end, local_start:local_end
+                ] = cn_big_mean
 
                 strength_matrix[upper_start:upper_end, local_start:local_end] = (
                     cn_big_strength * self.layer_sizes[layer_idx] / self.layer_sizes[0]
@@ -325,15 +325,15 @@ class iscDEF(scDEF):
                             if gene not in marker_dict[cellgroup]:
                                 loc = np.where(self.adata.var.index == gene)[0]
                                 self.gene_sets[factors_start:factors_end, loc] = 1e-6
-                                self.strengths[factors_start:factors_end, loc] = (
-                                    other_strength
-                                )
+                                self.strengths[
+                                    factors_start:factors_end, loc
+                                ] = other_strength
                         else:
                             loc = np.where(self.adata.var.index == gene)[0]
                             self.gene_sets[factors_start:factors_end, loc] = 1e-6
-                            self.strengths[factors_start:factors_end, loc] = (
-                                other_strength
-                            )
+                            self.strengths[
+                                factors_start:factors_end, loc
+                            ] = other_strength
 
         if self.n_layers == 1:
             self.w_priors = [

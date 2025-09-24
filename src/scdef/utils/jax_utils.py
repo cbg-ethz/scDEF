@@ -1,4 +1,3 @@
-import jax
 import jax.numpy as jnp
 from jax import vmap
 import tensorflow_probability.substrates.jax.distributions as tfd

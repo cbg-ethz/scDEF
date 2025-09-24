@@ -5,12 +5,10 @@ that are used by the scDEF model.
 """
 
 import numpy as np
-import pandas as pd
 import scanpy as sc
 import decoupler
 from scipy.cluster.hierarchy import ward, leaves_list
 from scipy.spatial.distance import pdist
-from typing import Optional, Sequence, Mapping
 from . import score_utils
 
 

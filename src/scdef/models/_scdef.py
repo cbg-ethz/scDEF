@@ -1,7 +1,7 @@
 # Standard library imports
 import logging
 import time
-from typing import Optional, Union, Sequence, Mapping, Literal
+from typing import Optional, Union, Sequence, Mapping
 
 # Third-party imports
 import jax
@@ -14,19 +14,12 @@ import tensorflow_probability.substrates.jax.distributions as tfd
 import numpy as np
 import pandas as pd
 import scipy
-from scipy.cluster.hierarchy import ward, leaves_list
-from scipy.spatial.distance import pdist
 
 import matplotlib
-import matplotlib.pyplot as plt
-from matplotlib.gridspec import GridSpec
-from matplotlib.lines import Line2D
 import seaborn as sns
 from tqdm import tqdm
 
 from anndata import AnnData
-import scanpy as sc
-import decoupler
 
 # Local imports
 from scdef.utils import score_utils, hierarchy_utils, color_utils
@@ -100,7 +93,7 @@ class scDEF(object):
         self.n_batches = 1
         self.batches = [""]
         self.batch_key = batch_key
-        
+
         self.seed = seed
         self.batch_cpal = batch_cpal
         self.layer_cpal = layer_cpal
@@ -200,10 +193,10 @@ class scDEF(object):
             for layer_idx, size in enumerate(layer_sizes):
                 for factor_idx in range(size):
                     col = self.layer_colorpalettes[layer_idx][factor_idx]
-                    self.layer_colorpalettes[layer_idx][factor_idx] = (
-                        color_utils.adjust_lightness(
-                            col, amount=1.0 + lightness_mult * layer_idx
-                        )
+                    self.layer_colorpalettes[layer_idx][
+                        factor_idx
+                    ] = color_utils.adjust_lightness(
+                        col, amount=1.0 + lightness_mult * layer_idx
                     )
 
     def load_adata(self, adata, layer=None, batch_key=None):
@@ -492,7 +485,6 @@ class scDEF(object):
                 m = init_w.astype(jnp.float32)
                 v = m
             else:
-
                 m = 1.0 / self.layer_sizes[layer_idx] * jnp.ones((in_layer, out_layer))
                 m = m * self.w_priors[layer_idx][0] / self.w_priors[layer_idx][1]
                 v = m / 100.0
@@ -943,21 +935,24 @@ class scDEF(object):
                             stop_gene_budgets,
                         )
                     if update_globals:
-                        loss, global_params, global_opt_state, global_grads = (
-                            global_update_func(
-                                X,
-                                indices,
-                                t,
-                                rng_input,
-                                local_params,
-                                global_params,
-                                local_opt_state,
-                                global_opt_state,
-                                annealing_parameter,
-                                stop_gradients,
-                                stop_cell_budgets,
-                                stop_gene_budgets,
-                            )
+                        (
+                            loss,
+                            global_params,
+                            global_opt_state,
+                            global_grads,
+                        ) = global_update_func(
+                            X,
+                            indices,
+                            t,
+                            rng_input,
+                            local_params,
+                            global_params,
+                            local_opt_state,
+                            global_opt_state,
+                            annealing_parameter,
+                            stop_gradients,
+                            stop_cell_budgets,
+                            stop_gene_budgets,
                         )
                     epoch_losses.append(loss)
                     t += 1
@@ -1051,9 +1046,7 @@ class scDEF(object):
                 eff_factors = self.get_effective_factors(min_cells=0.01)
             n_eff_factors = len(eff_factors)
             if n_eff_factors == 0:
-                self.logger.info(
-                    "No effective factors found. Using all factors."
-                )
+                self.logger.info("No effective factors found. Using all factors.")
                 n_eff_factors = self.n_factors
                 eff_factors = np.arange(n_eff_factors)
             self.logger.info(

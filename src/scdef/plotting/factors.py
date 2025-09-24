@@ -10,9 +10,9 @@ import seaborn as sns
 import scanpy as sc
 from scipy.cluster.hierarchy import ward, leaves_list
 from scipy.spatial.distance import pdist
-from typing import Optional, Union, Sequence, Literal, Mapping
+from typing import Optional, Sequence, Literal, Mapping
 import pandas as pd
-from ..utils import data_utils, score_utils, hierarchy_utils
+from ..utils import data_utils
 
 
 def plot_obs_factor_dotplot(

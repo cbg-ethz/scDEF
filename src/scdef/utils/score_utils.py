@@ -1,6 +1,4 @@
 import numpy as np
-import scipy.stats
-from typing import Optional, Sequence, Mapping
 
 
 def get_mean_cellscore_per_group(cell_scores, cell_groups):

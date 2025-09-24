@@ -6,9 +6,6 @@ This module provides QC-related plotting functions for scDEF models.
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
-import seaborn as sns
-from typing import Optional, Union, Sequence, Literal, Mapping
-import pandas as pd
 
 
 def plot_scales(
