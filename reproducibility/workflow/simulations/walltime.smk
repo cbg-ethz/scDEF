@@ -1,5 +1,7 @@
 output_path = "walltime_results"
 
+localrules: gather_scores    
+
 configfile: "config/walltime_config.yaml"
 configfile: "config/methods.yaml"
 
@@ -15,6 +17,10 @@ rule all:
 rule gather_scores:
     conda:
         "../envs/PCA.yml"
+    params:
+        param_name = ["cellno"],
+        param_idx = [-2],
+        method_idx = -3,
     input:
         fname_list = expand(
             output_path + '/{method}/cellno_{cellno}/rep_{rep_id}_scores.csv',
@@ -23,55 +29,8 @@ rule gather_scores:
             rep_id=[r for r in range(N_REPS)],)
     output:
         output_path + '/walltime_scores.csv'
-    run:
-        import pandas as pd
-
-        rows = []
-        for filename in snakemake.input['fname_list']:
-            print(filename)
-
-            # Parse filename
-            l = filename.split("/")
-            
-            rep_id = l[-1].split("_")[1]
-            method = l[-2] # method is the number of layers
-
-            # Parse scores
-            df = pd.read_csv(filename, index_col=0)
-            print(df)
-
-            for idx, score in enumerate(df.index): # must have the ARI per layer
-                value = df.values[idx]
-                value = float(value[0])
-                rows.append(
-                    [
-                        method,
-                        rep_id,
-                        score,
-                        value,
-                    ]
-                )
-
-        columns = [
-            "method",
-            "rep_id",
-            "score",
-            "value",
-        ]
-
-        scores = pd.DataFrame.from_records(rows, columns=columns)
-        print(scores)
-
-        scores = pd.melt(
-            scores,
-            id_vars=[
-                "method",
-                "rep_id",
-                "score",
-            ],
-            value_vars="value",
-        )
-        scores.to_csv(snakemake.output[0], index=False)    
+    script:
+        '../scripts/gather_scores.py'
 
 
 rule generate_multibatch_data:

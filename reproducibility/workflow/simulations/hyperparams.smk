@@ -18,142 +18,64 @@ METRICS = config["metrics"]
 
 rule all:
     input:
-        'hyperparam_results/tau_scores.csv',
-        'hyperparam_results/mu_scores.csv',
-        'hyperparam_results/kappa_scores.csv',
+        output_path + '/tau_scores.csv',
+        output_path + '/mu_scores.csv',
+        output_path + '/kappa_scores.csv',
 
 
-rule gather_tau_mu_scores:
+rule gather_tau_scores:
     conda:
         "../envs/PCA.yml"
     input:
-        tau_fname_list = expand(
+        fname_list = expand(
             output_path + '/tau/den_{density}/tau_{tau}/rep_{rep_id}_scores.csv',
             tau=TAU,
             density=DENSITY,
             rep_id=[r for r in range(N_REPS)],),
-        mu_fname_list = expand(
+    output:
+        output_path + '/tau_scores.csv',
+    params:
+        param_name = ["density", "tau"],
+        param_idx = [-3, -2],
+        method_idx = -4,
+    script:
+        '../scripts/gather_scores.py'
+
+rule gather_mu_scores:
+    conda:
+        "../envs/PCA.yml"
+    input:
+        fname_list = expand(
             output_path + '/mu/den_{density}/mu_{mu}/rep_{rep_id}_scores.csv',
             mu=MU,
             density=DENSITY,
             rep_id=[r for r in range(N_REPS)],)
     output:
-        tau_output = output_path + '/tau_scores.csv',
-        mu_output = output_path + '/mu_scores.csv',
-    run:
-        import pandas as pd
-        import numpy as np
-        methods_files = dict(zip(["tau", "mu"], [input['tau_fname_list'], input['mu_fname_list']]))
-        for method in methods_files:
-            rows = []
-            for filename in methods_files[method]:
-                print(filename)
-
-                # Parse filename
-                l = filename.split("/")
-                
-                rep_id = l[-1].split("_")[1]
-                method_val = l[-2].split("_")[1]
-                density = l[-3].split("_")[1]
-
-                # Parse scores
-                df = pd.read_csv(filename, index_col=0)
-                print(df)
-
-                for idx, score in enumerate(df.index): # must have the ARI per layer
-                    value = df.values[idx]
-                    value = value[0]
-                    if isinstance(value, str):
-                        value = np.mean(np.array(value.strip("][").split(", ")).astype(float))
-                    value = float(value)
-                    rows.append(
-                        [
-                            rep_id,
-                            method_val,
-                            density,
-                            score,
-                            value,
-                        ]
-                    )
-
-            columns = [
-                "rep_id",
-                f"{method}",
-                "density",
-                "score",
-                "value",
-            ]
-
-            scores = pd.DataFrame.from_records(rows, columns=columns)
-            print(scores)
-
-            if method == "tau":
-                scores.to_csv(output['tau_output'], index=False)   
-            else:
-                scores.to_csv(output['mu_output'], index=False)   
+        output_path + '/mu_scores.csv',
+    params:
+        param_name = ["density", "mu"],
+        param_idx = [-3, -2],
+        method_idx = -4,
+    script:
+        '../scripts/gather_scores.py'
 
 rule gather_kappa_scores:
     conda:
         "../envs/PCA.yml"
     input:
         fname_list = expand(
-            f'hyperparam_results/kappa/den_{DENSITY_DEFAULT}/' + 'kappa_{kappa}/rep_{rep_id}_scores.csv',
+            output_path + '/kappa/den_{density}/kappa_{kappa}/rep_{rep_id}_scores.csv',
+            density=DENSITY,
             kappa=KAPPA,
             rep_id=[r for r in range(N_REPS)],)
     output:
-        'hyperparam_results/kappa_scores.csv'
-    run:
-        # Output:
-        # data_rep_id model_rep_id model_rep_id
-        # for each rep, run one model with random sizes and another with fixed sizes, both with random init
-        import pandas as pd
-
-        rows = []
-        for filename in snakemake.input['fname_list']:
-            print(filename)
-
-            # Parse filename
-            l = filename.split("/")
-            
-            rep_id = l[-1].split("_")[1]
-            method = l[-2] # method is the kappa
-
-            # Parse scores
-            df = pd.read_csv(filename, index_col=0)
-            print(df)
-
-            for idx, score in enumerate(df.index): # must have the ARI per layer
-                value = df.values[idx]
-                value = float(value[0])
-                rows.append(
-                    [
-                        method,
-                        rep_id,
-                        score,
-                        value,
-                    ]
-                )
-
-        columns = [
-            "method",
-            "rep_id",
-            "score",
-            "value",
-        ]
-
-        scores = pd.DataFrame.from_records(rows, columns=columns)
-        print(scores)
-
-        scores = pd.melt(
-            scores,
-            id_vars=[
-                "method",
-                "rep_id",
-                "score",
-            ],
-            value_vars="value",
-        )
-        scores.to_csv(outFileName, index=False)   
+        output_path + '/kappa_scores.csv',
+    params:
+        param_name = ["density", "kappa"],
+        param_idx = [-3, -2],
+        method_idx = -4,
+    script:
+        '../scripts/gather_scores.py'
 
 rule generate_density_data:
     conda:
@@ -174,7 +96,7 @@ rule generate_density_data:
         umap_fname = output_path + '/data/den_{density}/rep_{rep_id}_umap.png',
         umap_nobatch_fname = output_path + '/data/den_{density}/rep_{rep_id}_umap_nobatch.png',
     script:
-        "scripts/splatter_hierarchical.R"
+        "../scripts/splatter_hierarchical.R"
 
 rule prepare_input:
     conda:
@@ -210,7 +132,7 @@ rule run_scdef_tau:
         seed = "{rep_id}",
         store_full = False
     input:
-        fname = output_path + '/data/den_{density}/rep_{rep_id}.h5ad',
+        adata = output_path + '/data/den_{density}/rep_{rep_id}.h5ad',
     output:
         scores_fname = output_path + '/tau/den_{density}/tau_{tau}/rep_{rep_id}_scores.csv',
     script:
@@ -236,7 +158,7 @@ rule run_scdef_mu:
         seed = "{rep_id}",
         store_full = False
     input:
-        fname = output_path + '/data/den_{density}/rep_{rep_id}.h5ad',
+        adata = output_path + '/data/den_{density}/rep_{rep_id}.h5ad',
     output:
         scores_fname = output_path + '/mu/den_{density}/mu_{mu}/rep_{rep_id}_scores.csv',
     script:
@@ -262,7 +184,7 @@ rule run_scdef_kappa:
         seed = "{rep_id}",
         store_full = False
     input:
-        fname = output_path + '/data/den_{density}/rep_{rep_id}.h5ad',
+        adata = output_path + '/data/den_{density}/rep_{rep_id}.h5ad',
     output:
         scores_fname = output_path + '/kappa/den_{density}/kappa_{kappa}/rep_{rep_id}_scores.csv',
     script:

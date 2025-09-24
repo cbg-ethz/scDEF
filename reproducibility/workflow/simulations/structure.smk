@@ -25,126 +25,34 @@ rule gather_layers_scores:
         "../envs/PCA.yml"
     input:
         fname_list = expand(
-            output_path + '/{n_layers}_layers/rep_{rep_id}_scores.csv',
+            output_path + '/scDEF/layers_{n_layers}/rep_{rep_id}_scores.csv',
             n_layers=LAYERS,
             rep_id=[r for r in range(N_REPS)],)
+    params:
+        param_name = ["n_layers"],
+        param_idx = [-2],
+        method_idx = -3,
     output:
         output_path + '/layers_scores.csv'
-    run:
-        # Output:
-        # data_rep_id, model1layer_layer1ari, model2layer_layer1ari, model3layer_layer1ari
-        import pandas as pd
-
-        rows = []
-        for filename in snakemake.input['fname_list']:
-            print(filename)
-
-            # Parse filename
-            l = filename.split("/")
-            
-            rep_id = l[-1].split("_")[1]
-            method = l[-2] # method is the number of layers
-
-            # Parse scores
-            df = pd.read_csv(filename, index_col=0)
-            print(df)
-
-            for idx, score in enumerate(df.index): # must have the ARI per layer
-                value = df.values[idx]
-                value = float(value[0])
-                rows.append(
-                    [
-                        method,
-                        rep_id,
-                        score,
-                        value,
-                    ]
-                )
-
-        columns = [
-            "method",
-            "rep_id",
-            "score",
-            "value",
-        ]
-
-        scores = pd.DataFrame.from_records(rows, columns=columns)
-        print(scores)
-
-        scores = pd.melt(
-            scores,
-            id_vars=[
-                "method",
-                "rep_id",
-                "score",
-            ],
-            value_vars="value",
-        )
-        scores.to_csv(snakemake.output[0], index=False)        
+    script:
+        '../scripts/gather_scores.py'
 
 rule gather_factors_scores:
     conda:
         "../envs/PCA.yml"
     input:
         fname_list = expand(
-            output_path + '/decay_{decay_factor}/rep_{rep_id}_scores.csv',
+            output_path + '/scDEF/decay_{decay_factor}/rep_{rep_id}_scores.csv',
             decay_factor=DECAY_FACTORS,
             rep_id=[r for r in range(N_REPS)],)
+    params:
+        param_name = ["decay_factor"],
+        param_idx = [-2],
+        method_idx = -3,
     output:
         output_path + '/factors_scores.csv'
-    run:
-        # Output:
-        # data_rep_id model_rep_id model_rep_id
-        # for each rep, run one model with random sizes and another with fixed sizes, both with random init
-        import pandas as pd
-
-        rows = []
-        for filename in snakemake.input['fname_list']:
-            print(filename)
-
-            # Parse filename
-            l = filename.split("/")
-            
-            rep_id = l[-1].split("_")[1]
-            method = l[-2] # method is the number of layers
-
-            # Parse scores
-            df = pd.read_csv(filename, index_col=0)
-            print(df)
-
-            for idx, score in enumerate(df.index): # must have the ARI per layer
-                value = df.values[idx]
-                value = float(value[0])
-                rows.append(
-                    [
-                        method,
-                        rep_id,
-                        score,
-                        value,
-                    ]
-                )
-
-        columns = [
-            "method",
-            "rep_id",
-            "score",
-            "value",
-        ]
-
-        scores = pd.DataFrame.from_records(rows, columns=columns)
-        print(scores)
-
-        scores = pd.melt(
-            scores,
-            id_vars=[
-                "method",
-                "rep_id",
-                "score",
-            ],
-            value_vars="value",
-        )
-        scores.to_csv(snakemake.output[0], index=False)    
-
+    script:
+        '../scripts/gather_scores.py'
 
 
 rule generate_data:
@@ -157,6 +65,7 @@ rule generate_data:
         n_cells = config["n_cells"],
         n_batches = config["n_batches"],
         frac_shared = config["frac_shared"],
+        coverage = 0.,
         seed = "{rep_id}",
     output:
         counts_fname = output_path + '/data/rep_{rep_id}_counts.csv',
@@ -203,8 +112,8 @@ rule run_scdef_layers:
     input:
         adata = output_path + '/data/rep_{rep_id}.h5ad',
     output:
-        out_fname = output_path + '/{n_layers}_layers/rep_{rep_id}.pkl',
-        scores_fname = output_path + '/{n_layers}_layers/rep_{rep_id}_scores.csv',
+        out_fname = output_path + '/scDEF/layers_{n_layers}/rep_{rep_id}.pkl',
+        scores_fname = output_path + '/scDEF/layers_{n_layers}/rep_{rep_id}_scores.csv',
     script:
         '../scripts/run_scdef.py'
 
@@ -231,7 +140,7 @@ rule run_scdef_factors:
     input:
         adata = output_path + '/data/rep_{rep_id}.h5ad',
     output:
-        out_fname = output_path + '/decay_{decay_factor}/rep_{rep_id}.pkl',
-        scores_fname = output_path + '/decay_{decay_factor}/rep_{rep_id}_scores.csv',
+        out_fname = output_path + '/scDEF/decay_{decay_factor}/rep_{rep_id}.pkl',
+        scores_fname = output_path + '/scDEF/decay_{decay_factor}/rep_{rep_id}_scores.csv',
     script:
         '../scripts/run_scdef.py'
