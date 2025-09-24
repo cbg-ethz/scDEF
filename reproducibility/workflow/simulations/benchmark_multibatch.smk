@@ -1,4 +1,4 @@
-output_path = "results/multibatch"
+output_path = "results/benchmark_singlebatch"
 
 localrules: gather_multibatch_scores
 
