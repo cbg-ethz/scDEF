@@ -132,7 +132,10 @@ def _compute_factor_obs_weight_score(model, layer_idx, factor_name, obs_key, obs
 
     return score
 
-def compute_factor_obs_weight_score(model, layer_idx, factor_name, obs_key, obs_val, eps=1e-8):
+
+def compute_factor_obs_weight_score(
+    model, layer_idx, factor_name, obs_key, obs_val, eps=1e-8
+):
     """
     Compute a soft F1-like association score between a factor and an obs category,
     using normalized Z scores in the given layer.
@@ -161,7 +164,7 @@ def compute_factor_obs_weight_score(model, layer_idx, factor_name, obs_key, obs_
 
     # Boolean mask for the obs category
     obs_vals = model.adata.obs[obs_key].values
-    mask = (obs_vals == obs_val)
+    mask = obs_vals == obs_val
 
     if mask.sum() == 0:
         # No cells of this category
@@ -177,7 +180,6 @@ def compute_factor_obs_weight_score(model, layer_idx, factor_name, obs_key, obs_
     score = 2.0 * prec * rec / (prec + rec + eps)
 
     return float(score)
-
 
 
 def get_factor_obs_weight_scores(model, obs_key, obs_val):
@@ -247,6 +249,7 @@ def assign_obs_to_factors(model, obs_keys, factor_names=[]):
 
     return dict(factor_annotation_assignments), dict(factor_annotation_matches)
 
+
 def compute_factor_obs_correlation(model, layer_idx, factor_name, obs_key):
     """Compute correlation between a factor and an observation value."""
     layer_name = model.layer_names[layer_idx]
@@ -257,6 +260,7 @@ def compute_factor_obs_correlation(model, layer_idx, factor_name, obs_key):
     corr = np.corrcoef(p, obs_vals)[0, 1]
     return corr
 
+
 def get_factor_obs_correlations(model, obs_key):
     """Compute correlations between factors and observation values."""
     corrs = []
@@ -266,7 +270,9 @@ def get_factor_obs_correlations(model, obs_key):
         n_factors = len(model.factor_lists[layer_idx])
         for factor in range(n_factors):
             factor_name = model.factor_names[layer_idx][factor]
-            corr = compute_factor_obs_correlation(model, layer_idx, factor_name, obs_key)
+            corr = compute_factor_obs_correlation(
+                model, layer_idx, factor_name, obs_key
+            )
             corrs.append(corr)
             factors.append(factor_name)
             layers.append(layer_idx)
@@ -276,9 +282,9 @@ def get_factor_obs_correlations(model, obs_key):
 def compute_factor_hierarchy_scores(model):
     """
     For each factor in each layer except the last, compute the normalized assignment entropy
-    to factors in layer i+1 using model.pmeans[f'L{i+1}W']. 
+    to factors in layer i+1 using model.pmeans[f'L{i+1}W'].
     Returns a nested dictionary: {layer_idx: {factor_name: entropy, ...}, ...}
-    Entropies are normalized by the maximum theoretical entropy for that layer 
+    Entropies are normalized by the maximum theoretical entropy for that layer
     (log2 of number of factors in layer i+1).
     """
     results = {}
@@ -288,8 +294,10 @@ def compute_factor_hierarchy_scores(model):
         n_factors_l = len(model.factor_names[i])
         n_factors_lp1 = len(model.factor_names[i + 1])
         # model.pmeans[f'L{i+1}W']: shape = (n_factors_lp1, n_factors_l)
-        weight_matrix = model.pmeans[f'L{i+1}W']
-        max_entropy = np.log2(n_factors_lp1) if n_factors_lp1 > 1 else 1.0  # avoid log2(1)=0, fallback to 1
+        weight_matrix = model.pmeans[f"L{i+1}W"]
+        max_entropy = (
+            np.log2(n_factors_lp1) if n_factors_lp1 > 1 else 1.0
+        )  # avoid log2(1)=0, fallback to 1
 
         factor_scores = {}
         for f_idx in range(n_factors_l):

@@ -80,13 +80,13 @@ class scDEF(object):
         layer_concentration: Optional[float] = 1.0,
         shrinkage_shape: Optional[float] = 1.0,
         shrinkage_rate: Optional[float] = 1.0,
-        top_alpha: Optional[float] = 1.,
+        top_alpha: Optional[float] = 1.0,
         factor_shape: Optional[float] = 0.1,
         brd_strength: Optional[float] = 1.0,
         brd_mean: Optional[float] = 1.0,
         use_brd: Optional[bool] = True,
-        cell_scale_shape: Optional[float] = 1.,
-        gene_scale_shape: Optional[float] = 1.,
+        cell_scale_shape: Optional[float] = 1.0,
+        gene_scale_shape: Optional[float] = 1.0,
         batch_cpal: Optional[str] = "Dark2",
         layer_cpal: Optional[str] = "tab10",
         lightness_mult: Optional[float] = 0.15,
@@ -340,9 +340,11 @@ class scDEF(object):
         layer_name = self.layer_names[0]
         if min_cells != 0:
             min_cells = (
-                np.maximum(10, min_cells * self.n_cells) if min_cells < 1.0 else min_cells
+                np.maximum(10, min_cells * self.n_cells)
+                if min_cells < 1.0
+                else min_cells
             )
-        
+
         ard = []
         if thres is not None:
             ard = thres
@@ -381,7 +383,15 @@ class scDEF(object):
         return keep
 
     def init_var_params(
-        self, init_budgets=True, init_alpha=True, init_z=None, init_w=None, init_brd=None, nmf_init=False, z_init_concentration=1.0, **kwargs
+        self,
+        init_budgets=True,
+        init_alpha=True,
+        init_z=None,
+        init_w=None,
+        init_brd=None,
+        nmf_init=False,
+        z_init_concentration=1.0,
+        **kwargs,
     ):
         rngs = random.split(random.PRNGKey(self.seed), self.n_layers)
 
@@ -417,12 +427,12 @@ class scDEF(object):
         if not nmf_init:
             m_brd = self.brd_mean
         else:
-            m_brd = self.brd_mean # to counteract potentially noisy init
-        m_brd = tfd.Gamma(100., 100. / m_brd).sample(
-                        seed=rngs[0],
-                        sample_shape=[self.layer_sizes[0], 1],
-                    )#self.brd_mean
-        v_brd = m_brd 
+            m_brd = self.brd_mean  # to counteract potentially noisy init
+        m_brd = tfd.Gamma(100.0, 100.0 / m_brd).sample(
+            seed=rngs[0],
+            sample_shape=[self.layer_sizes[0], 1],
+        )  # self.brd_mean
+        v_brd = m_brd
         if init_brd is not None:
             m_brd = init_brd
             v_brd = m_brd / 1.0
@@ -465,7 +475,7 @@ class scDEF(object):
                 m = init_z.astype(jnp.float32)
             else:
                 m = jnp.clip(
-                    tfd.Gamma(a, a / 1.).sample(
+                    tfd.Gamma(a, a / 1.0).sample(
                         seed=rngs[rng_cnt],
                         sample_shape=[self.n_cells, self.layer_sizes[layer_idx]],
                     ),
@@ -474,9 +484,9 @@ class scDEF(object):
                 )
                 rng_cnt += 1
 
-            v = m #/ 100.0
+            v = m  # / 100.0
             if layer_idx > 0:
-                v = m #/ 100.0
+                v = m  # / 100.0
             z_shape = jnp.log(m**2 / jnp.sqrt(m**2 + v)) * jnp.ones(
                 (self.n_cells, self.layer_sizes[layer_idx])
             )
@@ -512,15 +522,16 @@ class scDEF(object):
             if nmf_init and layer_idx == 0:
                 iw = init_w[layer_idx].astype(jnp.float32)
                 # Rescale
-                iw = 1.0 * iw + 1.
+                iw = 1.0 * iw + 1.0
                 # iw = 10. * 100.**iw/100. + 1.
-                iw = (iw)
-                iw = iw #* self.w_priors[layer_idx][0] / self.w_priors[layer_idx][1]
-                iw = iw / np.sum(iw, axis=1, keepdims=True) + 1./self.layer_sizes[layer_idx]
+                iw = iw
+                iw = iw  # * self.w_priors[layer_idx][0] / self.w_priors[layer_idx][1]
+                iw = (
+                    iw / np.sum(iw, axis=1, keepdims=True)
+                    + 1.0 / self.layer_sizes[layer_idx]
+                )
                 iw = jnp.clip(iw, 1e-6, 1e2)  # need to set scales to avoid huge BRDs...
-                m = tfd.Gamma(
-                    100.0, 100.0 / (iw)
-                ).sample(seed=rngs[rng_cnt])
+                m = tfd.Gamma(100.0, 100.0 / (iw)).sample(seed=rngs[rng_cnt])
                 rng_cnt += 1
                 v = m / 100.0
 
@@ -551,16 +562,14 @@ class scDEF(object):
         if init_alpha:
             m = self.layer_concentration
         else:
-            m = self.pmeans['layer_concentration']
+            m = self.pmeans["layer_concentration"]
         v = m / 10.0
 
         self.global_params.append(
             jnp.array(
                 (
-                    jnp.log(m**2 / jnp.sqrt(m**2 + v))
-                    * jnp.ones((1, 1)),
-                    jnp.log(jnp.sqrt(jnp.log(1 + v / (m**2))))
-                    * jnp.ones((1, 1)),
+                    jnp.log(m**2 / jnp.sqrt(m**2 + v)) * jnp.ones((1, 1)),
+                    jnp.log(jnp.sqrt(jnp.log(1 + v / (m**2)))) * jnp.ones((1, 1)),
                 )
             ),
         )
@@ -583,13 +592,13 @@ class scDEF(object):
         lib = np.sum(X, axis=1, keepdims=True)
         X /= lib
         X *= 10_000
-        # X = np.log(X + 1)                
+        # X = np.log(X + 1)
         for layer_idx in range(self.n_layers):
             model = NMF(
                 n_components=self.layer_sizes[layer_idx],
                 random_state=self.seed,
-                beta_loss='kullback-leibler',
-                solver='mu',
+                beta_loss="kullback-leibler",
+                solver="mu",
             )
             z = model.fit_transform(X)
             W = model.components_
@@ -703,7 +712,9 @@ class scDEF(object):
             jnp.clip(global_params[2 + self.n_layers][1], min_rate, max_rate)
         )
 
-        s_shape = jnp.clip(global_params[2 + self.n_layers + 1][0], min_shape, max_shape)
+        s_shape = jnp.clip(
+            global_params[2 + self.n_layers + 1][0], min_shape, max_shape
+        )
         s_rate = jnp.exp(
             jnp.clip(global_params[2 + self.n_layers + 1][1], min_rate, max_rate)
         )
@@ -737,7 +748,7 @@ class scDEF(object):
         if self.use_brd:
             fscale_samples = lognormal_sample(rng, fscale_shapes, fscale_rates)
             _wm_sample = lognormal_sample(rng, wm_shape, wm_rate)
-            brd_samples = fscale_samples #/ jnp.maximum(_wm_sample, 1.0)
+            brd_samples = fscale_samples  # / jnp.maximum(_wm_sample, 1.0)
         # w will be sampled in a loop below because it cannot be vectorized
 
         # Compute ELBO
@@ -757,15 +768,17 @@ class scDEF(object):
         # scale
         s_sample = lognormal_sample(rng, s_shape, s_rate)
         global_pl += gamma_logpdf(s_sample, 1.0, 1.0 / self.layer_concentration)
-        global_en += lognormal_entropy(s_shape, s_rate)        
+        global_en += lognormal_entropy(s_shape, s_rate)
         if self.use_brd:
             global_pl += gamma_logpdf(
                 fscale_samples, self.brd, self.brd / self.brd_mean
             )
             global_en += lognormal_entropy(fscale_shapes, fscale_rates)
 
-            global_pl += gamma_logpdf(_wm_sample, self.shrinkage_shape, self.shrinkage_rate)
-            
+            global_pl += gamma_logpdf(
+                _wm_sample, self.shrinkage_shape, self.shrinkage_rate
+            )
+
             global_en += lognormal_entropy(wm_shape, wm_rate)
 
         z_mean = 1.0
@@ -853,13 +866,15 @@ class scDEF(object):
         if self.use_brd:
             n_w_sample = n_w_sample * _wm_sample
         n_z_sample = _z_sample / jnp.sum(_z_sample, axis=1, keepdims=True)
-        mean_bottom = jnp.einsum("nk,kg->ng", n_z_sample, n_w_sample) * cell_budget_sample # self.exposures[indices]
+        mean_bottom = (
+            jnp.einsum("nk,kg->ng", n_z_sample, n_w_sample) * cell_budget_sample
+        )  # self.exposures[indices]
         mean_bottom = mean_bottom * (batch_indices_onehot.dot(gene_budget_sample))
 
         x = jnp.array(batch)
         lam = mean_bottom  # same shape
 
-        mask = (x > 0)
+        mask = x > 0
         x_nz = jnp.where(mask, x, 0.0)
 
         # X log λ  -  log(X!)
@@ -1083,7 +1098,14 @@ class scDEF(object):
         )
 
     def fit(
-        self, pretrain=True, nmf_init=True, max_cells_init=1024, unmix=False, eff_min=0.0001, save_pretrain_factors=True, **kwargs
+        self,
+        pretrain=True,
+        nmf_init=True,
+        max_cells_init=1024,
+        unmix=False,
+        eff_min=0.0001,
+        save_pretrain_factors=True,
+        **kwargs,
     ):
         """Learn a one-layer scDEF with 100 factors with BRD to obtain
         cell and gene scale factors and an estimate of the effective number of factors.
@@ -1097,12 +1119,14 @@ class scDEF(object):
             # self.update_model_size(self.n_factors, max_n_layers=5)
             # self.update_model_priors()
             self.init_var_params(
-                init_budgets=True, nmf_init=nmf_init, max_cells=max_cells_init,
+                init_budgets=True,
+                nmf_init=nmf_init,
+                max_cells=max_cells_init,
             )
             self.elbos = []
             self.step_sizes = []
             self._learn(filter=False, annotate=False, **kwargs)
-            eff_factors = self.get_effective_factors(thres=1., min_cells=eff_min)
+            eff_factors = self.get_effective_factors(thres=1.0, min_cells=eff_min)
             mixture_factors = self.identify_mixture_factors()
             if len(mixture_factors) > 0 and unmix:
                 self.logger.info(
@@ -1110,7 +1134,7 @@ class scDEF(object):
                 )
                 self.reinit_factors(mixture_factors=mixture_factors)
                 self._learn(filter=False, annotate=False, **kwargs)
-                eff_factors = self.get_effective_factors(thres=1., min_cells=eff_min)
+                eff_factors = self.get_effective_factors(thres=1.0, min_cells=eff_min)
             n_eff_factors = len(eff_factors)
             if n_eff_factors == 0:
                 self.logger.info("No effective factors found. Using all factors.")
@@ -1120,10 +1144,10 @@ class scDEF(object):
                 f"scDEF pretraining finished. Found {n_eff_factors} effective factors."
             )
             if save_pretrain_factors:
-                self.pretrain_brd = np.array(self.pmeans['brd']).ravel()
-                self.pretrain_wm = np.array(self.pmeans['wm']).ravel()
-                self.pretrain_w = np.array(self.pmeans['L0W'])
-            
+                self.pretrain_brd = np.array(self.pmeans["brd"]).ravel()
+                self.pretrain_wm = np.array(self.pmeans["wm"]).ravel()
+                self.pretrain_w = np.array(self.pmeans["L0W"])
+
             self.update_model_size(n_eff_factors)
             self.update_model_priors()
             self.logger.info(f"Learning scDEF with layer sizes {self.layer_sizes}.")
@@ -1443,10 +1467,10 @@ class scDEF(object):
             ),
             "factor_means": jnp.exp(wm_params[0] + 0.5 * jnp.exp(wm_params[1]) ** 2),
         }
-        self.pmeans["brd"] = self.pmeans["factor_concentrations"] #/ jnp.maximum(
-            #  self.pmeans["factor_means"], 1.0
+        self.pmeans["brd"] = self.pmeans["factor_concentrations"]  # / jnp.maximum(
+        #  self.pmeans["factor_means"], 1.0
         #  )
-        self.pmeans['wm'] = self.pmeans['factor_means']
+        self.pmeans["wm"] = self.pmeans["factor_means"]
 
         for idx in range(self.n_layers):
             start = sum(self.layer_sizes[:idx])
@@ -1461,7 +1485,9 @@ class scDEF(object):
                 _w_shape + 0.5 * jnp.exp(_w_rate) ** 2
             )
 
-        self.pmeans['layer_concentration'] = np.exp(self.global_params[-1][0] + 0.5 * np.exp(self.global_params[-1][1]) ** 2)
+        self.pmeans["layer_concentration"] = np.exp(
+            self.global_params[-1][0] + 0.5 * np.exp(self.global_params[-1][1]) ** 2
+        )
 
     def set_posterior_variances(self):
         cell_budget_params = self.local_params[0]

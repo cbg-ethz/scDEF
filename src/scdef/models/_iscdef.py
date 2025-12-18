@@ -154,7 +154,9 @@ class iscDEF(scDEF):
                         name = f"L{layer}"
                     layer_names.append(name)
                 # number of factors per marker in layer 0
-                self.n_factors_per_marker = int(self.decay_factor) ** (self.n_layers - 1)
+                self.n_factors_per_marker = int(self.decay_factor) ** (
+                    self.n_layers - 1
+                )
 
         self.layer_sizes = layer_sizes
         self.layer_names = layer_names
@@ -244,10 +246,16 @@ class iscDEF(scDEF):
                 # For each upper factor for marker i, connect to its children in the lower layer
                 for upper_factor in range(upper_start, upper_end):
                     # Each upper_factor is responsible for a group of decay_factor lower factors
-                    child_block_size = lower_factors_per_marker // upper_factors_per_marker
-                    child_start = lower_start + (upper_factor - upper_start) * child_block_size
+                    child_block_size = (
+                        lower_factors_per_marker // upper_factors_per_marker
+                    )
+                    child_start = (
+                        lower_start + (upper_factor - upper_start) * child_block_size
+                    )
                     child_end = child_start + child_block_size
-                    connectivity_matrix[upper_factor, child_start:child_end] = cn_big_mean
+                    connectivity_matrix[
+                        upper_factor, child_start:child_end
+                    ] = cn_big_mean
                     strength_matrix[upper_factor, child_start:child_end] = (
                         cn_big_strength * n_upper / self.layer_sizes[0]
                     )
@@ -262,21 +270,27 @@ class iscDEF(scDEF):
                 # Only the lowest layer gets extra "other" factors, but we allow for safety at all
                 if layer_idx == 1:
                     # "other" at layer 0 (lowest)
-                    other_start_lower = n_lower - self.add_other * lower_factors_per_marker
+                    other_start_lower = (
+                        n_lower - self.add_other * lower_factors_per_marker
+                    )
                     other_end_lower = n_lower
                     # All upper factors connect (weakly) to all "other" factors
-                    connectivity_matrix[:, other_start_lower:other_end_lower] = cn_big_mean
+                    connectivity_matrix[
+                        :, other_start_lower:other_end_lower
+                    ] = cn_big_mean
                     strength_matrix[:, other_start_lower:other_end_lower] = (
                         cn_big_strength * n_upper / self.layer_sizes[0]
                     )
-                elif layer_idx == self.n_layers-1: # top layer can't have "other"
+                elif layer_idx == self.n_layers - 1:  # top layer can't have "other"
                     pass
                 else:
                     # handle recursively if "other" present at each layer, but in current design, only at layer 0.
                     pass
 
             self.w_priors[layer_idx][0] *= strength_matrix
-            self.w_priors[layer_idx][1] *= strength_matrix / np.maximum(connectivity_matrix, 1e-12)
+            self.w_priors[layer_idx][1] *= strength_matrix / np.maximum(
+                connectivity_matrix, 1e-12
+            )
 
     def set_geneset_prior(
         self,
@@ -419,7 +433,14 @@ class iscDEF(scDEF):
                     # For layer 0, add "other" factors at the end
                 self.factor_names.append(factor_names)
 
-    def fit(self, pretrain=False, nmf_init=False, max_cells_init=1024, z_init_concentration=100.0, **kwargs):
+    def fit(
+        self,
+        pretrain=False,
+        nmf_init=False,
+        max_cells_init=1024,
+        z_init_concentration=100.0,
+        **kwargs,
+    ):
         """
         TODO: find a pre-training approach that works when markers_layer > 0. I need to use a high decay factor, choose the relevant factors, and then adjust the hierarchy to make sure the top factors are still used.
         Need to adjust the set_connectivity_prior in this case.
@@ -432,7 +453,9 @@ class iscDEF(scDEF):
             # self.update_model_priors()
             self.init_var_params(
                 z_init_concentration=z_init_concentration,
-                init_budgets=True, nmf_init=nmf_init, max_cells=max_cells_init
+                init_budgets=True,
+                nmf_init=nmf_init,
+                max_cells=max_cells_init,
             )
             self.elbos = []
             self.step_sizes = []

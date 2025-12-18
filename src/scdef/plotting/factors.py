@@ -240,6 +240,7 @@ def plot_multilevel_paga(
     if show:
         plt.show()
 
+
 def plot_layers_continuous_obs(
     model,
     obs_keys,
@@ -458,10 +459,10 @@ def plot_pathway_scores(
         **kwargs,
     )
 
-    if 'vmax' not in kwargs:
-        kwargs['vmax'] = joined_mats.max()
-    if 'vmin' not in kwargs:
-        kwargs['vmin'] = joined_mats.min()
+    if "vmax" not in kwargs:
+        kwargs["vmax"] = joined_mats.max()
+    if "vmin" not in kwargs:
+        kwargs["vmin"] = joined_mats.min()
 
     plot_layers_obs(
         model,
@@ -552,7 +553,6 @@ def plot_obs_scores(
     )
 
 
-
 def plot_continuous_obs_scores(
     model,
     obs_keys: Sequence[str],
@@ -588,6 +588,7 @@ def plot_continuous_obs_scores(
         vmin=vmin,
         **kwargs,
     )
+
 
 def plot_umaps(
     model,
@@ -773,8 +774,8 @@ def plot_factors_bars(
             if vmin is not None:
                 ax.set_ylim(vmin, ax.get_ylim()[1])
             # Remove top and right axis frame
-            ax.spines['top'].set_visible(False)
-            ax.spines['right'].set_visible(False)
+            ax.spines["top"].set_visible(False)
+            ax.spines["right"].set_visible(False)
 
     plt.tight_layout()
     if show:
