@@ -9,7 +9,7 @@ repository = "https://github.com/cbg-ethz/scdef"
 packages = [{include = "scdef", from = "src"}]
 
 [tool.poetry.dependencies]
-python = ">=3.9,<4.0"
+python = ">=3.10,<3.12"
 pandas = "^2.2.2"
 numpy = "^1.26.4"
 jax = ">=0.4.31"
