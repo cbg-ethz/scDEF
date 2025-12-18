@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "scdef"
-version = "0.3.3"
+version = "0.3.4"
 description = "Extract hierarchical signatures of cell state from single-cell data."
 license = "MIT"
 authors = ["pedrofale <pedro.miguel.ferreira.pf@gmail.com>"]
@@ -12,8 +12,8 @@ packages = [{include = "scdef", from = "src"}]
 python = ">=3.9,<4.0"
 pandas = "^2.2.2"
 numpy = "^1.26.4"
-jax = ">=0.4.13"
-jaxlib = ">=0.4.13"
+jax = ">=0.4.31"
+jaxlib = ">=0.4.31"
 optax = "^0.2.3"
 tensorflow-probability = "^0.24.0"
 scanpy = "^1.9.5"
