@@ -12,7 +12,7 @@ from scipy.spatial.distance import pdist
 from . import score_utils
 
 
-def get_assignment_fracs(model, obs_key, obs_vals):
+def get_assignment_fracs(model, obs_key, obs_vals, total=False):
     """Get assignment fractions for observations and factors."""
     signatures_dict = model.get_signatures_dict()
     n_obs = len(obs_vals)
@@ -22,7 +22,7 @@ def get_assignment_fracs(model, obs_key, obs_vals):
     for i, obs in enumerate(obs_vals):
         from .factor_utils import get_factor_obs_assignment_fracs
 
-        scores, factors, layers = get_factor_obs_assignment_fracs(model, obs_key, obs)
+        scores, factors, layers = get_factor_obs_assignment_fracs(model, obs_key, obs, total=total)
         for j in range(model.n_layers):
             indices = np.where(np.array(layers) == j)[0]
             mats[j][i] = np.array(scores)[indices]
@@ -46,9 +46,11 @@ def get_assignment_scores(model, obs_key, obs_vals):
     return mats
 
 
-def get_weight_scores(model, obs_key, obs_vals):
+def get_weight_scores(model, obs_key, obs_vals, top_layer=None):
     """Get weight scores for observations and factors."""
     signatures_dict = model.get_signatures_dict()
+    if top_layer is None:
+        top_layer = model.max_n_layers - 1
     n_obs = len(obs_vals)
     mats = [
         np.zeros((n_obs, len(model.factor_names[idx]))) for idx in range(model.n_layers)
@@ -81,9 +83,23 @@ def get_signature_scores(model, obs_key, obs_vals, markers, top_genes=10):
                 )
     return mats
 
+def get_correlations(model, obs_key, top_layer=None):
+    """Get correlations between factors and observation values."""
+    if top_layer is None:
+        top_layer = model.max_n_layers - 1
+    mats = [
+        np.zeros((1, len(model.factor_names[idx]))) for idx in range(model.n_layers)
+    ]
+    from .factor_utils import get_factor_obs_correlations
+
+    corrs, factors, layers = get_factor_obs_correlations(model, obs_key)
+    for j in range(model.n_layers):
+        indices = np.where(np.array(layers) == j)[0]
+        mats[j][0] = np.array(corrs)[indices]
+    return mats
 
 def prepare_obs_factor_scores(
-    model, obs_keys, get_scores_func, hierarchy=None, **kwargs
+    model, obs_keys, get_scores_func, hierarchy=None, normalize=True, **kwargs
 ):
     """Prepare observation-factor scores for plotting."""
     if not isinstance(obs_keys, list):
@@ -109,7 +125,11 @@ def prepare_obs_factor_scores(
 
         mats = get_scores_func(model, obs_key, obs_vals, **kwargs)
 
-        if np.max(mats[-1]) > 1.0:
+        if 'total' in kwargs:
+            if kwargs['total']:
+                normalize = False
+
+        if np.max(mats[-1]) > 1.0 and normalize:
             for i in range(len(mats)):
                 mats[i] = mats[i] / np.max(mats[i])
 
@@ -124,14 +144,29 @@ def prepare_obs_factor_scores(
     return obs_mats, obs_clusters, obs_vals_dict
 
 
+
+def prepare_continuous_factor_scores(
+    model, obs_keys, get_scores_func, **kwargs
+):
+    """Prepare continuous observation-factor scores for plotting."""
+    if not isinstance(obs_keys, list):
+        obs_keys = [obs_keys]
+
+    obs_mats = dict()
+    for idx, obs_key in enumerate(obs_keys):
+        mats = get_scores_func(model, obs_key, **kwargs)
+        obs_mats[obs_key] = mats
+    return obs_mats
+
 def prepare_pathway_factor_scores(
     model,
     pathways,
     top_genes=20,
     source="source",
     target="target",
-    score="Combined score",
+    method="ora", # or gsea
     z_score=True,
+    **kwargs,
 ):
     """Prepare pathway-factor scores for plotting."""
     factors = [model.factor_names[idx] for idx in range(model.n_layers)]
@@ -158,13 +193,23 @@ def prepare_pathway_factor_scores(
             )
             df = df.set_index("names")
             df = df.iloc[:top_genes]
-            res = decoupler.get_ora_df(
-                df, net=pathways, source=source, target=target, verbose=False
-            )
-            for term in res["Term"]:
-                term_idx = np.where(np.array(obs_vals_dict["Pathway"]) == term)[0]
-                factor_vals[term_idx, i] = res.loc[res["Term"] == term][score].values[0]
-
+            if method == "ora":
+                res = decoupler.get_ora_df(
+                        df, net=pathways, source=source, target=target, verbose=False
+                    )
+                score = "Combined score"
+                for term in res["Term"]:
+                    term_idx = np.where(np.array(obs_vals_dict["Pathway"]) == term)[0]
+                    factor_vals[term_idx, i] = res.loc[res["Term"] == term][score].values[0]
+            elif method == "gsea":
+                res = decoupler.get_gsea_df(
+                    df, 'scores', net=pathways, source=source, target=target, verbose=False
+                )
+                score = "FDR p-value"
+                for term in res["Term"]:
+                    term_idx = np.where(np.array(obs_vals_dict["Pathway"]) == term)[0]
+                    factor_vals[term_idx, i] = -np.log10(res.loc[res["Term"] == term][score].values[0] + 1e-10)
+        
             if z_score:
                 # Compute z-scores
                 den = np.std(factor_vals, axis=0)

@@ -6,7 +6,6 @@ and other factor-related computations.
 
 import numpy as np
 import scipy.stats
-from typing import Optional, Sequence, Mapping
 from .data_utils import get_weight_scores
 
 
@@ -69,7 +68,7 @@ def get_factor_obs_association_scores(model, obs_key, obs_val):
 
 
 def compute_factor_obs_assignment_fracs(
-    model, layer_idx, factor_name, obs_key, obs_val
+    model, layer_idx, factor_name, obs_key, obs_val, total=False
 ):
     """Compute assignment fraction for a factor and observation value."""
     layer_name = model.layer_names[layer_idx]
@@ -88,13 +87,14 @@ def compute_factor_obs_assignment_fracs(
     )
 
     score = 0.0
-    if cells_in_factor != 0:
+    score = cells_in_factor_from_obs
+    if cells_in_factor != 0 and not total:
         score = cells_in_factor_from_obs / cells_in_factor
 
     return score
 
 
-def get_factor_obs_assignment_fracs(model, obs_key, obs_val):
+def get_factor_obs_assignment_fracs(model, obs_key, obs_val, total=False):
     """Get assignment fractions for all factors and a given observation value."""
     scores = []
     factors = []
@@ -104,7 +104,7 @@ def get_factor_obs_assignment_fracs(model, obs_key, obs_val):
         for factor in range(n_factors):
             factor_name = model.factor_names[layer_idx][factor]
             score = compute_factor_obs_assignment_fracs(
-                model, layer_idx, factor_name, obs_key, obs_val
+                model, layer_idx, factor_name, obs_key, obs_val, total=total
             )
             scores.append(score)
             factors.append(factor_name)
@@ -112,7 +112,7 @@ def get_factor_obs_assignment_fracs(model, obs_key, obs_val):
     return scores, factors, layers
 
 
-def compute_factor_obs_weight_score(model, layer_idx, factor_name, obs_key, obs_val):
+def _compute_factor_obs_weight_score(model, layer_idx, factor_name, obs_key, obs_val):
     """Compute weight score for a factor and observation value."""
     layer_name = model.layer_names[layer_idx]
 
@@ -131,6 +131,53 @@ def compute_factor_obs_weight_score(model, layer_idx, factor_name, obs_key, obs_
     score = avg_in / np.sum(avg_in + avg_out)
 
     return score
+
+def compute_factor_obs_weight_score(model, layer_idx, factor_name, obs_key, obs_val, eps=1e-8):
+    """
+    Compute a soft F1-like association score between a factor and an obs category,
+    using normalized Z scores in the given layer.
+
+    - Precision: fraction of factor mass in this obs category.
+    - Recall:    average membership of cells in this obs category for this factor.
+    - Score:     soft F1 = 2 * prec * rec / (prec + rec).
+    """
+    layer_name = model.layer_names[layer_idx]
+
+    # Get Z for this layer: shape (n_cells, n_factors_layer)
+    Z = np.asarray(model.adata.obsm[f"X_{layer_name}"], dtype=float)
+
+    # Normalize per cell to get soft memberships p_{nk}
+    Z_norm = Z / (Z.sum(axis=1, keepdims=True) + eps)
+
+    # Find index of the factor in this layer
+    factor_names = model.factor_names[layer_idx]
+    try:
+        factor_idx = factor_names.index(factor_name)
+    except ValueError:
+        raise ValueError(f"Factor name {factor_name} not found in layer {layer_name}")
+
+    # Memberships for this factor across cells
+    p = Z_norm[:, factor_idx]
+
+    # Boolean mask for the obs category
+    obs_vals = model.adata.obs[obs_key].values
+    mask = (obs_vals == obs_val)
+
+    if mask.sum() == 0:
+        # No cells of this category
+        return np.nan
+
+    # Precision: how much of the factor's total mass lies in this obs category
+    prec = p[mask].sum() / (p.sum() + eps)
+
+    # Recall: average membership of cells in this obs category
+    rec = p[mask].mean()
+
+    # Soft F1
+    score = 2.0 * prec * rec / (prec + rec + eps)
+
+    return float(score)
+
 
 
 def get_factor_obs_weight_scores(model, obs_key, obs_val):
@@ -199,3 +246,66 @@ def assign_obs_to_factors(model, obs_keys, factor_names=[]):
     factor_annotation_matches = ChainMap(*obs_to_factor_matches)
 
     return dict(factor_annotation_assignments), dict(factor_annotation_matches)
+
+def compute_factor_obs_correlation(model, layer_idx, factor_name, obs_key):
+    """Compute correlation between a factor and an observation value."""
+    layer_name = model.layer_names[layer_idx]
+    Z = np.asarray(model.adata.obsm[f"X_{layer_name}"], dtype=float)
+    factor_idx = model.factor_names[layer_idx].index(factor_name)
+    p = Z[:, factor_idx]
+    obs_vals = model.adata.obs[obs_key].values
+    corr = np.corrcoef(p, obs_vals)[0, 1]
+    return corr
+
+def get_factor_obs_correlations(model, obs_key):
+    """Compute correlations between factors and observation values."""
+    corrs = []
+    factors = []
+    layers = []
+    for layer_idx in range(model.n_layers):
+        n_factors = len(model.factor_lists[layer_idx])
+        for factor in range(n_factors):
+            factor_name = model.factor_names[layer_idx][factor]
+            corr = compute_factor_obs_correlation(model, layer_idx, factor_name, obs_key)
+            corrs.append(corr)
+            factors.append(factor_name)
+            layers.append(layer_idx)
+    return corrs, factors, layers
+
+
+def compute_factor_hierarchy_scores(model):
+    """
+    For each factor in each layer except the last, compute the normalized assignment entropy
+    to factors in layer i+1 using model.pmeans[f'L{i+1}W']. 
+    Returns a nested dictionary: {layer_idx: {factor_name: entropy, ...}, ...}
+    Entropies are normalized by the maximum theoretical entropy for that layer 
+    (log2 of number of factors in layer i+1).
+    """
+    results = {}
+    n_layers = model.n_layers
+
+    for i in range(n_layers - 1):
+        n_factors_l = len(model.factor_names[i])
+        n_factors_lp1 = len(model.factor_names[i + 1])
+        # model.pmeans[f'L{i+1}W']: shape = (n_factors_lp1, n_factors_l)
+        weight_matrix = model.pmeans[f'L{i+1}W']
+        max_entropy = np.log2(n_factors_lp1) if n_factors_lp1 > 1 else 1.0  # avoid log2(1)=0, fallback to 1
+
+        factor_scores = {}
+        for f_idx in range(n_factors_l):
+            factor_name = model.factor_names[i][f_idx]
+            # Get outgoing weights from factor f_idx in layer i to all in layer i+1
+            outgoing_weights = weight_matrix[:, f_idx]
+            if np.sum(outgoing_weights) == 0:
+                entropy = np.nan
+            else:
+                probs = outgoing_weights / np.sum(outgoing_weights)
+                probs_nonzero = probs[probs > 0]
+                entropy_raw = -np.sum(probs_nonzero * np.log2(probs_nonzero))
+                if max_entropy > 0:
+                    entropy = entropy_raw / max_entropy
+                else:
+                    entropy = np.nan
+            factor_scores[factor_name] = entropy
+        results[i] = factor_scores
+    return results

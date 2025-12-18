@@ -240,6 +240,100 @@ def plot_multilevel_paga(
     if show:
         plt.show()
 
+def plot_layers_continuous_obs(
+    model,
+    obs_keys,
+    obs_mats,
+    sort_layer_factors=True,
+    orders=None,
+    layers=None,
+    vmax=None,
+    vmin=None,
+    cb_title="",
+    cb_title_fontsize=10,
+    fontsize=12,
+    title_fontsize=12,
+    pad=0.1,
+    shrink=0.7,
+    figsize=(10, 4),
+    xticks_rotation=90.0,
+    cmap=None,
+    show=True,
+    rasterized=False,
+    **kwargs,
+):
+    """Plot observation matrices across layers."""
+    if not isinstance(obs_keys, list):
+        obs_keys = [obs_keys]
+
+    if layers is None:
+        layers = [i for i in range(0, model.n_layers) if len(model.factor_lists[i]) > 1]
+
+    n_layers = len(layers)
+
+    if sort_layer_factors:
+        layer_factor_orders = model.get_layer_factor_orders()
+    else:
+        if orders is not None:
+            layer_factor_orders = orders
+        else:
+            layer_factor_orders = [
+                np.arange(len(model.factor_lists[i])) for i in range(model.n_layers)
+            ]
+
+    n_factors = [len(model.factor_lists[idx]) for idx in layers]
+    n_obs = len(obs_keys)
+    fig, axs = plt.subplots(
+        n_obs,
+        n_layers,
+        figsize=figsize,
+        gridspec_kw={"width_ratios": n_factors},
+    )
+    # Ensure axs is always 2D for later indexing
+    if n_obs == 1 and n_layers == 1:
+        axs = np.array([[axs]])
+    elif n_obs == 1 or n_layers == 1:
+        axs = np.atleast_2d(axs)
+    else:
+        axs = axs.reshape((n_obs, n_layers))
+    for i in layers:
+        axs[0][i].set_title(f"Layer {i}", fontsize=title_fontsize)
+        for j, obs_key in enumerate(obs_keys):
+            ax = axs[j][i]
+            mat = obs_mats[obs_key][i]
+            mat = mat[:, layer_factor_orders[i]]
+            axplt = ax.pcolormesh(
+                mat, vmax=vmax, vmin=vmin, cmap=cmap, rasterized=rasterized
+            )
+
+            if j == len(obs_keys) - 1:
+                xlabels = model.factor_names[i]
+                xlabels = np.array(xlabels)[layer_factor_orders[i]]
+                ax.set_xticks(
+                    np.arange(len(xlabels)) + 0.5,
+                    xlabels,
+                    rotation=xticks_rotation,
+                    fontsize=fontsize,
+                )
+            else:
+                ax.set(xticks=[])
+
+            if i == 0:
+                ax.set_yticks(
+                    [0.5],
+                    [obs_key],
+                )
+            else:
+                ax.set(yticks=[])
+
+    plt.subplots_adjust(wspace=0.05)
+    plt.subplots_adjust(hspace=0.05)
+
+    cb = fig.colorbar(axplt, ax=axs.ravel().tolist(), pad=pad, shrink=shrink)
+    cb.ax.set_title(cb_title, fontsize=cb_title_fontsize)
+    if show:
+        plt.show()
+
 
 def plot_layers_obs(
     model,
@@ -263,6 +357,7 @@ def plot_layers_obs(
     cmap=None,
     show=True,
     rasterized=False,
+    **kwargs,
 ):
     """Plot observation matrices across layers."""
     if not isinstance(obs_keys, list):
@@ -350,7 +445,6 @@ def plot_pathway_scores(
         model: scDEF model instance
         pathways: a pandas DataFrame containing PROGENy pathways
         top_genes: number of top genes to consider
-        **kwargs: plotting keyword arguments
     """
     (
         obs_mats,
@@ -361,18 +455,20 @@ def plot_pathway_scores(
         model,
         pathways,
         top_genes=top_genes,
+        **kwargs,
     )
 
-    vmax = joined_mats.max()
-    vmin = joined_mats.min()
+    if 'vmax' not in kwargs:
+        kwargs['vmax'] = joined_mats.max()
+    if 'vmin' not in kwargs:
+        kwargs['vmin'] = joined_mats.min()
+
     plot_layers_obs(
         model,
         ["Pathway"],
         obs_mats,
         obs_clusters,
         obs_vals_dict,
-        vmax=vmax,
-        vmin=vmin,
         **kwargs,
     )
 
@@ -411,6 +507,8 @@ def plot_obs_scores(
     obs_keys: Sequence[str],
     hierarchy: Optional[dict] = None,
     mode: Literal["f1", "fracs", "weights"] = "fracs",
+    vmax=None,
+    vmin=None,
     **kwargs,
 ):
     """Plot the association between a set of cell annotations and factors.
@@ -437,8 +535,7 @@ def plot_obs_scores(
         f,
         hierarchy=hierarchy,
     )
-    vmax = None
-    vmin = None
+
     if mode == "f1" or mode == "fracs":
         vmax = 1.0
         vmin = 0.0
@@ -454,6 +551,43 @@ def plot_obs_scores(
         **kwargs,
     )
 
+
+
+def plot_continuous_obs_scores(
+    model,
+    obs_keys: Sequence[str],
+    mode: Literal["correlations"] = "correlations",
+    vmax=None,
+    vmin=None,
+    **kwargs,
+):
+    """Plot the correlations between a set of cell annotations and factors.
+
+    Args:
+        model: scDEF model instance
+        obs_keys: the keys in model.adata.obs to use
+        mode: how to compute scores
+        **kwargs: plotting keyword arguments
+    """
+    if mode == "correlations":
+        f = data_utils.get_correlations
+    else:
+        raise ValueError("`mode` must be one of ['correlations']")
+
+    obs_mats = data_utils.prepare_continuous_factor_scores(
+        model,
+        obs_keys,
+        f,
+    )
+
+    plot_layers_continuous_obs(
+        model,
+        obs_keys,
+        obs_mats,
+        vmax=vmax,
+        vmin=vmin,
+        **kwargs,
+    )
 
 def plot_umaps(
     model,
@@ -558,6 +692,7 @@ def plot_factors_bars(
     title_fontsize=12,
     legend_fontsize=8,
     figsize=(10, 4),
+    total=False,
     show=True,
 ):
     """Plot factor scores as bar charts."""
@@ -587,12 +722,19 @@ def plot_factors_bars(
         gridspec_kw={"width_ratios": n_factors},
         sharey=sharey,
     )
-    axs = axs.reshape((len(obs_keys), n_layers))
+    # Ensure axs is always 2D for later indexing
+    if len(obs_keys) == 1 and n_layers == 1:
+        axs = np.array([[axs]])
+    elif len(obs_keys) == 1 or n_layers == 1:
+        axs = np.atleast_2d(axs)
+    else:
+        axs = axs.reshape((len(obs_keys), n_layers))
     # Get data using the new utility functions
     obs_mats, obs_clusters, obs_vals_dict = data_utils.prepare_obs_factor_scores(
         model,
         obs_keys,
         data_utils.get_assignment_fracs,
+        total=total,
     )
 
     for i in layers:
@@ -630,6 +772,9 @@ def plot_factors_bars(
                 ax.set_ylim(0, vmax)
             if vmin is not None:
                 ax.set_ylim(vmin, ax.get_ylim()[1])
+            # Remove top and right axis frame
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
 
     plt.tight_layout()
     if show:
