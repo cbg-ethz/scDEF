@@ -1101,7 +1101,7 @@ class scDEF(object):
         self,
         pretrain=True,
         nmf_init=True,
-        max_cells_init=1024,
+        max_cells_init=5000,
         unmix=False,
         eff_min=0.0001,
         save_pretrain_factors=True,
