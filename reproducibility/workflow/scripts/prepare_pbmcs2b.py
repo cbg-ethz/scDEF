@@ -151,6 +151,9 @@ sc.pp.highly_variable_genes(
     n_top_genes=snakemake.params.n_top_genes,
     batch_key="Batch",
 )  # Not required, but makes scDEF faster
+markers_list = list(set([x for sub in [markers[n] for n in markers] for x in sub]))
+for marker in markers_list:
+    adata.var.loc[marker, "highly_variable"] = True
 adata = adata[:, adata.var.highly_variable]
 
 # Process and visualize the data
