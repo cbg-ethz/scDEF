@@ -223,6 +223,7 @@ def plot_gini_brd(
     ax.set_xlabel("Gini index", fontsize=fontsize)
     ax.set_ylabel("BRD posterior mean", fontsize=fontsize)
     ax.legend(fontsize=legend_fontsize)
+    ax.set_xlim(0, 1)
 
     if show:
         plt.show()
