@@ -37,13 +37,9 @@ class iscDEF(scDEF):
         self,
         adata: AnnData,
         markers_dict: Mapping[str, Sequence[str]],
-        add_other: Optional[
-            int
-        ] = 0,  # whether to add factors for cells which don't express any of the sets in markers_matrix
-        markers_layer: Optional[
-            int
-        ] = 0,  # by default, use lower layer and learn a hierarchy
-        cn_small_mean: Optional[float] = 1e-6,
+        add_other: Optional[int] = 0,
+        markers_layer: Optional[int] = 0,
+        cn_small_mean: Optional[float] = 1e-2,
         cn_big_mean: Optional[float] = 1.0,
         cn_small_strength: Optional[float] = 1.0,
         cn_big_strength: Optional[float] = 0.1,
@@ -136,25 +132,29 @@ class iscDEF(scDEF):
         else:
             # For markers_layer > 0, only the bottom layer (layer 0) gets "other" factors
             self.n_layers = self.markers_layer + 1
-            self.n_factors_per_marker = int(self.decay_factor) * (self.n_layers - 1)
+            # Updated so that the layer sizes are exponential in decay_factor:
+            # Layer 0 (lowest): self.n_markers * decay_factor**(n_layers-1), then decay_factor**(n_layers-2), ..., final (top) layer is n_markers.
             if self.max_n_layers == 1:
                 self.n_layers = 1
             if self.n_layers == 1:
+                # special case, all factors flat for each marker
+                self.n_factors_per_marker = int(self.decay_factor)
                 size = self.n_markers * self.n_factors_per_marker
                 name = "marker"
                 layer_sizes.append(size)
                 layer_names.append(name)
             else:
                 for layer in range(self.n_layers):
-                    if layer < self.n_layers - 1:
-                        rev_layer = (self.n_layers - 1) - layer
-                        size = self.n_markers * int(self.decay_factor) * rev_layer
-                        name = f"L{layer}"
-                    else:
-                        size = self.n_markers
-                        name = "marker"
+                    rev_layer = (self.n_layers - 1) - layer
+                    size = self.n_markers * int(self.decay_factor) ** rev_layer
                     layer_sizes.append(size)
+                    if layer == self.n_layers - 1:
+                        name = "marker"
+                    else:
+                        name = f"L{layer}"
                     layer_names.append(name)
+                # number of factors per marker in layer 0
+                self.n_factors_per_marker = int(self.decay_factor) ** (self.n_layers - 1)
 
         self.layer_sizes = layer_sizes
         self.layer_names = layer_names
@@ -211,7 +211,7 @@ class iscDEF(scDEF):
 
     def set_connectivity_prior(
         self,
-        cn_small_mean: Optional[float] = 1e-6,
+        cn_small_mean: Optional[float] = 1e-3,
         cn_big_mean: Optional[float] = 1.0,
         cn_small_strength: Optional[float] = 1.0,
         cn_big_strength: Optional[float] = 0.1,
@@ -221,53 +221,62 @@ class iscDEF(scDEF):
         self.cn_small_mean = cn_small_mean
         self.cn_big_mean = cn_big_mean
 
-        # Do connectivities
+        # Ensure connectivity follows an exponential hierarchy: Each factor at layer L is connected to decay_factor child factors for the same marker at layer (L-1)
         for layer_idx in range(1, self.n_layers):
-            connectivity_matrix = cn_small_mean * np.ones(
-                (self.layer_sizes[layer_idx], self.layer_sizes[layer_idx - 1])
-            )
-            strength_matrix = cn_small_strength * np.ones(
-                (self.layer_sizes[layer_idx], self.layer_sizes[layer_idx - 1])
-            )
+            n_upper = self.layer_sizes[layer_idx]
+            n_lower = self.layer_sizes[layer_idx - 1]
+            connectivity_matrix = cn_small_mean * np.ones((n_upper, n_lower))
+            strength_matrix = cn_small_strength * np.ones((n_upper, n_lower))
 
-            layer_rev_idx = self.n_layers - 1 - layer_idx
-
-            if layer_idx == self.n_layers - 1:
-                n_local_factors_per_set = 1
-            else:
-                n_local_factors_per_set = int(self.decay_factor) * (layer_rev_idx)
-            n_lower_factors_per_set = int(self.decay_factor) * (layer_rev_idx + 1)
+            layer_rev_idx = self.n_layers - 1 - layer_idx  # How far from the bottom
 
             n_marker_factors = self.n_markers
+
+            upper_factors_per_marker = int(self.decay_factor) ** layer_rev_idx
+            lower_factors_per_marker = int(self.decay_factor) ** (layer_rev_idx + 1)
+
             for i in range(n_marker_factors):
-                upper_start = i * n_local_factors_per_set
-                upper_end = (i + 1) * n_local_factors_per_set
+                upper_start = i * upper_factors_per_marker
+                upper_end = (i + 1) * upper_factors_per_marker
+                lower_start = i * lower_factors_per_marker
+                lower_end = (i + 1) * lower_factors_per_marker
 
-                local_start = i * n_lower_factors_per_set
-                local_end = (i + 1) * n_lower_factors_per_set
-
-                connectivity_matrix[
-                    upper_start:upper_end, local_start:local_end
-                ] = cn_big_mean
-
-                strength_matrix[upper_start:upper_end, local_start:local_end] = (
-                    cn_big_strength * self.layer_sizes[layer_idx] / self.layer_sizes[0]
-                )
+                # For each upper factor for marker i, connect to its children in the lower layer
+                for upper_factor in range(upper_start, upper_end):
+                    # Each upper_factor is responsible for a group of decay_factor lower factors
+                    child_block_size = lower_factors_per_marker // upper_factors_per_marker
+                    child_start = lower_start + (upper_factor - upper_start) * child_block_size
+                    child_end = child_start + child_block_size
+                    connectivity_matrix[upper_factor, child_start:child_end] = cn_big_mean
+                    strength_matrix[upper_factor, child_start:child_end] = (
+                        cn_big_strength * n_upper / self.layer_sizes[0]
+                    )
 
             # If "other" factors are present in layer 0, connect them weakly to upper layers (or not at all)
+            # (This logic is for "other" in the lowest layer only)
             if self.add_other > 0 and layer_idx > 0:
-                other_start = (
-                    self.layer_sizes[layer_idx]
-                    - self.add_other * n_local_factors_per_set
-                )
-                other_end = self.layer_sizes[layer_idx]
-                connectivity_matrix[other_start:other_end, :] = cn_big_mean
-                strength_matrix[other_start:other_end, :] = (
-                    cn_big_strength * self.layer_sizes[layer_idx] / self.layer_sizes[0]
-                )
+                # "Other" factors are always appended last in each layer
+                # Compute for lower/upper layer sizes
+                n_other_upper = 0
+                n_other_lower = 0
+                # Only the lowest layer gets extra "other" factors, but we allow for safety at all
+                if layer_idx == 1:
+                    # "other" at layer 0 (lowest)
+                    other_start_lower = n_lower - self.add_other * lower_factors_per_marker
+                    other_end_lower = n_lower
+                    # All upper factors connect (weakly) to all "other" factors
+                    connectivity_matrix[:, other_start_lower:other_end_lower] = cn_big_mean
+                    strength_matrix[:, other_start_lower:other_end_lower] = (
+                        cn_big_strength * n_upper / self.layer_sizes[0]
+                    )
+                elif layer_idx == self.n_layers-1: # top layer can't have "other"
+                    pass
+                else:
+                    # handle recursively if "other" present at each layer, but in current design, only at layer 0.
+                    pass
 
-            self.w_priors[layer_idx][0] = strength_matrix
-            self.w_priors[layer_idx][1] = strength_matrix / connectivity_matrix
+            self.w_priors[layer_idx][0] *= strength_matrix
+            self.w_priors[layer_idx][1] *= strength_matrix / np.maximum(connectivity_matrix, 1e-12)
 
     def set_geneset_prior(
         self,
@@ -324,13 +333,13 @@ class iscDEF(scDEF):
                         if "other" not in cellgroup:
                             if gene not in marker_dict[cellgroup]:
                                 loc = np.where(self.adata.var.index == gene)[0]
-                                self.gene_sets[factors_start:factors_end, loc] = 1e-6
+                                self.gene_sets[factors_start:factors_end, loc] = 1e-3
                                 self.strengths[
                                     factors_start:factors_end, loc
                                 ] = other_strength
                         else:
                             loc = np.where(self.adata.var.index == gene)[0]
-                            self.gene_sets[factors_start:factors_end, loc] = 1e-6
+                            self.gene_sets[factors_start:factors_end, loc] = 1e-3
                             self.strengths[
                                 factors_start:factors_end, loc
                             ] = other_strength
@@ -390,11 +399,12 @@ class iscDEF(scDEF):
                 else:
                     rev_idx = self.n_layers - 1 - idx
                     factor_names = []
+                    factors_per_marker = int(self.decay_factor) ** rev_idx
                     for marker_idx, marker_name in enumerate(self.marker_names):
                         marker_factor_names = []
                         sub_factors = np.arange(
-                            marker_idx * int(self.decay_factor) * rev_idx,
-                            (marker_idx + 1) * int(self.decay_factor) * rev_idx,
+                            marker_idx * factors_per_marker,
+                            (marker_idx + 1) * factors_per_marker,
                         )
                         filtered_sub_factors = [
                             factor
@@ -409,14 +419,19 @@ class iscDEF(scDEF):
                     # For layer 0, add "other" factors at the end
                 self.factor_names.append(factor_names)
 
-    def fit(self, pretrain=False, nmf_init=False, max_cells_init=1024, **kwargs):
+    def fit(self, pretrain=False, nmf_init=False, max_cells_init=1024, z_init_concentration=100.0, **kwargs):
+        """
+        TODO: find a pre-training approach that works when markers_layer > 0. I need to use a high decay factor, choose the relevant factors, and then adjust the hierarchy to make sure the top factors are still used.
+        Need to adjust the set_connectivity_prior in this case.
+        """
         if pretrain:
             self.logger.info(f"Pretraining to find initial set of factors")
             max_n_layers = self.max_n_layers
-            self.max_n_layers = 1
-            self.set_layer_sizes()
-            self.update_model_priors()
+            # self.max_n_layers = 1
+            # self.set_layer_sizes()
+            # self.update_model_priors()
             self.init_var_params(
+                z_init_concentration=z_init_concentration,
                 init_budgets=True, nmf_init=nmf_init, max_cells=max_cells_init
             )
             self.elbos = []
@@ -429,14 +444,18 @@ class iscDEF(scDEF):
             self.update_model_priors()
             init_budgets = False
             init_w = self.pmeans["markerW"]
+            init_brd = self.pmeans["brd"]
         else:
             init_budgets = True
             init_w = None
+            init_brd = None
         self.init_var_params(
             init_budgets=init_budgets,
             init_w=init_w,
+            init_brd=init_brd,
             nmf_init=nmf_init,
             max_cells=max_cells_init,
+            z_init_concentration=z_init_concentration,
         )
         self.elbos = []
         self.step_sizes = []

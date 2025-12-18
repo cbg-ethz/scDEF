@@ -77,10 +77,13 @@ class scDEF(object):
         batch_key: Optional[str] = None,
         seed: Optional[int] = 42,
         logginglevel: Optional[int] = logging.INFO,
-        layer_concentration: Optional[float] = 10.0,
+        layer_concentration: Optional[float] = 1.0,
+        shrinkage_shape: Optional[float] = 1.0,
+        shrinkage_rate: Optional[float] = 1.0,
+        top_alpha: Optional[float] = 1.,
         factor_shape: Optional[float] = 0.1,
-        brd_strength: Optional[float] = 0.1,
-        brd_mean: Optional[float] = 10.0,
+        brd_strength: Optional[float] = 1.0,
+        brd_mean: Optional[float] = 1.0,
         use_brd: Optional[bool] = True,
         cell_scale_shape: Optional[float] = 0.1,
         gene_scale_shape: Optional[float] = 0.1,
@@ -104,10 +107,13 @@ class scDEF(object):
 
         self.load_adata(adata, layer=counts_layer, batch_key=batch_key)
 
+        self.top_alpha = top_alpha
         self.layer_concentration = layer_concentration
         self.factor_shape = factor_shape
         self.brd = brd_strength
         self.brd_mean = brd_mean
+        self.shrinkage_shape = shrinkage_shape
+        self.shrinkage_rate = shrinkage_rate
         self.cell_scale_shape = cell_scale_shape
         self.gene_scale_shape = gene_scale_shape
         self.use_brd = use_brd
@@ -222,6 +228,7 @@ class scDEF(object):
             * np.mean(self.batch_lib_sizes)
             / np.var(self.batch_lib_sizes)
         )
+        self.exposure = jnp.array(self.batch_lib_sizes / np.mean(self.batch_lib_sizes))
         gene_size = np.sum(self.X, axis=0)
         self.gene_means = np.mean(gene_size)
         self.gene_vars = np.var(gene_size)
@@ -327,13 +334,15 @@ class scDEF(object):
         self,
         thres: Optional[float] = None,
         iqr_mult: Optional[float] = 0.0,
-        min_cells: Optional[float] = 0.0,
+        min_cells: Optional[float] = 0.001,
         normalized: Optional[bool] = False,
     ):
         layer_name = self.layer_names[0]
-        min_cells = (
-            np.maximum(10, min_cells * self.n_cells) if min_cells < 1.0 else min_cells
-        )
+        if min_cells != 0:
+            min_cells = (
+                np.maximum(10, min_cells * self.n_cells) if min_cells < 1.0 else min_cells
+            )
+        
         ard = []
         if thres is not None:
             ard = thres
@@ -372,7 +381,7 @@ class scDEF(object):
         return keep
 
     def init_var_params(
-        self, init_budgets=True, init_z=None, init_w=None, nmf_init=False, **kwargs
+        self, init_budgets=True, init_alpha=True, init_z=None, init_w=None, init_brd=None, nmf_init=False, z_init_concentration=1.0, **kwargs
     ):
         rngs = random.split(random.PRNGKey(self.seed), self.n_layers)
 
@@ -405,9 +414,18 @@ class scDEF(object):
             self.local_params = [self.local_params[0]]
             self.global_params = [self.global_params[0]]
         # BRD
-        m_brd = self.brd_mean
-        v_brd = m_brd / 100.0
-
+        if not nmf_init:
+            m_brd = self.brd_mean
+        else:
+            m_brd = self.brd_mean # to counteract potentially noisy init
+        m_brd = tfd.Gamma(100., 100. / m_brd).sample(
+                        seed=rngs[0],
+                        sample_shape=[self.layer_sizes[0], 1],
+                    )#self.brd_mean
+        v_brd = m_brd 
+        if init_brd is not None:
+            m_brd = init_brd
+            v_brd = m_brd / 1.0
         self.global_params.append(
             jnp.array(
                 (
@@ -426,18 +444,19 @@ class scDEF(object):
         z_shapes = []
         z_rates = []
         rng_cnt = 0
+
         for layer_idx in range(
             self.n_layers
         ):  # we go from layer 0 (bottom) to layer L (top)
             # Init z
-            a = 1.0
+            a = z_init_concentration
             clip = 1e-6  # alpha=1 and clip=1e-6 allows for many factors to be learned, but leads to BRD becoming kind of big
 
             if (
                 layer_idx > 0
             ):  # If the top layer inits to very small numbers, the loss goes crazy when MC=10...
                 clip = 1e-6
-                a = 1.0
+                a = z_init_concentration
 
             if layer_idx == self.n_layers - 1:
                 clip = 1e-3
@@ -446,7 +465,7 @@ class scDEF(object):
                 m = init_z.astype(jnp.float32)
             else:
                 m = jnp.clip(
-                    tfd.Gamma(a, a / 1.0).sample(
+                    tfd.Gamma(a, a / 1.).sample(
                         seed=rngs[rng_cnt],
                         sample_shape=[self.n_cells, self.layer_sizes[layer_idx]],
                     ),
@@ -455,9 +474,9 @@ class scDEF(object):
                 )
                 rng_cnt += 1
 
-            v = m / 100.0
+            v = m #/ 100.0
             if layer_idx > 0:
-                v = m / 100.0
+                v = m #/ 100.0
             z_shape = jnp.log(m**2 / jnp.sqrt(m**2 + v)) * jnp.ones(
                 (self.n_cells, self.layer_sizes[layer_idx])
             )
@@ -487,15 +506,20 @@ class scDEF(object):
             else:
                 m = 1.0 / self.layer_sizes[layer_idx] * jnp.ones((in_layer, out_layer))
                 m = m * self.w_priors[layer_idx][0] / self.w_priors[layer_idx][1]
+                m = tfd.Gamma(100.0, 100.0 / (m)).sample(seed=rngs[rng_cnt])
+                rng_cnt += 1
                 v = m / 100.0
-            if nmf_init:
+            if nmf_init and layer_idx == 0:
                 iw = init_w[layer_idx].astype(jnp.float32)
                 # Rescale
-                iw = 1.0 * iw / np.max(iw, axis=1)[:, None] + 1.0
+                iw = 1.0 * iw + 1.
                 # iw = 10. * 100.**iw/100. + 1.
-                iw = jnp.clip(iw, 1e-6, 1e1)  # need to set scales to avoid huge BRDs...
+                iw = (iw)
+                iw = iw #* self.w_priors[layer_idx][0] / self.w_priors[layer_idx][1]
+                iw = iw / np.sum(iw, axis=1, keepdims=True) + 1./self.layer_sizes[layer_idx]
+                iw = jnp.clip(iw, 1e-6, 1e2)  # need to set scales to avoid huge BRDs...
                 m = tfd.Gamma(
-                    100.0, 100.0 / (iw * 1.0 / self.layer_sizes[layer_idx])
+                    100.0, 100.0 / (iw)
                 ).sample(seed=rngs[rng_cnt])
                 rng_cnt += 1
                 v = m / 100.0
@@ -510,8 +534,8 @@ class scDEF(object):
             self.global_params.append(jnp.array((w_shape, w_rate)))
 
         # Gamma(1e3, 1e3/m)
-        m = 1.0
-        v = m / 100.0
+        m = self.shrinkage_shape / self.shrinkage_rate
+        v = m / 10.0
 
         self.global_params.append(
             jnp.array(
@@ -524,6 +548,23 @@ class scDEF(object):
             ),
         )
 
+        if init_alpha:
+            m = self.layer_concentration
+        else:
+            m = self.pmeans['layer_concentration']
+        v = m / 10.0
+
+        self.global_params.append(
+            jnp.array(
+                (
+                    jnp.log(m**2 / jnp.sqrt(m**2 + v))
+                    * jnp.ones((1, 1)),
+                    jnp.log(jnp.sqrt(jnp.log(1 + v / (m**2))))
+                    * jnp.ones((1, 1)),
+                )
+            ),
+        )
+
     def get_nmf_init(self, max_cells=None):
         """Use NMF on the data to init the first layer and then recursively for the other layers"""
         init_z = []
@@ -531,8 +572,6 @@ class scDEF(object):
         from sklearn.decomposition import NMF
 
         X = self.X
-        X = X * 10_000 / np.sum(X, axis=1)[:, None]
-        X = np.log(X + 1)
         if max_cells is not None:
             if max_cells < X.shape[0]:
                 key = jax.random.PRNGKey(self.seed)
@@ -540,10 +579,17 @@ class scDEF(object):
                     key, X.shape[0], replace=False, shape=(max_cells,)
                 )
                 X = X[cells]
+        X = X.copy()
+        lib = np.sum(X, axis=1, keepdims=True)
+        X /= lib
+        X *= 10_000
+        # X = np.log(X + 1)                
         for layer_idx in range(self.n_layers):
             model = NMF(
                 n_components=self.layer_sizes[layer_idx],
                 random_state=self.seed,
+                beta_loss='kullback-leibler',
+                solver='mu',
             )
             z = model.fit_transform(X)
             W = model.components_
@@ -657,6 +703,11 @@ class scDEF(object):
             jnp.clip(global_params[2 + self.n_layers][1], min_rate, max_rate)
         )
 
+        s_shape = jnp.clip(global_params[2 + self.n_layers + 1][0], min_shape, max_shape)
+        s_rate = jnp.exp(
+            jnp.clip(global_params[2 + self.n_layers + 1][1], min_rate, max_rate)
+        )
+
         z_shapes = jnp.clip(z_params[0][indices], min_shape, max_shape)
         z_rates = jnp.exp(jnp.clip(z_params[1][indices], min_rate, max_rate))
 
@@ -686,7 +737,7 @@ class scDEF(object):
         if self.use_brd:
             fscale_samples = lognormal_sample(rng, fscale_shapes, fscale_rates)
             _wm_sample = lognormal_sample(rng, wm_shape, wm_rate)
-            brd_samples = fscale_samples / jnp.maximum(_wm_sample, 1.0)
+            brd_samples = fscale_samples #/ jnp.maximum(_wm_sample, 1.0)
         # w will be sampled in a loop below because it cannot be vectorized
 
         # Compute ELBO
@@ -704,13 +755,17 @@ class scDEF(object):
         local_en = lognormal_entropy(cell_budget_shape, cell_budget_rate)
 
         # scale
+        s_sample = lognormal_sample(rng, s_shape, s_rate)
+        global_pl += gamma_logpdf(s_sample, 1.0, 1.0 / self.layer_concentration)
+        global_en += lognormal_entropy(s_shape, s_rate)        
         if self.use_brd:
             global_pl += gamma_logpdf(
                 fscale_samples, self.brd, self.brd / self.brd_mean
             )
             global_en += lognormal_entropy(fscale_shapes, fscale_rates)
 
-            global_pl += gamma_logpdf(_wm_sample, 0.1, 0.1)
+            global_pl += gamma_logpdf(_wm_sample, self.shrinkage_shape, self.shrinkage_rate)
+            
             global_en += lognormal_entropy(wm_shape, wm_rate)
 
         z_mean = 1.0
@@ -740,28 +795,28 @@ class scDEF(object):
                     _w_sample,
                     self.w_priors[idx][0] * (1.0 / fscale_samples),
                     self.w_priors[idx][1]
-                    * (1.0 / fscale_samples)
-                    * (1.0 / _wm_sample)
-                    * self.layer_sizes[idx],
+                    # * (1.0 / fscale_samples)
+                    # * (1.0 / _wm_sample)
+                    # * self.layer_sizes[idx],
                 )
             elif idx == 0:
                 global_pl += gamma_logpdf(
                     _w_sample,
                     self.w_priors[idx][0],
-                    self.w_priors[idx][1] * self.layer_sizes[idx],
+                    self.w_priors[idx][1],
                 )
             else:
                 if idx == 1 and self.use_brd:
                     global_pl += gamma_logpdf(
                         _w_sample,
                         self.w_priors[idx][0],
-                        self.w_priors[idx][1] * self.layer_sizes[idx] / brd_samples.T,
+                        self.w_priors[idx][1] / brd_samples.T,
                     )
                 else:
                     global_pl += gamma_logpdf(
                         _w_sample,
                         self.w_priors[idx][0],
-                        self.w_priors[idx][1] * self.layer_sizes[idx],
+                        self.w_priors[idx][1],
                     )
             global_en += lognormal_entropy(_w_shape, _w_rate)
 
@@ -781,30 +836,41 @@ class scDEF(object):
             )
             _z_sample = lognormal_sample(rng, _z_shape, _z_rate)
 
-            rate_param = 1.0
-            if idx > 0:
-                rate_param = 1.0
-            elif self.n_layers == 1 and self.use_brd:
-                rate_param = brd_samples.T
-
             local_pl += jax.lax.cond(
                 idx == self.n_layers - 1,
-                lambda: gamma_logpdf(_z_sample, 0.1, 0.1 / rate_param),
+                lambda: gamma_logpdf(_z_sample, self.top_alpha, self.top_alpha),
                 lambda: gamma_logpdf(
                     _z_sample,
                     self.layer_concentration,
-                    self.layer_concentration / (rate_param * z_mean),
+                    self.layer_concentration / (z_mean),
                 ),
             )
 
             local_en += lognormal_entropy(_z_shape, _z_rate)
-
             z_mean = jnp.einsum("nk,kp->np", _z_sample, _w_sample)
 
-        mean_bottom = jnp.einsum("nk,kg->ng", _z_sample, _w_sample) * cell_budget_sample
+        n_w_sample = _w_sample / jnp.sum(_w_sample, axis=1, keepdims=True)
+        if self.use_brd:
+            n_w_sample = n_w_sample * _wm_sample
+        n_z_sample = _z_sample / jnp.sum(_z_sample, axis=1, keepdims=True)
+        mean_bottom = jnp.einsum("nk,kg->ng", n_z_sample, n_w_sample) * cell_budget_sample # self.exposures[indices]
         mean_bottom = mean_bottom * (batch_indices_onehot.dot(gene_budget_sample))
 
-        ll = jnp.sum(vmap(poisson.logpmf)(jnp.array(batch), mean_bottom))
+        x = jnp.array(batch)
+        lam = mean_bottom  # same shape
+
+        mask = (x > 0)
+        x_nz = jnp.where(mask, x, 0.0)
+
+        # X log λ  -  log(X!)
+        ll_nz = jnp.sum(x_nz * jnp.log(lam + 1e-8))
+        ll_nz -= jnp.sum(jax.scipy.special.gammaln(x_nz + 1.0))
+
+        # -∑ λ over *all* entries
+        ll_zero = -jnp.sum(lam)
+
+        ll = ll_nz + ll_zero
+        # ll = jnp.sum(vmap(poisson.logpmf)(jnp.array(batch), mean_bottom))
         ll = jax.lax.cond(
             stop_gradients[0],
             lambda: ll * 0.0,
@@ -870,7 +936,7 @@ class scDEF(object):
         seed=None,
         min_epochs=100,
         tolerance=1e-5,
-        patience=10,
+        patience=5,
         update_locals=True,
         update_globals=True,
     ):
@@ -1017,25 +1083,26 @@ class scDEF(object):
         )
 
     def fit(
-        self, pretrain=True, nmf_init=False, max_cells_init=1024, unmix=False, **kwargs
+        self, pretrain=True, nmf_init=True, max_cells_init=1024, unmix=False, eff_min=0.0001, save_pretrain_factors=True, **kwargs
     ):
         """Learn a one-layer scDEF with 100 factors with BRD to obtain
         cell and gene scale factors and an estimate of the effective number of factors.
         Update the sizes based on that estimate and re-init everything except the scale factors.
+        The cell and gene scales take most of the gradient weights, so we run a first round of epochs to get them right, and then restart the optimization with the same learning rate.
         """
         if pretrain:
             self.logger.info(
                 f"Pretraining to find initial estimate of number of factors"
             )
-            self.update_model_size(self.n_factors, max_n_layers=1)
-            self.update_model_priors()
+            # self.update_model_size(self.n_factors, max_n_layers=5)
+            # self.update_model_priors()
             self.init_var_params(
-                init_budgets=True, nmf_init=nmf_init, max_cells=max_cells_init
+                init_budgets=True, nmf_init=nmf_init, max_cells=max_cells_init,
             )
             self.elbos = []
             self.step_sizes = []
             self._learn(filter=False, annotate=False, **kwargs)
-            eff_factors = self.get_effective_factors(min_cells=0.01)
+            eff_factors = self.get_effective_factors(thres=1., min_cells=eff_min)
             mixture_factors = self.identify_mixture_factors()
             if len(mixture_factors) > 0 and unmix:
                 self.logger.info(
@@ -1043,7 +1110,7 @@ class scDEF(object):
                 )
                 self.reinit_factors(mixture_factors=mixture_factors)
                 self._learn(filter=False, annotate=False, **kwargs)
-                eff_factors = self.get_effective_factors(min_cells=0.01)
+                eff_factors = self.get_effective_factors(thres=1., min_cells=eff_min)
             n_eff_factors = len(eff_factors)
             if n_eff_factors == 0:
                 self.logger.info("No effective factors found. Using all factors.")
@@ -1052,19 +1119,33 @@ class scDEF(object):
             self.logger.info(
                 f"scDEF pretraining finished. Found {n_eff_factors} effective factors."
             )
+            if save_pretrain_factors:
+                self.pretrain_brd = np.array(self.pmeans['brd']).ravel()
+                self.pretrain_wm = np.array(self.pmeans['wm']).ravel()
+                self.pretrain_w = np.array(self.pmeans['L0W'])
+            
             self.update_model_size(n_eff_factors)
             self.update_model_priors()
             self.logger.info(f"Learning scDEF with layer sizes {self.layer_sizes}.")
             init_budgets = False
+            init_alpha = False
             init_w = self.pmeans["L0W"][eff_factors]
+            init_brd = self.pmeans["brd"][eff_factors]
+            z_init_concentration = 100.0
         else:
             init_budgets = True
+            init_alpha = True
             init_w = None
+            init_brd = None
+            z_init_concentration = 1.0
         self.init_var_params(
             init_budgets=init_budgets,
+            init_alpha=init_alpha,
             init_w=init_w,
+            init_brd=init_brd,
             nmf_init=nmf_init,
             max_cells=max_cells_init,
+            z_init_concentration=z_init_concentration,
         )
         self.elbos = []
         self.step_sizes = []
@@ -1074,8 +1155,9 @@ class scDEF(object):
         self,
         n_epoch: Optional[Union[int, list]] = [1000],
         lr: Optional[Union[float, list]] = 1e-2,
+        local_lr: Optional[Union[float, list]] = 1e-2,
         annealing: Optional[Union[float, list]] = 1.0,
-        num_samples: Optional[int] = 10,
+        num_samples: Optional[int] = 100,
         batch_size: Optional[int] = 256,
         layerwise: Optional[bool] = False,
         min_epochs: Optional[int] = 50,
@@ -1128,16 +1210,20 @@ class scDEF(object):
         if isinstance(lr, list):
             if layerwise:
                 lr_schedule = [lr[0]] * n_steps
+                local_lr_schedule = [local_lr[0]] * n_steps
             lr_schedule = lr
-            if len(lr_schedule) != n_steps:
+            local_lr_schedule = local_lr
+            if len(lr_schedule) != n_steps or len(local_lr_schedule) != n_steps:
                 raise ValueError(
-                    "lr_schedule list must be of same length as n_epoch_schedule"
+                    "lr_schedule and local_lr_schedule list must be of same length as n_epoch_schedule"
                 )
         else:
             if layerwise:
                 lr_schedule = [lr] * n_steps
+                local_lr_schedule = [local_lr] * n_steps
             else:
                 lr_schedule = [lr * 0.1**step for step in range(n_steps)]
+                local_lr_schedule = [local_lr * 0.1**step for step in range(n_steps)]
 
         if isinstance(annealing, list):
             if layerwise:
@@ -1199,12 +1285,13 @@ class scDEF(object):
         for i in range(len(n_epoch_schedule)):
             n_epochs = n_epoch_schedule[i]
             step_size = lr_schedule[i]
+            local_step_size = local_lr_schedule[i]
             anneal_param = annealing_schedule[i]
             self.logger.info(f"Initializing optimizer with learning rate {step_size}.")
             if anneal_param != 1:
                 self.logger.info(f"Set annealing parameter to {anneal_param}.")
 
-            local_optimizer = optax.adam(step_size / 1.0)
+            local_optimizer = optax.adam(local_step_size)
             global_optimizer = optax.adam(step_size)
 
             if layerwise:
@@ -1337,7 +1424,7 @@ class scDEF(object):
         cell_budget_params = self.local_params[0]
         gene_budget_params = self.global_params[0]
         fscale_params = self.global_params[1]
-        wm_params = self.global_params[-1]
+        wm_params = self.global_params[-2]
         z_params = self.local_params[1]
 
         self.pmeans = {
@@ -1356,9 +1443,10 @@ class scDEF(object):
             ),
             "factor_means": jnp.exp(wm_params[0] + 0.5 * jnp.exp(wm_params[1]) ** 2),
         }
-        self.pmeans["brd"] = self.pmeans["factor_concentrations"] / jnp.maximum(
-            self.pmeans["factor_means"], 1.0
-        )
+        self.pmeans["brd"] = self.pmeans["factor_concentrations"] #/ jnp.maximum(
+            #  self.pmeans["factor_means"], 1.0
+        #  )
+        self.pmeans['wm'] = self.pmeans['factor_means']
 
         for idx in range(self.n_layers):
             start = sum(self.layer_sizes[:idx])
@@ -1372,6 +1460,8 @@ class scDEF(object):
             self.pmeans[f"{self.layer_names[idx]}W"] = jnp.exp(
                 _w_shape + 0.5 * jnp.exp(_w_rate) ** 2
             )
+
+        self.pmeans['layer_concentration'] = np.exp(self.global_params[-1][0] + 0.5 * np.exp(self.global_params[-1][1]) ** 2)
 
     def set_posterior_variances(self):
         cell_budget_params = self.local_params[0]
@@ -1408,7 +1498,7 @@ class scDEF(object):
 
     def filter_factors(
         self,
-        thres: Optional[float] = 1.0,
+        thres: Optional[float] = 0.0,
         iqr_mult: Optional[float] = 0.0,
         min_cells: Optional[float] = 0.001,
         filter_up: Optional[bool] = True,
