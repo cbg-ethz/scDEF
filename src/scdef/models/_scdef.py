@@ -1292,7 +1292,7 @@ class scDEF(object):
             )  # minimize -ELBO
 
         def clip_params(
-            params, min_mu=-1e10, max_mu=1e2, min_logstd=-1e10, max_logstd=1e1
+            params, min_mu=-1e10, max_mu=1e4, min_logstd=-1e10, max_logstd=1e1
         ):
             for i in range(len(params))[:-2]:  # skip the last two params (w and s)
                 params[i] = (
@@ -1777,16 +1777,30 @@ class scDEF(object):
         genes=True,
         return_scores=False,
         sorted_scores=True,
+        drop_factors=None,
     ):
         if top_genes is None:
             top_genes = len(self.adata.var_names)
 
         term_names = np.array(self.adata.var_names)
+        factor_names_0 = np.array(self.factor_names[0])
+        indices_0 = np.arange(len(factor_names_0))
+
+        # Prepare mask for drop_factors to select factors in dot products for upper layers
+        if drop_factors is not None and len(drop_factors) > 0:
+            drop_set = set(drop_factors)
+            keep_indices_0 = [
+                i for i, name in enumerate(factor_names_0) if name not in drop_set
+            ]
+        else:
+            keep_indices_0 = indices_0
+
         term_scores = self.pmeans[f"{self.layer_names[0]}W"][self.factor_lists[0]]
         n_factors = len(self.factor_lists[layer_idx])
 
         if layer_idx > 0:
             if genes:
+                # Compute factor-to-gene mapping for this upper layer
                 term_scores = self.pmeans[f"{self.layer_names[layer_idx]}W"][
                     self.factor_lists[layer_idx]
                 ][:, self.factor_lists[layer_idx - 1]]
@@ -1795,9 +1809,16 @@ class scDEF(object):
                         self.factor_lists[layer]
                     ][:, self.factor_lists[layer - 1]]
                     term_scores = term_scores.dot(lower_mat)
-                term_scores = term_scores.dot(
-                    self.pmeans[f"{self.layer_names[0]}W"][self.factor_lists[0]]
+                # For mapping to genes, drop columns of w0 corresponding to factors in drop_factors
+                w0 = self.pmeans[f"{self.layer_names[0]}W"][self.factor_lists[0]]
+                if len(keep_indices_0) != len(factor_names_0):
+                    w0 = w0[keep_indices_0, :]
+                term_scores = (
+                    term_scores[:, keep_indices_0]
+                    if term_scores.shape[1] == len(factor_names_0)
+                    else term_scores
                 )
+                term_scores = term_scores.dot(w0)
             else:
                 n_factors_below = len(self.factor_lists[layer_idx - 1])
                 term_names = np.arange(n_factors_below).astype(str)
@@ -1910,6 +1931,15 @@ class scDEF(object):
         else:
             return score_utils.jaccard_similarity(signatures)
 
+    def get_relevances_dict(self):
+        relevance_dict = {}
+        for layer_idx in range(self.n_layers):
+            for factor_idx, factor_name in enumerate(self.factor_names[layer_idx]):
+                relevance_dict[factor_name] = self.pmeans["factor_means"][
+                    self.factor_lists[layer_idx][factor_idx]
+                ]
+        return relevance_dict
+
     def get_sizes_dict(self):
         sizes_dict = {}
         for layer_idx in range(self.n_layers):
@@ -1924,7 +1954,12 @@ class scDEF(object):
         return sizes_dict
 
     def get_signatures_dict(
-        self, top_genes=None, scores=False, sorted_scores=False, layer_normalize=False
+        self,
+        top_genes=None,
+        scores=False,
+        sorted_scores=False,
+        layer_normalize=False,
+        drop_factors=None,
     ):
         signatures_dict = {}
         scores_dict = {}
@@ -1934,6 +1969,7 @@ class scDEF(object):
                 top_genes=top_genes,
                 return_scores=True,
                 sorted_scores=sorted_scores,
+                drop_factors=drop_factors,
             )
             for factor_idx, factor_name in enumerate(self.factor_names[layer_idx]):
                 val = np.array(layer_scores[factor_idx])
@@ -2049,51 +2085,6 @@ class scDEF(object):
                     )
             attachments.append(layer_attachments)
         return attachments
-
-    def get_hierarchy(
-        self, simplified: Optional[bool] = True
-    ) -> Mapping[str, Sequence[str]]:
-        """Get a dictionary containing the polytree contained in the scDEF graph.
-
-        Args:
-            simplified: whether to collapse single-child nodes
-
-        Returns:
-            hierarchy: the dictionary containing the hierarchy
-        """
-        hierarchy = dict()
-        for layer_idx in range(0, self.n_layers - 1):
-            factors = self.factor_lists[layer_idx]
-            n_factors = len(factors)
-            if layer_idx < self.n_layers - 1:
-                # Assign factors to upper factors to set the plotting order
-                mat = self.pmeans[f"{self.layer_names[layer_idx+1]}W"][
-                    self.factor_lists[layer_idx + 1]
-                ][:, self.factor_lists[layer_idx]]
-                normalized_factor_weights = mat / np.sum(mat, axis=1).reshape(-1, 1)
-                assignments = []
-                for factor_idx in range(n_factors):
-                    assignments.append(
-                        np.argmax(normalized_factor_weights[:, factor_idx])
-                    )
-                assignments = np.array(assignments)
-
-                for upper_layer_factor in range(len(self.factor_lists[layer_idx + 1])):
-                    upper_layer_factor_name = self.factor_names[layer_idx + 1][
-                        upper_layer_factor
-                    ]
-                    assigned_lower = np.array(self.factor_names[layer_idx])[
-                        np.where(assignments == upper_layer_factor)[0]
-                    ].tolist()
-                    hierarchy[upper_layer_factor_name] = assigned_lower
-
-        if simplified:
-            layer_sizes = [len(self.factor_names[idx]) for idx in range(self.n_layers)]
-            hierarchy = hierarchy_utils.simplify_hierarchy(
-                hierarchy, self.layer_names, layer_sizes, factor_names=self.factor_names
-            )
-
-        return hierarchy
 
     def compute_weight(self, upper_factor_name, lower_factor_name):
         """Compute the weight between two factors across any number of layers."""

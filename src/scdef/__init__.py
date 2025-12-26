@@ -1,6 +1,7 @@
 from .models import scDEF, iscDEF
 from .utils import hierarchy_utils, jax_utils, score_utils, color_utils
 from . import plotting as pl
+from . import tools as tl
 
 from importlib import metadata
 

@@ -123,7 +123,7 @@ def test_scdef():
             show=False,
         )
 
-    simplified = model.get_hierarchy(simplified=True)
+    simplified = scd.tl.get_hierarchy(model, simplified=True)
     g = scd.pl.make_graph(model, hierarchy=simplified)
 
     assignments, matches = scd.utils.factor_utils.assign_obs_to_factors(
