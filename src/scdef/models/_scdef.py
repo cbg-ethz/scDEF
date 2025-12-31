@@ -229,10 +229,24 @@ class scDEF(object):
             / np.var(self.batch_lib_sizes)
         )
         self.exposure = jnp.array(self.batch_lib_sizes / np.mean(self.batch_lib_sizes))
+
+        eps = 1e-12
+
+        # ---- NEW: gene_ratio is per-gene and encodes baseline abundance ----
+        # Choose a baseline definition. For raw UMI counts, using mean counts per cell is reasonable.
+        # If you prefer library-normalized baseline, replace mu = X.mean(0) by mu = (X/lib).mean(0).
+        mu = self.X.mean(axis=0) + eps
+        mu_bar = float(mu.mean())
+        # Prior mean of gene_scale_g will be ~ mu_g / mu_bar
+        gene_ratio = mu_bar / mu  # vector length G
+        gene_ratio = np.array(gene_ratio)[None, :]  # shape (1, G)
+        self.gene_ratio_init = gene_ratio  # will be overridden per batch if batch_key has >1 values
+
         gene_size = np.sum(self.X, axis=0)
         self.gene_means = np.mean(gene_size)
         self.gene_vars = np.var(gene_size)
         self.gene_ratio = self.gene_means / self.gene_vars
+
         if batch_key is not None:
             if batch_key in self.adata.obs.columns:
                 batches = np.unique(self.adata.obs[batch_key].values)
@@ -252,28 +266,32 @@ class scDEF(object):
                         for idx in range(self.n_batches)
                     ]
                     self.adata.uns[f"{batch_key}_colors"] = self.batch_colors
-                self.batch_indices_onehot = np.zeros(
-                    (self.adata.shape[0], self.n_batches)
-                )
+
+                self.batch_indices_onehot = np.zeros((self.adata.shape[0], self.n_batches))
+                # If multiple batches: compute gene_ratio per batch (still per gene)
                 if self.n_batches > 1:
-                    self.gene_means = np.ones((self.n_batches, self.adata.shape[1]))
-                    self.gene_vars = np.ones((self.n_batches, self.adata.shape[1]))
                     self.gene_ratio = np.ones((self.n_batches, self.adata.shape[1]))
+                    self.gene_ratio_init = np.ones((self.n_batches, self.adata.shape[1]))
                     for i, b in enumerate(batches):
                         cells = np.where(self.adata.obs[batch_key] == b)[0]
                         self.batch_indices_onehot[cells, i] = 1
                         self.batch_lib_sizes[cells] = np.sum(self.X, axis=1)[cells]
-                        self.batch_lib_ratio[cells] = np.mean(
-                            self.batch_lib_sizes[cells]
-                        ) / np.var(self.batch_lib_sizes[cells])
-                        batch_gene_size = np.sum(self.X[cells], axis=0)
-                        self.gene_means[i] = np.mean(batch_gene_size)
-                        self.gene_vars[i] = np.var(batch_gene_size)
-                        self.gene_ratio[i] = self.gene_means[i] / self.gene_vars[i]
+                        self.batch_lib_ratio[cells] = np.mean(self.batch_lib_sizes[cells]) / (
+                            np.var(self.batch_lib_sizes[cells]) + eps
+                        )
+                        mu_b = self.X[cells].mean(axis=0) + eps
+                        mu_b_bar = float(mu_b.mean())
+                        self.gene_ratio_init[i] = mu_b_bar / mu_b
+                        gene_size = np.sum(self.X[cells], axis=0)
+                        gene_means = np.mean(gene_size)
+                        gene_vars = np.var(gene_size)
+                        self.gene_ratio[i] = self.gene_ratio[i] * 0 + gene_means / gene_vars
+
         self.batch_indices_onehot = jnp.array(self.batch_indices_onehot)
         self.batch_lib_sizes = jnp.array(self.batch_lib_sizes)
         self.batch_lib_ratio = jnp.array(self.batch_lib_ratio)
         self.gene_ratio = jnp.array(self.gene_ratio)
+
 
     def update_model_size(
         self,
@@ -408,15 +426,20 @@ class scDEF(object):
                     )
                 ),
             ]
-            m = 1.0
-            v = m
+            # initialize gene scales at the prior mean (per gene)
+            # prior mean under Gamma(shape, rate=shape*gene_ratio) is 1/gene_ratio
+            m = 1.0 / np.array(self.gene_ratio_init)  # shape: (G,) or (B,G)
+            m = np.clip(m, 1e-6, 1e6)
+            v = m / 10.0
+
+            m = jnp.array(m, dtype=jnp.float32)
+            v = jnp.array(v, dtype=jnp.float32)
+
             self.global_params = [
                 jnp.array(
                     (
-                        jnp.log(m**2 / jnp.sqrt(m**2 + v))
-                        * jnp.ones((self.n_batches, self.n_genes)),  # gene_scales
-                        jnp.log(jnp.sqrt(jnp.log(1 + v / (m**2))))
-                        * jnp.ones((self.n_batches, self.n_genes)),
+                        jnp.log(m**2 / jnp.sqrt(m**2 + v)),
+                        jnp.log(jnp.sqrt(jnp.log(1 + v / (m**2)))),
                     )
                 ),
             ]
