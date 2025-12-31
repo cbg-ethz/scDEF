@@ -4,7 +4,7 @@ This module provides direct access to plotting functions, allowing users to call
 scdef.pl.plot_qc(model) instead of model.plot.plot_qc().
 """
 
-from .graph import make_graph
+from .graph import make_graph, plot_technical_hierarchy, plot_biological_hierarchy
 from .factors import (
     plot_obs_factor_dotplot,
     plot_multilevel_paga,
@@ -23,6 +23,8 @@ from .qc import plot_qc, plot_scales, plot_scale, plot_brd, plot_gini_brd, plot_
 
 __all__ = [
     "make_graph",
+    "plot_technical_hierarchy",
+    "plot_biological_hierarchy",
     "plot_obs_factor_dotplot",
     "plot_multilevel_paga",
     "plot_layers_obs",

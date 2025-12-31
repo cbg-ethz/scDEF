@@ -3,6 +3,7 @@ import pandas as pd
 import matplotlib
 from graphviz import Graph
 from typing import Optional
+from ..tools import get_technical_signature
 from ..utils import hierarchy_utils
 
 
@@ -939,7 +940,7 @@ def plot_biological_hierarchy(model, **kwargs):
 
 def plot_technical_hierarchy(model, **kwargs):
     if "show_signatures" in kwargs:
-        technical_signature, technical_scores = model.get_technical_signature()
+        technical_signature, technical_scores = get_technical_signature(model, return_scores=True)
     g = make_technical_hierarchy_graph(
         model,
         hierarchy=model.adata.uns["technical_hierarchy"],
