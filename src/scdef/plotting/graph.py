@@ -940,7 +940,9 @@ def plot_biological_hierarchy(model, **kwargs):
 
 def plot_technical_hierarchy(model, **kwargs):
     if "show_signatures" in kwargs:
-        technical_signature, technical_scores = get_technical_signature(model, return_scores=True)
+        technical_signature, technical_scores = get_technical_signature(
+            model, return_scores=True
+        )
     g = make_technical_hierarchy_graph(
         model,
         hierarchy=model.adata.uns["technical_hierarchy"],

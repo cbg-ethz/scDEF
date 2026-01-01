@@ -240,7 +240,9 @@ class scDEF(object):
         # Prior mean of gene_scale_g will be ~ mu_g / mu_bar
         gene_ratio = mu_bar / mu  # vector length G
         gene_ratio = np.array(gene_ratio)[None, :]  # shape (1, G)
-        self.gene_ratio_init = gene_ratio  # will be overridden per batch if batch_key has >1 values
+        self.gene_ratio_init = (
+            gene_ratio  # will be overridden per batch if batch_key has >1 values
+        )
 
         gene_size = np.sum(self.X, axis=0)
         self.gene_means = np.mean(gene_size)
@@ -267,31 +269,36 @@ class scDEF(object):
                     ]
                     self.adata.uns[f"{batch_key}_colors"] = self.batch_colors
 
-                self.batch_indices_onehot = np.zeros((self.adata.shape[0], self.n_batches))
+                self.batch_indices_onehot = np.zeros(
+                    (self.adata.shape[0], self.n_batches)
+                )
                 # If multiple batches: compute gene_ratio per batch (still per gene)
                 if self.n_batches > 1:
                     self.gene_ratio = np.ones((self.n_batches, self.adata.shape[1]))
-                    self.gene_ratio_init = np.ones((self.n_batches, self.adata.shape[1]))
+                    self.gene_ratio_init = np.ones(
+                        (self.n_batches, self.adata.shape[1])
+                    )
                     for i, b in enumerate(batches):
                         cells = np.where(self.adata.obs[batch_key] == b)[0]
                         self.batch_indices_onehot[cells, i] = 1
                         self.batch_lib_sizes[cells] = np.sum(self.X, axis=1)[cells]
-                        self.batch_lib_ratio[cells] = np.mean(self.batch_lib_sizes[cells]) / (
-                            np.var(self.batch_lib_sizes[cells]) + eps
-                        )
+                        self.batch_lib_ratio[cells] = np.mean(
+                            self.batch_lib_sizes[cells]
+                        ) / (np.var(self.batch_lib_sizes[cells]) + eps)
                         mu_b = self.X[cells].mean(axis=0) + eps
                         mu_b_bar = float(mu_b.mean())
                         self.gene_ratio_init[i] = mu_b_bar / mu_b
                         gene_size = np.sum(self.X[cells], axis=0)
                         gene_means = np.mean(gene_size)
                         gene_vars = np.var(gene_size)
-                        self.gene_ratio[i] = self.gene_ratio[i] * 0 + gene_means / gene_vars
+                        self.gene_ratio[i] = (
+                            self.gene_ratio[i] * 0 + gene_means / gene_vars
+                        )
 
         self.batch_indices_onehot = jnp.array(self.batch_indices_onehot)
         self.batch_lib_sizes = jnp.array(self.batch_lib_sizes)
         self.batch_lib_ratio = jnp.array(self.batch_lib_ratio)
         self.gene_ratio = jnp.array(self.gene_ratio)
-
 
     def update_model_size(
         self,

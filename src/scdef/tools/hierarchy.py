@@ -220,7 +220,9 @@ def get_hierarchy(
         factors = model.factor_lists[layer_idx]
         # drop_factors are names, not indices
         if drop_factors is not None:
-            kept_idx = [i for i, name in enumerate(factor_names) if name not in drop_factors]
+            kept_idx = [
+                i for i, name in enumerate(factor_names) if name not in drop_factors
+            ]
             factors = np.array([factors[i] for i in kept_idx], dtype=int)
             factor_names = [factor_names[i] for i in kept_idx]
         else:
@@ -231,8 +233,14 @@ def get_hierarchy(
         upper_factor_names = model.factor_names[layer_idx + 1]
         upper_factors = model.factor_lists[layer_idx + 1]
         if drop_factors is not None:
-            upper_kept_idx = [i for i, name in enumerate(upper_factor_names) if name not in drop_factors]
-            upper_factors = np.array([upper_factors[i] for i in upper_kept_idx], dtype=int)
+            upper_kept_idx = [
+                i
+                for i, name in enumerate(upper_factor_names)
+                if name not in drop_factors
+            ]
+            upper_factors = np.array(
+                [upper_factors[i] for i in upper_kept_idx], dtype=int
+            )
             upper_factor_names = [upper_factor_names[i] for i in upper_kept_idx]
         else:
             upper_factors = np.array(upper_factors, dtype=int)
@@ -240,7 +248,9 @@ def get_hierarchy(
 
         # Check: left index is upper factor, right is lower factor
         # model.pmeans["<upper_layer_name>W"] shape: [n_upper, n_lower]
-        mat = model.pmeans[f"{model.layer_names[layer_idx+1]}W"][np.ix_(upper_factors, factors)]
+        mat = model.pmeans[f"{model.layer_names[layer_idx+1]}W"][
+            np.ix_(upper_factors, factors)
+        ]
         # mat: (len(upper_factors), len(factors))
         # Each lower factor will be assigned to a single upper factor:
         # For each factor (column), find the row (upper factor) with the highest value
@@ -251,7 +261,9 @@ def get_hierarchy(
             assignments.append(np.argmax(normalized_factor_weights[:, factor_idx]))
         assignments = np.array(assignments)
 
-        for upper_layer_factor_idx, upper_layer_factor_name in enumerate(upper_factor_names):
+        for upper_layer_factor_idx, upper_layer_factor_name in enumerate(
+            upper_factor_names
+        ):
             assigned_lower = [
                 factor_names[j]
                 for j in range(n_factors)

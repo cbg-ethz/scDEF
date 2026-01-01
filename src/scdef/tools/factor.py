@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 
+
 def set_factor_signatures(model, signatures=None, top_genes=10):
     if signatures is None:
         signatures = model.get_signatures_dict(top_genes=top_genes)
@@ -15,8 +16,11 @@ def set_technical_factors(model, factors=None):
         # Collect all factor names from all layers into a flat list
         all_factor_names = [name for names in model.factor_names for name in names]
         model.adata.uns["factor_obs"] = pd.DataFrame(index=all_factor_names)
-    model.adata.uns["factor_obs"]["technical"] = np.array([False] * len(all_factor_names))
+    model.adata.uns["factor_obs"]["technical"] = np.array(
+        [False] * len(all_factor_names)
+    )
     model.adata.uns["factor_obs"]["technical"].loc[factors] = True
+
 
 def __build_consensus_signature(var_names, gene_scores_array, sizes_array):
     sizes_array = sizes_array / np.sum(sizes_array)
@@ -36,10 +40,12 @@ def get_technical_signature(model, top_genes=10, return_scores=False):
     )
     relevances = model.get_relevances_dict()
     children = hierarchy["tech_top"]
-    factors = [factor for i, factor in enumerate(range(len(gene_scores))) if model.factor_names[0][i] in children]
-    gene_scores = np.array(
-        [gene_scores[f] / np.max(gene_scores[f]) for f in factors]
-    )
+    factors = [
+        factor
+        for i, factor in enumerate(range(len(gene_scores)))
+        if model.factor_names[0][i] in children
+    ]
+    gene_scores = np.array([gene_scores[f] / np.max(gene_scores[f]) for f in factors])
     children_sizes = np.array([relevances[child] for child in children]).ravel()
     consensus_signature, consensus_scores = __build_consensus_signature(
         model.adata.var_names, gene_scores, children_sizes
