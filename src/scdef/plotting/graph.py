@@ -945,7 +945,9 @@ def plot_technical_hierarchy(model, **kwargs):
     if "show_signatures" in kwargs:
         if kwargs["show_signatures"]:
             technical_signature, technical_scores = get_technical_signature(
-                model, return_scores=True, top_genes=None,
+                model,
+                return_scores=True,
+                top_genes=None,
             )
     g = make_technical_hierarchy_graph(
         model,
