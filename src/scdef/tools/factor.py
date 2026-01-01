@@ -33,11 +33,35 @@ def __build_consensus_signature(var_names, gene_scores_array, sizes_array):
 
 def get_technical_signature(model, top_genes=10, return_scores=False):
     hierarchy = model.adata.uns["technical_hierarchy"]
-    _, gene_scores = model.get_rankings(
+    gene_rankings, gene_scores = model.get_rankings(
         layer_idx=0,
         genes=True,
         return_scores=True,
     )
+
+    # Reorder each gene_rankings and gene_scores by model.adata.var_names
+    var_names = np.array(model.adata.var_names)
+    n_factors = len(gene_scores)
+    gene_scores_ordered = []
+    for i in range(n_factors):
+        ranking = np.array(gene_rankings[i])
+        scores = np.array(gene_scores[i])
+        # Map gene ranking to index in model.adata.var_names
+        gene_order = np.argsort([np.where(var_names == gene)[0][0] for gene in ranking])
+        reordered_idx = np.argsort([np.where(ranking == g)[0][0] for g in var_names])
+        # Pad/truncate scores to fit var_names if necessary
+        scores_full = np.full(len(var_names), np.nan)
+        mask = np.in1d(var_names, ranking)
+        scores_full[mask] = scores[
+            [np.where(ranking == g)[0][0] for g in var_names[mask]]
+        ]
+        # Replace nans with 0 if needed, or keep as nan
+        scores_full = np.nan_to_num(scores_full, nan=0)
+        gene_scores_ordered.append(scores_full)
+    gene_scores = np.array(
+        [s / np.max(s) if np.max(s) > 0 else s for s in gene_scores_ordered]
+    )
+
     relevances = model.get_relevances_dict()
     children = hierarchy["tech_top"]
     factors = [
@@ -47,6 +71,7 @@ def get_technical_signature(model, top_genes=10, return_scores=False):
     ]
     gene_scores = np.array([gene_scores[f] / np.max(gene_scores[f]) for f in factors])
     children_sizes = np.array([relevances[child] for child in children]).ravel()
+
     consensus_signature, consensus_scores = __build_consensus_signature(
         model.adata.var_names, gene_scores, children_sizes
     )

@@ -848,6 +848,7 @@ def make_technical_hierarchy_graph(
                     label, enrichments, factor_idx, top_genes[layer_idx]
                 )
             elif show_signatures:
+                print(layer_idx, factor_idx, gene_rankings_layer, gene_scores_layer)
                 label = _add_signature_to_label(
                     label,
                     model,
@@ -939,15 +940,18 @@ def plot_biological_hierarchy(model, **kwargs):
 
 
 def plot_technical_hierarchy(model, **kwargs):
+    technical_signature = None
+    technical_scores = None
     if "show_signatures" in kwargs:
-        technical_signature, technical_scores = get_technical_signature(
-            model, return_scores=True
-        )
+        if kwargs["show_signatures"]:
+            technical_signature, technical_scores = get_technical_signature(
+                model, return_scores=True, top_genes=None,
+            )
     g = make_technical_hierarchy_graph(
         model,
         hierarchy=model.adata.uns["technical_hierarchy"],
-        root_signature=technical_signature,
-        root_gene_scores=technical_scores,
+        root_gene_rankings=[technical_signature],
+        root_gene_scores=[technical_scores],
         root_name="tech_top",
         **kwargs,
     )
