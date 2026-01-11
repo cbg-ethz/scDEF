@@ -1,5 +1,23 @@
 import numpy as np
 import pandas as pd
+from .hierarchy import get_hierarchy, compute_hierarchy_scores
+
+
+def make_factor_obs(model):
+    res = compute_hierarchy_scores(model)
+    model.adata.uns["factor_obs"] = res["per_factor"].set_index("child_factor")
+    model.adata.uns["factor_obs"]["ARD"] = np.array(
+        [np.nan] * len(model.adata.uns["factor_obs"])
+    )
+    model.adata.uns["factor_obs"]["BRD"] = np.array(
+        [np.nan] * len(model.adata.uns["factor_obs"])
+    )
+    model.adata.uns["factor_obs"].loc[model.factor_names[0], "ARD"] = np.asarray(
+        model.pmeans["factor_means"]
+    )[model.factor_lists[0]].ravel()
+    model.adata.uns["factor_obs"].loc[model.factor_names[0], "BRD"] = np.asarray(
+        model.pmeans["factor_concentrations"]
+    )[model.factor_lists[0]].ravel()
 
 
 def set_factor_signatures(model, signatures=None, top_genes=10):
@@ -10,16 +28,30 @@ def set_factor_signatures(model, signatures=None, top_genes=10):
 
 
 def set_technical_factors(model, factors=None):
-    """Set the technical factors of the model."""
+    """Set the technical factors of the model. They must be layer 0 factors."""
     # in model.adata.uns["factor_obs"], annotate as technical or not.
+    all_factor_names = [name for names in model.factor_names for name in names][
+        :-1
+    ]  # do not use root
     if "factor_obs" not in model.adata.uns:
         # Collect all factor names from all layers into a flat list
-        all_factor_names = [name for names in model.factor_names for name in names]
-        model.adata.uns["factor_obs"] = pd.DataFrame(index=all_factor_names)
+        make_factor_obs(model)
     model.adata.uns["factor_obs"]["technical"] = np.array(
         [False] * len(all_factor_names)
     )
-    model.adata.uns["factor_obs"]["technical"].loc[factors] = True
+    model.adata.uns["factor_obs"].loc[factors, "technical"] = True
+
+    # Get complete hierarchy
+    complete_hierarchy = get_hierarchy(model, simplified=False)
+    # Traverse hierarchy. If all the children of a factor are technical, set the factor as technical.
+    for factor, children in complete_hierarchy.items():
+        if all(
+            [
+                model.adata.uns["factor_obs"].loc[child, "technical"]
+                for child in children
+            ]
+        ):
+            model.adata.uns["factor_obs"].loc[factor, "technical"] = True
 
 
 def __build_consensus_signature(var_names, gene_scores_array, sizes_array):

@@ -159,9 +159,6 @@ def compute_hierarchy_scores(
             np.sum(scores_concat * weights_concat) / (np.sum(weights_concat) + eps)
         )
 
-    if "factor_obs" not in model.adata.uns:
-        model.adata.uns["factor_obs"] = per_factor.set_index("child_factor")
-
     return {
         "per_factor": per_factor,
         "per_transition": per_transition,
@@ -185,7 +182,9 @@ def make_technical_hierarchy(model):
     """Make the technical hierarchy of the model."""
     technical_factors = model.adata.uns["factor_obs"][
         model.adata.uns["factor_obs"]["technical"]
-    ].index.tolist()  # layer 0
+    ][
+        model.adata.uns["factor_obs"]["child_layer"] == "L0"
+    ].index.tolist()  # only layer 0 factors
     # technical hierarchy is a root with all technical factors as direct children.
     # connection weights are proportional to the usage of each factor
     technical_hierarchy = dict()

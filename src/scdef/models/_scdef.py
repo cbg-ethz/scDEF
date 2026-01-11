@@ -1556,7 +1556,8 @@ class scDEF(object):
         self,
         thres: Optional[float] = 0.0,
         iqr_mult: Optional[float] = 0.0,
-        min_cells: Optional[float] = 0.001,
+        min_cells_upper: Optional[float] = 0.001,
+        min_cells_lower: Optional[float] = 0.0,
         filter_up: Optional[bool] = True,
         normalized: Optional[bool] = False,
     ):
@@ -1568,9 +1569,12 @@ class scDEF(object):
             min_cells: minimum number of cells that each factor must have attached to it for it to be kept. If between 0 and 1, fraction. Otherwise, absolute value
             filter_up: whether to remove factors in upper layers via inter-layer attachments
         """
-        if min_cells != 0:
-            if min_cells < 1.0:
-                min_cells = max(min_cells * self.adata.shape[0], 10)
+        if min_cells_upper != 0:
+            if min_cells_upper < 1.0:
+                min_cells_upper = max(min_cells_upper * self.adata.shape[0], 10)
+        if min_cells_lower != 0:
+            if min_cells_lower < 1.0:
+                min_cells_lower = max(min_cells_lower * self.adata.shape[0], 10)
 
         self.factor_lists = []
         for i, layer_name in enumerate(self.layer_names):
@@ -1578,7 +1582,7 @@ class scDEF(object):
                 keep = self.get_effective_factors(
                     thres=thres,
                     iqr_mult=iqr_mult,
-                    min_cells=min_cells,
+                    min_cells=min_cells_lower,
                     normalized=normalized,
                 )
             else:
@@ -1590,7 +1594,7 @@ class scDEF(object):
                     ]
                 )
                 keep = np.array(range(self.layer_sizes[i]))[
-                    np.where(counts >= min_cells)[0]
+                    np.where(counts >= min_cells_upper)[0]
                 ]
                 if filter_up:
                     mat = self.pmeans[f"{layer_name}W"][keep]
