@@ -13,6 +13,7 @@ from .factor import (
     set_technical_factors,
     get_technical_signature,
     get_biological_signature,
+    make_factor_obs,
 )
 
 __all__ = [
@@ -25,4 +26,5 @@ __all__ = [
     "get_technical_signature",
     "get_biological_signature",
     "compute_hierarchy_scores",
+    "make_factor_obs",
 ]
