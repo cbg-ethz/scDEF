@@ -10,7 +10,18 @@ import seaborn as sns
 import scanpy as sc
 from scipy.cluster.hierarchy import ward, leaves_list
 from scipy.spatial.distance import pdist
-from typing import Optional, Sequence, Literal, Mapping, Dict, List, Tuple, Any, Union, TYPE_CHECKING
+from typing import (
+    Optional,
+    Sequence,
+    Literal,
+    Mapping,
+    Dict,
+    List,
+    Tuple,
+    Any,
+    Union,
+    TYPE_CHECKING,
+)
 from matplotlib.figure import Figure
 from matplotlib.axes import Axes
 import pandas as pd

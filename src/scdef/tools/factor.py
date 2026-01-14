@@ -25,9 +25,9 @@ def make_factor_obs(model: "scDEF") -> None:
 
 
 def set_factor_signatures(
-    model: "scDEF", 
-    signatures: Optional[Dict[str, List[str]]] = None, 
-    top_genes: int = 10
+    model: "scDEF",
+    signatures: Optional[Dict[str, List[str]]] = None,
+    top_genes: int = 10,
 ) -> Dict[str, List[str]]:
     if signatures is None:
         signatures = model.get_signatures_dict(top_genes=top_genes)
@@ -35,7 +35,9 @@ def set_factor_signatures(
     return signatures
 
 
-def set_technical_factors(model: "scDEF", factors: Optional[Sequence[str]] = None) -> None:
+def set_technical_factors(
+    model: "scDEF", factors: Optional[Sequence[str]] = None
+) -> None:
     """Set the technical factors of the model.
 
     Technical factors must be layer 0 factors.
@@ -79,9 +81,7 @@ def __build_consensus_signature(var_names, gene_scores_array, sizes_array):
 
 
 def get_technical_signature(
-    model: "scDEF", 
-    top_genes: int = 10, 
-    return_scores: bool = False
+    model: "scDEF", top_genes: int = 10, return_scores: bool = False
 ) -> Union[List[str], Tuple[List[str], np.ndarray]]:
     hierarchy = model.adata.uns["technical_hierarchy"]
     gene_rankings, gene_scores = model.get_rankings(

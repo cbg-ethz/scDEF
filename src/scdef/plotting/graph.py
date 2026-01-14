@@ -998,7 +998,9 @@ def plot_biological_hierarchy(model: "scDEF", **kwargs: Any) -> Graph:
     return g
 
 
-def plot_technical_hierarchy(model: "scDEF", show_signatures: bool = True, **kwargs: Any) -> Graph:
+def plot_technical_hierarchy(
+    model: "scDEF", show_signatures: bool = True, **kwargs: Any
+) -> Graph:
     """Plot the technical hierarchy of the model.
 
     Args:

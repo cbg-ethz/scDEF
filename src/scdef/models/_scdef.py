@@ -32,24 +32,24 @@ logging.basicConfig()
 class scDEF(object):
     """Single-cell Deep Exponential Families (scDEF) model.
 
-    scDEF learns hierarchical, multi-level gene expression signatures from single-cell 
-    RNA-seq data provided in an AnnData object. This model can be used for a variety 
-    of analyses including dimensionality reduction, batch correction, clustering, 
+    scDEF learns hierarchical, multi-level gene expression signatures from single-cell
+    RNA-seq data provided in an AnnData object. This model can be used for a variety
+    of analyses including dimensionality reduction, batch correction, clustering,
     and visualization of cell states and gene programs.
 
-    The model fits multiple layers of latent factors ("gene signatures") to describe 
-    cellular heterogeneity at different resolutions. It supports batch correction, 
+    The model fits multiple layers of latent factors ("gene signatures") to describe
+    cellular heterogeneity at different resolutions. It supports batch correction,
     prior specification, and generation of corrected gene expression matrices.
 
-    Model fitting, inference routines, and additional plotting utilities are 
-    implemented as methods of this class. The stored AnnData object is updated with 
+    Model fitting, inference routines, and additional plotting utilities are
+    implemented as methods of this class. The stored AnnData object is updated with
     model results during training.
 
     Args:
-        adata: AnnData object containing the single-cell gene expression count matrix. Counts 
+        adata: AnnData object containing the single-cell gene expression count matrix. Counts
             should be present in either `adata.X` or in the specified `adata.layers`.
         counts_layer: key for `adata.layers` specifying which layer to use as expression counts (if not `adata.X`).
-        batch_key: key in `adata.obs` containing batch annotations; if provided, batch correction is performed. 
+        batch_key: key in `adata.obs` containing batch annotations; if provided, batch correction is performed.
             If None or not found, no batch correction is used.
         seed: random seed for model initialization and stochastic routines (uses JAX's pseudo-random number generator).
         n_factors: number of latent factors at the lowest layer (can be overridden by `layer_sizes`).
@@ -76,7 +76,7 @@ class scDEF(object):
     def make_corrected_data(self, layer_name: str = "scdef_corrected") -> None:
         """Compute and store the low-rank reconstruction of the UMI count matrix.
 
-        The reconstructed matrix is saved to adata.layers[layer_name], providing a 
+        The reconstructed matrix is saved to adata.layers[layer_name], providing a
         denoised, batch-corrected version of the expression data.
 
         Args:
@@ -667,7 +667,9 @@ class scDEF(object):
 
         return init_z, init_W
 
-    def identify_mixture_factors(self, max_n_genes: int = 20, thres: float = 0.5) -> np.ndarray:
+    def identify_mixture_factors(
+        self, max_n_genes: int = 20, thres: float = 0.5
+    ) -> np.ndarray:
         """Identify factors that might be better if broken apart.
 
         Args:
@@ -2072,7 +2074,9 @@ class scDEF(object):
         sorted_scores: bool = False,
         layer_normalize: bool = False,
         drop_factors: Optional[List[str]] = None,
-    ) -> Union[Dict[str, List[str]], Tuple[Dict[str, List[str]], Dict[str, np.ndarray]]]:
+    ) -> Union[
+        Dict[str, List[str]], Tuple[Dict[str, List[str]], Dict[str, np.ndarray]]
+    ]:
         """Get dictionary of gene signatures for all factors across all layers.
 
         Args:
@@ -2245,9 +2249,7 @@ class scDEF(object):
             attachments.append(layer_attachments)
         return attachments
 
-    def compute_weight(
-        self, upper_factor_name: str, lower_factor_name: str
-    ) -> float:
+    def compute_weight(self, upper_factor_name: str, lower_factor_name: str) -> float:
         """Compute the weight between two factors across any number of layers.
 
         Args:

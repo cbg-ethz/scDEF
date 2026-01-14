@@ -19,13 +19,13 @@ class iscDEF(scDEF):
     and automatic handling of cells/gene sets that do not fall into any marker category (via the `add_other` option).
 
     Args:
-        adata: AnnData object containing the gene expression count matrix. Counts must be present 
+        adata: AnnData object containing the gene expression count matrix. Counts must be present
             in either `adata.X` or a specified layer.
-        markers_dict: dictionary mapping marker/factor names to gene lists (gene sets). These guide 
+        markers_dict: dictionary mapping marker/factor names to gene lists (gene sets). These guide
             the formation of factors in the chosen layer.
-        add_other: if > 0, adds one or more "other" factors for cells/observations not matching any 
+        add_other: if > 0, adds one or more "other" factors for cells/observations not matching any
             marker set. Only one "other" factor is supported for `markers_layer > 0`.
-        markers_layer: index of the layer at which gene sets are enforced as factors (0 = lowest/finest, 
+        markers_layer: index of the layer at which gene sets are enforced as factors (0 = lowest/finest,
             higher = top layer). If > 0, total layers determined by this value.
         cn_small_mean: mean prior connectivity for "small" (weakly-connected) genes between factors and gene sets.
         cn_big_mean: mean prior connectivity for "big" (strongly-connected) genes between factors and gene sets.
