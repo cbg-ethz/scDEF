@@ -6,12 +6,35 @@ This module provides QC-related plotting functions for scDEF models.
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
+from typing import Optional, Tuple, Literal, Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from scdef.models._scdef import scDEF
 
 
 def plot_scales(
-    model, figsize=(8, 4), alpha=0.6, fontsize=12, legend_fontsize=10, show=True
-):
-    """Plot both cell and gene scales."""
+    model: "scDEF",
+    figsize: Tuple[float, float] = (8, 4),
+    alpha: float = 0.6,
+    fontsize: int = 12,
+    legend_fontsize: int = 10,
+    show: bool = True,
+) -> Optional[Figure]:
+    """Plot both cell and gene scales.
+
+    Args:
+        model: scDEF model instance
+        figsize: figure size
+        alpha: transparency level
+        fontsize: font size for labels
+        legend_fontsize: font size for legend
+        show: whether to show the plot
+
+    Returns:
+        Figure object if show is False, None otherwise
+    """
     fig, axes = plt.subplots(1, 2, figsize=figsize)
     plot_scale(model, "cell", figsize, alpha, fontsize, legend_fontsize, axes[0], False)
     plot_scale(model, "gene", figsize, alpha, fontsize, legend_fontsize, axes[1], False)
@@ -23,16 +46,30 @@ def plot_scales(
 
 
 def plot_scale(
-    model,
-    scale_type,
-    figsize=(4, 4),
-    alpha=0.6,
-    fontsize=12,
-    legend_fontsize=10,
-    ax=None,
-    show=True,
-):
-    """Plot learned scale factors vs observed scales."""
+    model: "scDEF",
+    scale_type: Literal["cell", "gene"],
+    figsize: Tuple[float, float] = (4, 4),
+    alpha: float = 0.6,
+    fontsize: int = 12,
+    legend_fontsize: int = 10,
+    ax: Optional[Axes] = None,
+    show: bool = True,
+) -> Optional[Axes]:
+    """Plot learned scale factors vs observed scales.
+
+    Args:
+        model: scDEF model instance
+        scale_type: type of scale to plot, either "cell" or "gene"
+        figsize: figure size
+        alpha: transparency level
+        fontsize: font size for labels
+        legend_fontsize: font size for legend
+        ax: matplotlib axes to plot on
+        show: whether to show the plot
+
+    Returns:
+        Axes object if show is False, None otherwise
+    """
     if ax is None:
         fig, ax = plt.subplots(1, 1, figsize=figsize)
     else:
@@ -87,23 +124,44 @@ def plot_scale(
 
 
 def plot_brd(
-    model,
-    thres=None,
-    iqr_mult=None,
-    show_yticks=False,
-    scale="linear",
-    normalize=False,
-    fontsize=14,
-    legend_fontsize=12,
-    xlabel="Factor",
-    ylabel="Relevance",
-    title="Biological relevance determination",
-    color=False,
-    show=True,
-    ax=None,
-    **kwargs,
-):
-    """Plot biological relevance determination (BRD) scores."""
+    model: "scDEF",
+    thres: Optional[float] = None,
+    iqr_mult: Optional[float] = None,
+    show_yticks: bool = False,
+    scale: Literal["linear", "log"] = "linear",
+    normalize: bool = False,
+    fontsize: int = 14,
+    legend_fontsize: int = 12,
+    xlabel: str = "Factor",
+    ylabel: str = "Relevance",
+    title: str = "Biological relevance determination",
+    color: bool = False,
+    show: bool = True,
+    ax: Optional[Axes] = None,
+    **kwargs: Any,
+) -> Optional[Axes]:
+    """Plot biological relevance determination (BRD) scores.
+
+    Args:
+        model: scDEF model instance
+        thres: threshold value for BRD cutoff
+        iqr_mult: multiplier for IQR-based threshold
+        show_yticks: whether to show y-axis ticks
+        scale: scale for y-axis, either "linear" or "log"
+        normalize: whether to normalize BRD scores
+        fontsize: font size for labels
+        legend_fontsize: font size for legend
+        xlabel: label for x-axis
+        ylabel: label for y-axis
+        title: plot title
+        color: whether to color bars by factor type
+        show: whether to show the plot
+        ax: matplotlib axes to plot on
+        **kwargs: additional plotting keyword arguments
+
+    Returns:
+        Axes object if show is False, None otherwise
+    """
     if not model.use_brd:
         raise ValueError("This model instance doesn't use the BRD prior.")
 
@@ -181,16 +239,30 @@ def plot_brd(
 
 
 def plot_gini_brd(
-    model,
-    normalize=False,
-    figsize=(4, 4),
-    alpha=0.6,
-    fontsize=12,
-    legend_fontsize=10,
-    show=True,
-    ax=None,
-):
-    """Plot Gini coefficient vs BRD scores."""
+    model: "scDEF",
+    normalize: bool = False,
+    figsize: Tuple[float, float] = (4, 4),
+    alpha: float = 0.6,
+    fontsize: int = 12,
+    legend_fontsize: int = 10,
+    show: bool = True,
+    ax: Optional[Axes] = None,
+) -> Optional[Axes]:
+    """Plot Gini coefficient vs BRD scores.
+
+    Args:
+        model: scDEF model instance
+        normalize: whether to normalize BRD scores
+        figsize: figure size
+        alpha: transparency level
+        fontsize: font size for labels
+        legend_fontsize: font size for legend
+        show: whether to show the plot
+        ax: matplotlib axes to plot on
+
+    Returns:
+        Axes object if show is False, None otherwise
+    """
     from ..utils import score_utils
 
     brds = model.pmeans["brd"].ravel()
@@ -231,8 +303,25 @@ def plot_gini_brd(
         return ax
 
 
-def plot_loss(model, figsize=(4, 4), fontsize=12, ax=None, show=True):
-    """Plot training loss over epochs."""
+def plot_loss(
+    model: "scDEF",
+    figsize: Tuple[float, float] = (4, 4),
+    fontsize: int = 12,
+    ax: Optional[Axes] = None,
+    show: bool = True,
+) -> Optional[Axes]:
+    """Plot training loss over epochs.
+
+    Args:
+        model: scDEF model instance
+        figsize: figure size
+        fontsize: font size for labels
+        ax: matplotlib axes to plot on
+        show: whether to show the plot
+
+    Returns:
+        Axes object if show is False, None otherwise
+    """
     if ax is None:
         fig, ax = plt.subplots(figsize=figsize)
     ax.plot(np.concatenate(model.elbos)[:])
@@ -246,21 +335,23 @@ def plot_loss(model, figsize=(4, 4), fontsize=12, ax=None, show=True):
         return ax
 
 
-def plot_qc(model, figsize=(8, 12), show=True):
-    """Plot QC metrics for scDEF run:
-        top left: Loss (-1xELBO [log]) vs. Epoch
-        top right: Biological relevance det. (BRD) vs. Gini coefficient
-        middle left: Learned cell scale vs. Observed library size
-        middle right: Learned gene scale vs. Observed gene scale
-        bottom:  Biological relevance determination
+def plot_qc(
+    model: "scDEF",
+    figsize: Tuple[float, float] = (8, 12),
+    show: bool = True,
+) -> Optional[Figure]:
+    """Plot QC metrics for scDEF run.
+
+    Plots include: loss over epochs, BRD vs Gini coefficient, learned vs observed
+    cell scales, learned vs observed gene scales, and biological relevance determination.
 
     Args:
         model: scDEF model instance
-        figsize (tuple(float, float)): Figure size in inches
-        show (bool): whether to show the plot
+        figsize: figure size in inches
+        show: whether to show the plot
 
     Returns:
-        fig object if show is False and None otherwise
+        Figure object if show is False, None otherwise
     """
 
     if model.use_brd:

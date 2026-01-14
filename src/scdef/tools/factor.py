@@ -1,9 +1,13 @@
 import numpy as np
 import pandas as pd
 from .hierarchy import get_hierarchy, compute_hierarchy_scores
+from typing import Optional, Sequence, Dict, List, Tuple, Any, Union, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from scdef.models._scdef import scDEF
 
 
-def make_factor_obs(model):
+def make_factor_obs(model: "scDEF") -> None:
     res = compute_hierarchy_scores(model)
     model.adata.uns["factor_obs"] = res["per_factor"].set_index("child_factor")
     model.adata.uns["factor_obs"]["ARD"] = np.array(
@@ -20,15 +24,26 @@ def make_factor_obs(model):
     )[model.factor_lists[0]].ravel()
 
 
-def set_factor_signatures(model, signatures=None, top_genes=10):
+def set_factor_signatures(
+    model: "scDEF", 
+    signatures: Optional[Dict[str, List[str]]] = None, 
+    top_genes: int = 10
+) -> Dict[str, List[str]]:
     if signatures is None:
         signatures = model.get_signatures_dict(top_genes=top_genes)
     model.adata.uns["factor_signatures"] = signatures
     return signatures
 
 
-def set_technical_factors(model, factors=None):
-    """Set the technical factors of the model. They must be layer 0 factors."""
+def set_technical_factors(model: "scDEF", factors: Optional[Sequence[str]] = None) -> None:
+    """Set the technical factors of the model.
+
+    Technical factors must be layer 0 factors.
+
+    Args:
+        model: scDEF model instance
+        factors: list of factor names to mark as technical
+    """
     # in model.adata.uns["factor_obs"], annotate as technical or not.
     all_factor_names = [name for names in model.factor_names for name in names][
         :-1
@@ -63,7 +78,11 @@ def __build_consensus_signature(var_names, gene_scores_array, sizes_array):
     return consensus, consensus_scores
 
 
-def get_technical_signature(model, top_genes=10, return_scores=False):
+def get_technical_signature(
+    model: "scDEF", 
+    top_genes: int = 10, 
+    return_scores: bool = False
+) -> Union[List[str], Tuple[List[str], np.ndarray]]:
     hierarchy = model.adata.uns["technical_hierarchy"]
     gene_rankings, gene_scores = model.get_rankings(
         layer_idx=0,
@@ -112,7 +131,7 @@ def get_technical_signature(model, top_genes=10, return_scores=False):
     return consensus_signature[:top_genes]
 
 
-def get_biological_signature(model, top_genes=10):
+def get_biological_signature(model: "scDEF", top_genes: int = 10) -> List[str]:
     # Get the top signature
     technical_factors = model.adata.uns["factor_obs"][
         model.adata.uns["factor_obs"]["technical"] == True

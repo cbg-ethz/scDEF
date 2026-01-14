@@ -1,7 +1,7 @@
 # Standard library imports
 import logging
 import time
-from typing import Optional, Union, Sequence, Mapping
+from typing import Optional, Union, Sequence, Mapping, Dict, List, Tuple, Any
 
 # Third-party imports
 import jax
@@ -30,35 +30,57 @@ logging.basicConfig()
 
 
 class scDEF(object):
-    """Single-cell Deep Exponential Families model.
+    """Single-cell Deep Exponential Families (scDEF) model.
 
-    This model learns multi-level gene signatures describing the input scRNA-seq
-    data from an AnnData object.
+    scDEF learns hierarchical, multi-level gene expression signatures from single-cell 
+    RNA-seq data provided in an AnnData object. This model can be used for a variety 
+    of analyses including dimensionality reduction, batch correction, clustering, 
+    and visualization of cell states and gene programs.
+
+    The model fits multiple layers of latent factors ("gene signatures") to describe 
+    cellular heterogeneity at different resolutions. It supports batch correction, 
+    prior specification, and generation of corrected gene expression matrices.
+
+    Model fitting, inference routines, and additional plotting utilities are 
+    implemented as methods of this class. The stored AnnData object is updated with 
+    model results during training.
 
     Args:
-        adata: AnnData object containing the gene expression data. scDEF learns a model from
-            counts, so they must be present in either adata.X or in adata.layers.
-        counts_layer: layer from adata.layers to get the count data from.
-        layer_sizes: number of factors per scDEF layer.
-        batch_key: key in adata.obs containing batch annotations for batch correction. If None, or not found,
-            no batch correction is performed.
-        seed: random seed for JAX
-        logginglevel: verbosity level for logger
-        brd_strength: BRD prior concentration parameter
-        brd_mean: BRD prior mean parameter
-        use_brd: whether to use the BRD prior for factor relevance estimation
-        cell_scale_shape: concentration level in the cell scale prior
-        gene_scale_shape: concentration level in the gene scale prior
-        factor_shapes: prior parameters for the W concentration to use in each scDEF layer
-        batch_cpal: default color palette for batch annotations
-        layer_cpal: default color palettes for scDEF layers
-        lightness_mult: multiplier to define lightness of color palette at each scDEF layer
+        adata: AnnData object containing the single-cell gene expression count matrix. Counts 
+            should be present in either `adata.X` or in the specified `adata.layers`.
+        counts_layer: key for `adata.layers` specifying which layer to use as expression counts (if not `adata.X`).
+        batch_key: key in `adata.obs` containing batch annotations; if provided, batch correction is performed. 
+            If None or not found, no batch correction is used.
+        seed: random seed for model initialization and stochastic routines (uses JAX's pseudo-random number generator).
+        n_factors: number of latent factors at the lowest layer (can be overridden by `layer_sizes`).
+        decay_factor: size decay multiplier for the number of factors at each subsequent layer if `layer_sizes` not provided.
+        max_n_layers: maximum number of hierarchical layers in the model.
+        layer_sizes: explicit list of the number of factors in each scDEF layer. If None, layer sizes are set automatically.
+        layer_names: list of custom names for the layers. If None, layer names are enumerated as ["L0", "L1", ...].
+        logginglevel: verbosity level for the logger.
+        layer_concentration: concentration parameter of the top-level Dirichlet prior over cell usage of factors.
+        shrinkage_shape: shape parameter for shrinkage prior controlling factor usage.
+        shrinkage_rate: rate parameter for shrinkage prior controlling factor usage.
+        top_alpha: concentration parameter for the top layer Dirichlet prior over factor proportions.
+        factor_shape: shape of the prior distribution for factor-gene loadings matrix W.
+        brd_strength: BRD (Batch Relevance Determination) prior concentration parameter for factor relevance estimation.
+        brd_mean: mean of the BRD prior for factor relevance estimation.
+        use_brd: if True, use BRD prior for automatic selection of active factors.
+        cell_scale_shape: precision/concentration parameter for cell-specific scaling priors.
+        gene_scale_shape: precision/concentration parameter for gene-specific scaling priors.
+        batch_cpal: default matplotlib color palette name used for batches.
+        layer_cpal: matplotlib color palette for factors/colors at each scDEF layer.
+        lightness_mult: lightness multiplier to define the base color for each new scDEF layer.
     """
 
-    def make_corrected_data(self, layer_name="scdef_corrected"):
-        """
-        Adds the low-rank approximation to the UMI counts from the lowest scDEF layer
-        to the internal AnnData object, accessible via .adata.layers[`layer_name`]
+    def make_corrected_data(self, layer_name: str = "scdef_corrected") -> None:
+        """Compute and store the low-rank reconstruction of the UMI count matrix.
+
+        The reconstructed matrix is saved to adata.layers[layer_name], providing a 
+        denoised, batch-corrected version of the expression data.
+
+        Args:
+            layer_name: name for the AnnData layer where the reconstructed matrix is stored
         """
         scdef_layer = self.layer_names[0]
         Z = self.pmeans[f"{scdef_layer}z"][:, self.factor_lists[0]]  # nxk
@@ -69,13 +91,13 @@ class scDEF(object):
         self,
         adata: AnnData,
         counts_layer: Optional[str] = None,
+        batch_key: Optional[str] = None,
+        seed: Optional[int] = 42,
         n_factors: Optional[int] = 100,
         decay_factor: Optional[float] = 2.0,
         max_n_layers: Optional[float] = 5,
         layer_sizes: Optional[list] = None,
         layer_names: Optional[list] = None,
-        batch_key: Optional[str] = None,
-        seed: Optional[int] = 42,
         logginglevel: Optional[int] = logging.INFO,
         layer_concentration: Optional[float] = 1.0,
         shrinkage_shape: Optional[float] = 1.0,
@@ -156,11 +178,11 @@ class scDEF(object):
         out += (
             "\n\t" + "Layer concentration parameter: " + str(self.layer_concentration)
         )
-        out += (
-            "\n\t"
-            + "Layer factor shape parameters: "
-            + ", ".join([str(shape) for shape in self.factor_shapes])
-        )
+        # out += (
+        #     "\n\t"
+        #     + "Layer factor shape parameters: "
+        #     + ", ".join([str(shape) for shape in self.factor_shapes])
+        # )
         if self.use_brd == True:
             out += "\n\t" + "Using BRD"
         out += "\n\t" + "Number of batches: " + str(self.n_batches)
@@ -605,7 +627,14 @@ class scDEF(object):
         )
 
     def get_nmf_init(self, max_cells=None):
-        """Use NMF on the data to init the first layer and then recursively for the other layers"""
+        """Use NMF on the data to initialize the first layer and then recursively for the other layers.
+
+        Args:
+            max_cells: maximum number of cells to use for NMF initialization
+
+        Returns:
+            tuple of (init_z, init_W) initialization values
+        """
         init_z = []
         init_W = []
         from sklearn.decomposition import NMF
@@ -638,8 +667,16 @@ class scDEF(object):
 
         return init_z, init_W
 
-    def identify_mixture_factors(self, max_n_genes=20, thres=0.5):
-        """Identify factors that might be better if broken apart"""
+    def identify_mixture_factors(self, max_n_genes: int = 20, thres: float = 0.5) -> np.ndarray:
+        """Identify factors that might be better if broken apart.
+
+        Args:
+            max_n_genes: maximum number of genes per factor
+            thres: threshold for identifying mixture factors
+
+        Returns:
+            array of factor indices that are mixture factors
+        """
         # sparse_factors = np.where(self.pmeans['brd'].ravel() > 1.)[0]
         kept_factors = self.factor_lists[0]
         normed_factors = (
@@ -1129,14 +1166,15 @@ class scDEF(object):
 
     def fit(
         self,
-        pretrain=True,
-        nmf_init=True,
-        max_cells_init=5000,
-        unmix=False,
-        eff_min=0.0001,
-        save_pretrain_factors=True,
-        **kwargs,
-    ):
+        pretrain: bool = True,
+        nmf_init: bool = True,
+        max_cells_init: int = 5000,
+        unmix: bool = False,
+        eff_min: float = 0.0,
+        save_pretrain_factors: bool = True,
+        n_rounds: int = 2,
+        **kwargs: Any,
+    ) -> None:
         """Learn a one-layer scDEF with 100 factors with BRD to obtain
         cell and gene scale factors and an estimate of the effective number of factors.
         Update the sizes based on that estimate and re-init everything except the scale factors.
@@ -1155,7 +1193,7 @@ class scDEF(object):
             )
             self.elbos = []
             self.step_sizes = []
-            self._learn(filter=False, annotate=False, **kwargs)
+            self._learn(filter=False, annotate=False, n_rounds=1, **kwargs)
             eff_factors = self.get_effective_factors(thres=1.0, min_cells=eff_min)
             mixture_factors = self.identify_mixture_factors()
             if len(mixture_factors) > 0 and unmix:
@@ -1163,7 +1201,7 @@ class scDEF(object):
                     f"Found {len(mixture_factors)} factors that activate more than 10 genes. Re-fitting to enhance sparsity"
                 )
                 self.reinit_factors(mixture_factors=mixture_factors)
-                self._learn(filter=False, annotate=False, **kwargs)
+                self._learn(filter=False, annotate=False, n_rounds=1, **kwargs)
                 eff_factors = self.get_effective_factors(thres=1.0, min_cells=eff_min)
             n_eff_factors = len(eff_factors)
             if n_eff_factors == 0:
@@ -1203,14 +1241,15 @@ class scDEF(object):
         )
         self.elbos = []
         self.step_sizes = []
-        self._learn(**kwargs)
+        self._learn(n_rounds=n_rounds, **kwargs)
 
     def _learn(
         self,
-        n_epoch: Optional[Union[int, list]] = [1000],
-        lr: Optional[Union[float, list]] = 1e-2,
-        local_lr: Optional[Union[float, list]] = 1e-2,
-        annealing: Optional[Union[float, list]] = 1.0,
+        n_rounds: Optional[int] = 1,
+        n_epoch: Optional[int] = 1000,
+        lr: Optional[float] = 1e-2,
+        local_lr: Optional[float] = 1e-2,
+        annealing: Optional[float] = 1.0,
         num_samples: Optional[int] = 100,
         batch_size: Optional[int] = 256,
         layerwise: Optional[bool] = False,
@@ -1248,47 +1287,20 @@ class scDEF(object):
             update_locals: whether to optimize the local parameters
             update_globals: whether to optimize the global parameters
         """
-        n_steps = 1
+        n_steps = n_rounds
         if layerwise:
             n_steps = self.n_layers
 
-        if isinstance(n_epoch, list):
-            if layerwise:
-                n_epoch_schedule = [n_epoch[0]] * n_steps
-            else:
-                n_steps = len(n_epoch)
-                n_epoch_schedule = n_epoch
-        else:
-            n_epoch_schedule = [n_epoch] * n_steps
+        n_epoch_schedule = [n_epoch] * n_steps
 
-        if isinstance(lr, list):
-            if layerwise:
-                lr_schedule = [lr[0]] * n_steps
-                local_lr_schedule = [local_lr[0]] * n_steps
-            lr_schedule = lr
-            local_lr_schedule = local_lr
-            if len(lr_schedule) != n_steps or len(local_lr_schedule) != n_steps:
-                raise ValueError(
-                    "lr_schedule and local_lr_schedule list must be of same length as n_epoch_schedule"
-                )
+        if layerwise:
+            lr_schedule = [lr] * n_steps
+            local_lr_schedule = [local_lr] * n_steps
         else:
-            if layerwise:
-                lr_schedule = [lr] * n_steps
-                local_lr_schedule = [local_lr] * n_steps
-            else:
-                lr_schedule = [lr * 0.1**step for step in range(n_steps)]
-                local_lr_schedule = [local_lr * 0.1**step for step in range(n_steps)]
+            lr_schedule = [lr * 0.5**step for step in range(n_steps)]
+            local_lr_schedule = [local_lr * 0.5**step for step in range(n_steps)]
 
-        if isinstance(annealing, list):
-            if layerwise:
-                annealing_schedule = [annealing[0]] * n_steps
-            annealing_schedule = annealing
-            if len(annealing_schedule) != n_steps:
-                raise ValueError(
-                    "annealing_schedule list must be of same length as n_epoch_schedule"
-                )
-        else:
-            annealing_schedule = [annealing] * n_steps
+        annealing_schedule = [annealing] * n_steps
 
         if batch_size is None:
             batch_size = self.n_cells
@@ -1554,7 +1566,7 @@ class scDEF(object):
 
     def filter_factors(
         self,
-        thres: Optional[float] = 0.0,
+        thres: Optional[float] = 1.0,
         iqr_mult: Optional[float] = 0.0,
         min_cells_upper: Optional[float] = 0.001,
         min_cells_lower: Optional[float] = 0.0,
@@ -1566,7 +1578,8 @@ class scDEF(object):
         Args:
             thres: minimum factor BRD value
             iqr_mult: multiplier of the difference between the third quartile and the median BRD values to set the threshold
-            min_cells: minimum number of cells that each factor must have attached to it for it to be kept. If between 0 and 1, fraction. Otherwise, absolute value
+            min_cells_upper: minimum number of cells that each factor in upper layers must have attached to it for it to be kept. If between 0 and 1, fraction. Otherwise, absolute value
+            min_cells_lower: minimum number of cells that each factor in layer 0 must have attached to it for it to be kept. If between 0 and 1, fraction. Otherwise, absolute value
             filter_up: whether to remove factors in upper layers via inter-layer attachments
         """
         if min_cells_upper != 0:
@@ -1775,7 +1788,20 @@ class scDEF(object):
                 )
                 self.adata.obs = pd.concat([self.adata.obs, df], axis=1)
 
-    def get_annotations(self, marker_reference, gene_rankings=None):
+    def get_annotations(
+        self,
+        marker_reference: Mapping[str, Sequence[str]],
+        gene_rankings: Optional[List[List[str]]] = None,
+    ) -> List[List[str]]:
+        """Get annotations for factors based on marker gene reference.
+
+        Args:
+            marker_reference: dictionary mapping annotation names to gene lists
+            gene_rankings: gene rankings for each factor, if None will be computed
+
+        Returns:
+            list of annotation lists, one per factor
+        """
         if gene_rankings is None:
             gene_rankings = self.get_rankings(layer_idx=0)
 
@@ -1806,13 +1832,26 @@ class scDEF(object):
 
     def get_rankings(
         self,
-        layer_idx=0,
-        top_genes=None,
-        genes=True,
-        return_scores=False,
-        sorted_scores=True,
-        drop_factors=None,
-    ):
+        layer_idx: int = 0,
+        top_genes: Optional[int] = None,
+        genes: bool = True,
+        return_scores: bool = False,
+        sorted_scores: bool = True,
+        drop_factors: Optional[List[str]] = None,
+    ) -> Union[List[List[str]], Tuple[List[List[str]], List[List[float]]]]:
+        """Get gene or factor rankings for each factor in a layer.
+
+        Args:
+            layer_idx: layer index to get rankings for
+            top_genes: number of top genes/factors to return
+            genes: whether to return gene rankings (True) or factor rankings (False)
+            return_scores: whether to return scores along with rankings
+            sorted_scores: whether to return scores sorted by ranking
+            drop_factors: list of factors to drop from rankings
+
+        Returns:
+            list of rankings per factor, or tuple of (rankings, scores) if return_scores is True
+        """
         if top_genes is None:
             top_genes = len(self.adata.var_names)
 
@@ -1879,8 +1918,25 @@ class scDEF(object):
         return top_terms
 
     def get_signature_sample(
-        self, rng, factor_idx, layer_idx, top_genes=10, return_scores=False
-    ):
+        self,
+        rng: Any,
+        factor_idx: int,
+        layer_idx: int,
+        top_genes: int = 10,
+        return_scores: bool = False,
+    ) -> Union[List[str], Tuple[List[str], np.ndarray]]:
+        """Get a single signature sample from the posterior for a factor.
+
+        Args:
+            rng: JAX random number generator key
+            factor_idx: index of the factor
+            layer_idx: layer index of the factor
+            top_genes: number of top genes to return
+            return_scores: whether to return scores along with gene names
+
+        Returns:
+            list of gene names, or tuple of (gene_names, scores) if return_scores is True
+        """
         term_names = np.array(self.adata.var_names)
 
         term_scores_shape = self.global_params[2 + 0][0][self.factor_lists[0]]
@@ -1937,12 +1993,24 @@ class scDEF(object):
 
     def get_signature_confidence(
         self,
-        factor_idx,
-        layer_idx,
-        mc_samples=100,
-        top_genes=10,
-        pairwise=False,
-    ):
+        factor_idx: int,
+        layer_idx: int,
+        mc_samples: int = 100,
+        top_genes: int = 10,
+        pairwise: bool = False,
+    ) -> float:
+        """Get confidence score for a factor signature using Monte Carlo sampling.
+
+        Args:
+            factor_idx: index of the factor
+            layer_idx: layer index of the factor
+            mc_samples: number of Monte Carlo samples to take
+            top_genes: number of top genes to consider in each sample
+            pairwise: whether to compute pairwise Jaccard similarities
+
+        Returns:
+            confidence score as Jaccard similarity
+        """
         signatures = []
         for i in range(mc_samples):
             rng = random.PRNGKey(i)
@@ -1965,7 +2033,12 @@ class scDEF(object):
         else:
             return score_utils.jaccard_similarity(signatures)
 
-    def get_relevances_dict(self):
+    def get_relevances_dict(self) -> Dict[str, float]:
+        """Get dictionary of factor relevance scores.
+
+        Returns:
+            dictionary mapping factor names to relevance scores
+        """
         relevance_dict = {}
         for layer_idx in range(self.n_layers):
             for factor_idx, factor_name in enumerate(self.factor_names[layer_idx]):
@@ -1974,7 +2047,12 @@ class scDEF(object):
                 ]
         return relevance_dict
 
-    def get_sizes_dict(self):
+    def get_sizes_dict(self) -> Dict[str, float]:
+        """Get dictionary of factor sizes (number of cells per factor).
+
+        Returns:
+            dictionary mapping factor names to cell counts
+        """
         sizes_dict = {}
         for layer_idx in range(self.n_layers):
             layer_sizes = self.adata.obs[
@@ -1989,12 +2067,24 @@ class scDEF(object):
 
     def get_signatures_dict(
         self,
-        top_genes=None,
-        scores=False,
-        sorted_scores=False,
-        layer_normalize=False,
-        drop_factors=None,
-    ):
+        top_genes: Optional[int] = None,
+        scores: bool = False,
+        sorted_scores: bool = False,
+        layer_normalize: bool = False,
+        drop_factors: Optional[List[str]] = None,
+    ) -> Union[Dict[str, List[str]], Tuple[Dict[str, List[str]], Dict[str, np.ndarray]]]:
+        """Get dictionary of gene signatures for all factors across all layers.
+
+        Args:
+            top_genes: number of top genes per signature
+            scores: whether to return scores along with signatures
+            sorted_scores: whether to return scores sorted by ranking
+            layer_normalize: whether to normalize scores within each layer
+            drop_factors: list of factors to exclude
+
+        Returns:
+            dictionary mapping factor names to gene lists, or tuple of (signatures, scores) if scores is True
+        """
         signatures_dict = {}
         scores_dict = {}
         for layer_idx in range(self.n_layers):
@@ -2017,7 +2107,16 @@ class scDEF(object):
             return signatures_dict, scores_dict
         return signatures_dict
 
-    def get_summary(self, top_genes=10, reindex=True):
+    def get_summary(self, top_genes: int = 10, reindex: bool = True) -> str:
+        """Get a text summary of the model factors and their top genes.
+
+        Args:
+            top_genes: number of top genes to show per factor
+            reindex: whether to reindex factors
+
+        Returns:
+            string summary of the model
+        """
         tokeep = self.factor_lists[0]
         n_factors_eff = len(tokeep)
         genes, scores = self.get_rankings(return_scores=True)
@@ -2052,7 +2151,20 @@ class scDEF(object):
 
         return summary
 
-    def get_enrichments(self, libs=["KEGG_2019_Human"], gene_rankings=None):
+    def get_enrichments(
+        self,
+        libs: List[str] = ["KEGG_2019_Human"],
+        gene_rankings: Optional[List[List[str]]] = None,
+    ) -> List[Any]:
+        """Get gene set enrichments for factor signatures using gseapy.
+
+        Args:
+            libs: list of gene set library names to use
+            gene_rankings: gene rankings for each factor, if None will be computed
+
+        Returns:
+            list of enrichment results, one per factor
+        """
         import gseapy as gp
 
         if gene_rankings is None:
@@ -2070,7 +2182,12 @@ class scDEF(object):
             enrichments.append(enr)
         return enrichments
 
-    def get_layer_factor_orders(self):
+    def get_layer_factor_orders(self) -> List[np.ndarray]:
+        """Get the ordering of factors in each layer for plotting.
+
+        Returns:
+            list of arrays, one per layer, containing factor indices in plotting order
+        """
         layer_factor_orders = []
         for layer_idx in np.arange(0, self.n_layers)[::-1]:  # Go top down
             factors = self.factor_lists[layer_idx]
@@ -2098,7 +2215,15 @@ class scDEF(object):
         layer_factor_orders = layer_factor_orders[::-1]
         return layer_factor_orders
 
-    def attach_factors_to_obs(self, obs_key):
+    def attach_factors_to_obs(self, obs_key: str) -> List[List[str]]:
+        """Attach factors to observation categories.
+
+        Args:
+            obs_key: key in model.adata.obs to use for attachment
+
+        Returns:
+            list of attachment lists, one per layer
+        """
         attachments = []
         for layer, layer_name in enumerate(self.layer_names):
             layer_attachments = []
@@ -2120,8 +2245,18 @@ class scDEF(object):
             attachments.append(layer_attachments)
         return attachments
 
-    def compute_weight(self, upper_factor_name, lower_factor_name):
-        """Compute the weight between two factors across any number of layers."""
+    def compute_weight(
+        self, upper_factor_name: str, lower_factor_name: str
+    ) -> float:
+        """Compute the weight between two factors across any number of layers.
+
+        Args:
+            upper_factor_name: name of the upper factor
+            lower_factor_name: name of the lower factor
+
+        Returns:
+            weight value between the two factors
+        """
         upper_factor_idx = -1
         upper_factor_layer_idx = -1
         for layer_idx in range(self.n_layers):
@@ -2162,8 +2297,19 @@ class scDEF(object):
         return mat[upper_factor_idx][lower_factor_idx]
 
     def compute_factor_obs_association_score(
-        self, layer_idx, factor_name, obs_key, obs_val
-    ):
+        self, layer_idx: int, factor_name: str, obs_key: str, obs_val: str
+    ) -> float:
+        """Compute association score between a factor and an observation category.
+
+        Args:
+            layer_idx: layer index of the factor
+            factor_name: name of the factor
+            obs_key: key in model.adata.obs
+            obs_val: value in obs_key to compute association with
+
+        Returns:
+            association score value
+        """
         layer_name = self.layer_names[layer_idx]
 
         # Cells attached to factor
@@ -2200,8 +2346,19 @@ class scDEF(object):
         )
 
     def compute_factor_obs_assignment_fracs(
-        self, layer_idx, factor_name, obs_key, obs_val
-    ):
+        self, layer_idx: int, factor_name: str, obs_key: str, obs_val: str
+    ) -> float:
+        """Compute assignment fraction between a factor and an observation category.
+
+        Args:
+            layer_idx: layer index of the factor
+            factor_name: name of the factor
+            obs_key: key in model.adata.obs
+            obs_val: value in obs_key to compute fraction with
+
+        Returns:
+            assignment fraction value
+        """
         layer_name = self.layer_names[layer_idx]
 
         # Cells attached to factor
@@ -2223,7 +2380,20 @@ class scDEF(object):
 
         return score
 
-    def compute_factor_obs_weight_score(self, layer_idx, factor_name, obs_key, obs_val):
+    def compute_factor_obs_weight_score(
+        self, layer_idx: int, factor_name: str, obs_key: str, obs_val: str
+    ) -> float:
+        """Compute weight score between a factor and an observation category.
+
+        Args:
+            layer_idx: layer index of the factor
+            factor_name: name of the factor
+            obs_key: key in model.adata.obs
+            obs_val: value in obs_key to compute weight with
+
+        Returns:
+            weight score value
+        """
         layer_name = self.layer_names[layer_idx]
 
         # Cells from obs_val

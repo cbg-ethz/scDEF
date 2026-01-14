@@ -2,9 +2,12 @@ import numpy as np
 import pandas as pd
 import matplotlib
 from graphviz import Graph
-from typing import Optional
+from typing import Optional, Dict, List, Sequence, Union, Any, TYPE_CHECKING
 from ..tools import get_technical_signature
 from ..utils import hierarchy_utils
+
+if TYPE_CHECKING:
+    from scdef.models._scdef import scDEF
 
 
 def _validate_top_genes(top_genes, n_layers):
@@ -191,6 +194,22 @@ def _compute_wedged_fillcolor(model, wedged, cells):
     ]
     fracs = prevs / np.sum(prevs)
     # make color string for pie chart
+    return ":".join(
+        [
+            f"{model.adata.uns[f'{wedged}_colors'][obs_idx]};{frac}"
+            for obs_idx, frac in enumerate(fracs)
+        ]
+    )
+
+
+def _compute_wedged_fillcolor_with_scores(model, wedged, factor_idx):
+    scores = model.adata.obs[f"{model.layer_names[0]}_{factor_idx}_score"].values
+    prevs = []
+    for b in model.adata.obs[wedged].cat.categories:
+        group_mask = (model.adata.obs[wedged] == b).values
+        score = np.mean(scores[group_mask]) if len(group_mask) > 0 else 0.0
+        prevs.append(score)
+    fracs = prevs / np.sum(prevs)
     return ":".join(
         [
             f"{model.adata.uns[f'{wedged}_colors'][obs_idx]};{frac}"
@@ -439,25 +458,27 @@ def _add_edges_from_weights(
 
 
 def make_graph(
-    model,
-    hierarchy: Optional[dict] = None,
+    model: "scDEF",
+    hierarchy: Optional[Dict[str, Sequence[str]]] = None,
     show_all: Optional[bool] = False,
-    factor_annotations: Optional[dict] = None,
+    factor_annotations: Optional[Dict[str, str]] = None,
     top_factor: Optional[str] = None,
     show_signatures: Optional[bool] = True,
-    drop_factors: Optional[list] = None,
+    drop_factors: Optional[List[str]] = None,
+    root_signature: Optional[List[str]] = None,
+    root_ranking: Optional[List[str]] = None,
     enrichments: Optional[pd.DataFrame] = None,
-    top_genes: Optional[int] = None,
+    top_genes: Optional[Union[int, List[int]]] = None,
     show_batch_counts: Optional[bool] = False,
-    filled: Optional[str] = None,
+    filled: Optional[Union[str, Dict[str, float]]] = None,
     wedged: Optional[str] = None,
     color_edges: Optional[bool] = True,
     show_confidences: Optional[bool] = False,
     mc_samples: Optional[int] = 100,
     n_cells_label: Optional[bool] = False,
     n_cells: Optional[bool] = False,
-    node_size_max: Optional[int] = 2.0,
-    node_size_min: Optional[int] = 0.05,
+    node_size_max: Optional[float] = 2.0,
+    node_size_min: Optional[float] = 0.05,
     scale_level: Optional[bool] = False,
     show_label: Optional[bool] = True,
     gene_score: Optional[str] = None,
@@ -465,17 +486,20 @@ def make_graph(
     shell: Optional[bool] = False,
     r: Optional[float] = 2.0,
     r_decay: Optional[float] = 0.8,
-    **fontsize_kwargs,
-):
+    **fontsize_kwargs: Any,
+) -> Graph:
     """Make Graphviz-formatted scDEF graph.
 
     Args:
         model: scDEF model instance
-        hierarchy: a dictionary containing the polytree to draw instead of the whole graph
+        hierarchy: dictionary containing the polytree to draw instead of the whole graph
         show_all: whether to show all factors even post filtering
         factor_annotations: factor annotations to include in the node labels
         top_factor: only include factors below this factor
         show_signatures: whether to show the ranked gene signatures in the node labels
+        drop_factors: list of factors to drop from the graph
+        root_signature: root signature to display
+        root_ranking: root ranking to display
         enrichments: enrichment results from gseapy to include in the node labels
         top_genes: number of genes from each signature to be shown in the node labels
         show_batch_counts: whether to show the number of cells from each batch that attach to each factor
@@ -484,15 +508,21 @@ def make_graph(
         color_edges: whether to color the graph edges according to the upper factors
         show_confidences: whether to show the confidence score for each signature
         mc_samples: number of Monte Carlo samples to take from the posterior to compute signature confidences
-        n_cells_label: wether to show the number of cells that attach to the factor
-        n_cells: wether to scale the node sizes by the number of cells that attach to the factor
+        n_cells_label: whether to show the number of cells that attach to the factor
+        n_cells: whether to scale the node sizes by the number of cells that attach to the factor
         node_size_max: maximum node size when scaled by cell numbers
         node_size_min: minimum node size when scaled by cell numbers
-        scale_level: wether to scale node sizes per level instead of across all levels
-        show_label: wether to show labels on nodes
+        scale_level: whether to scale node sizes per level instead of across all levels
+        show_label: whether to show labels on nodes
         gene_score: color the nodes by the score they attribute to a gene, normalized by layer. Overrides filled and wedged
         gene_cmap: colormap to use for gene_score
+        shell: whether to use shell layout
+        r: radius parameter for shell layout
+        r_decay: radius decay parameter for shell layout
         **fontsize_kwargs: keyword arguments to adjust the fontsizes according to the gene scores
+
+    Returns:
+        Graphviz Graph object
     """
     # Validate and normalize inputs
     top_genes = _validate_top_genes(top_genes, model.n_layers)
@@ -581,7 +611,12 @@ def make_graph(
                 )
                 color = fillcolor + alpha
             elif style == "wedged":
-                fillcolor = _compute_wedged_fillcolor(model, wedged, cells)
+                if assignments:
+                    fillcolor = _compute_wedged_fillcolor(model, wedged, cells)
+                else:
+                    fillcolor = _compute_wedged_fillcolor_with_scores(
+                        model, wedged, factor_idx
+                    )
 
             # Add enrichments or signatures to label
             if enrichments is not None:
@@ -701,6 +736,7 @@ def make_technical_hierarchy_graph(
     top_genes: Optional[int] = None,
     filled: Optional[str] = None,
     wedged: Optional[str] = None,
+    assignments: Optional[bool] = False,
     color_edges: Optional[bool] = True,
     show_confidences: Optional[bool] = False,
     mc_samples: Optional[int] = 100,
@@ -715,34 +751,43 @@ def make_technical_hierarchy_graph(
     shell: Optional[bool] = False,
     r: Optional[float] = 2.0,
     r_decay: Optional[float] = 0.8,
-    **fontsize_kwargs,
-):
-    """Make Graphviz-formatted scDEF graph.
+    **fontsize_kwargs: Any,
+) -> Graph:
+    """Make Graphviz-formatted scDEF graph for technical hierarchy.
 
     Args:
         model: scDEF model instance
-        hierarchy: a dictionary containing the polytree to draw instead of the whole graph
-        show_all: whether to show all factors even post filtering
+        hierarchy: dictionary containing the polytree to draw instead of the whole graph
         factor_annotations: factor annotations to include in the node labels
         top_factor: only include factors below this factor
         show_signatures: whether to show the ranked gene signatures in the node labels
+        drop_factors: list of factors to drop from the graph
+        root_gene_rankings: gene rankings for the root node
+        root_gene_scores: gene scores for the root node
+        root_name: name of the root node
         enrichments: enrichment results from gseapy to include in the node labels
         top_genes: number of genes from each signature to be shown in the node labels
-        show_batch_counts: whether to show the number of cells from each batch that attach to each factor
         filled: key from model.adata.obs to use to fill the nodes with, or dictionary of factor scores
         wedged: key from model.adata.obs to use to wedge the nodes with
+        assignments: whether to use the assignments of cells to factors to wedge the nodes, rather than the scores
         color_edges: whether to color the graph edges according to the upper factors
         show_confidences: whether to show the confidence score for each signature
         mc_samples: number of Monte Carlo samples to take from the posterior to compute signature confidences
-        n_cells_label: wether to show the number of cells that attach to the factor
-        n_cells: wether to scale the node sizes by the number of cells that attach to the factor
+        n_cells_label: whether to show the number of cells that attach to the factor
+        n_cells: whether to scale the node sizes by the number of cells that attach to the factor
         node_size_max: maximum node size when scaled by cell numbers
         node_size_min: minimum node size when scaled by cell numbers
-        scale_level: wether to scale node sizes per level instead of across all levels
-        show_label: wether to show labels on nodes
+        scale_level: whether to scale node sizes per level instead of across all levels
+        show_label: whether to show labels on nodes
         gene_score: color the nodes by the score they attribute to a gene, normalized by layer. Overrides filled and wedged
         gene_cmap: colormap to use for gene_score
+        shell: whether to use shell layout
+        r: radius parameter for shell layout
+        r_decay: radius decay parameter for shell layout
         **fontsize_kwargs: keyword arguments to adjust the fontsizes according to the gene scores
+
+    Returns:
+        Graphviz Graph object
     """
     # Validate and normalize inputs
     top_genes = _validate_top_genes(top_genes, model.n_layers)
@@ -840,7 +885,12 @@ def make_technical_hierarchy_graph(
                 )
                 color = fillcolor + alpha
             elif style == "wedged":
-                fillcolor = _compute_wedged_fillcolor(model, wedged, cells)
+                if assignments:
+                    fillcolor = _compute_wedged_fillcolor(model, wedged, cells)
+                else:
+                    fillcolor = _compute_wedged_fillcolor_with_scores(
+                        model, wedged, factor_idx
+                    )
 
             # Add enrichments or signatures to label
             if enrichments is not None:
@@ -925,7 +975,16 @@ def make_technical_hierarchy_graph(
     return g
 
 
-def plot_biological_hierarchy(model, **kwargs):
+def plot_biological_hierarchy(model: "scDEF", **kwargs: Any) -> Graph:
+    """Plot the biological hierarchy of the model.
+
+    Args:
+        model: scDEF model instance
+        **kwargs: keyword arguments passed to make_graph
+
+    Returns:
+        Graphviz Graph object
+    """
     # Get the top signature
     technical_factors = model.adata.uns["factor_obs"][
         model.adata.uns["factor_obs"]["technical"] == True
@@ -939,7 +998,17 @@ def plot_biological_hierarchy(model, **kwargs):
     return g
 
 
-def plot_technical_hierarchy(model, show_signatures=True, **kwargs):
+def plot_technical_hierarchy(model: "scDEF", show_signatures: bool = True, **kwargs: Any) -> Graph:
+    """Plot the technical hierarchy of the model.
+
+    Args:
+        model: scDEF model instance
+        show_signatures: whether to show gene signatures
+        **kwargs: keyword arguments passed to make_graph
+
+    Returns:
+        Graphviz Graph object
+    """
     technical_signature = None
     technical_scores = None
     if show_signatures:

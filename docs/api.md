@@ -4,5 +4,8 @@
 ::: scdef.scDEF
 ::: scdef.iscDEF
 
-## Benchmarking utilities
-::: scdef.benchmark.run_multiple_resolutions
+## Tools
+::: scdef.tl
+
+## Plotting
+::: scdef.pl

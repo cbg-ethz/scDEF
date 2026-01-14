@@ -10,31 +10,59 @@ import seaborn as sns
 import scanpy as sc
 from scipy.cluster.hierarchy import ward, leaves_list
 from scipy.spatial.distance import pdist
-from typing import Optional, Sequence, Literal, Mapping
+from typing import Optional, Sequence, Literal, Mapping, Dict, List, Tuple, Any, Union, TYPE_CHECKING
+from matplotlib.figure import Figure
+from matplotlib.axes import Axes
 import pandas as pd
 from ..utils import data_utils
 
+if TYPE_CHECKING:
+    from scdef.models._scdef import scDEF
+
 
 def plot_obs_factor_dotplot(
-    model,
-    obs_key,
-    layer_idx,
-    cluster_rows=True,
-    cluster_cols=True,
-    figsize=(8, 2),
-    s_min=100,
-    s_max=500,
-    titlesize=12,
-    labelsize=12,
-    legend_fontsize=12,
-    legend_titlesize=12,
-    cmap="viridis",
-    logged=False,
-    width_ratios=[5, 1, 1],
-    show_ylabel=True,
-    show=True,
-):
-    """Plot dotplot showing factor assignments for observations."""
+    model: "scDEF",
+    obs_key: str,
+    layer_idx: int,
+    cluster_rows: bool = True,
+    cluster_cols: bool = True,
+    figsize: Tuple[float, float] = (8, 2),
+    s_min: int = 100,
+    s_max: int = 500,
+    titlesize: int = 12,
+    labelsize: int = 12,
+    legend_fontsize: int = 12,
+    legend_titlesize: int = 12,
+    cmap: str = "viridis",
+    logged: bool = False,
+    width_ratios: List[float] = [5, 1, 1],
+    show_ylabel: bool = True,
+    show: bool = True,
+) -> Optional[Figure]:
+    """Plot dotplot showing factor assignments for observations.
+
+    Args:
+        model: scDEF model instance
+        obs_key: key in model.adata.obs to use for grouping
+        layer_idx: layer index to plot
+        cluster_rows: whether to cluster rows
+        cluster_cols: whether to cluster columns
+        figsize: figure size
+        s_min: minimum circle size
+        s_max: maximum circle size
+        titlesize: title font size
+        labelsize: label font size
+        legend_fontsize: legend font size
+        legend_titlesize: legend title font size
+        cmap: colormap name
+        logged: whether to log transform colors
+        width_ratios: width ratios for subplots
+        show_ylabel: whether to show y-axis label
+        show: whether to show the plot
+
+    Returns:
+        Figure object if show is False, None otherwise
+    """
     # For each obs, compute the average cell score on each factor among the cells that attach to that obs, use as color
     # And compute the fraction of cells in the obs that attach to each factor, use as circle size
     layer_name = model.layer_names[layer_idx]
@@ -164,15 +192,15 @@ def plot_obs_factor_dotplot(
 
 
 def plot_multilevel_paga(
-    model,
+    model: "scDEF",
     neighbors_rep: Optional[str] = "X_L0",
-    layers: Optional[list] = None,
-    figsize: Optional[tuple] = (16, 4),
+    layers: Optional[List[int]] = None,
+    figsize: Optional[Tuple[float, float]] = (16, 4),
     reuse_pos: Optional[bool] = True,
     fontsize: Optional[int] = 12,
     show: Optional[bool] = True,
-    **paga_kwargs,
-):
+    **paga_kwargs: Any,
+) -> None:
     """Plot a PAGA graph from each scDEF layer.
 
     Args:
@@ -181,6 +209,7 @@ def plot_multilevel_paga(
         layers: which layers to plot
         figsize: figure size
         reuse_pos: whether to initialize each PAGA graph with the graph from the layer above
+        fontsize: font size for labels
         show: whether to show the plot
         **paga_kwargs: keyword arguments to adjust the PAGA layouts
     """
@@ -242,28 +271,51 @@ def plot_multilevel_paga(
 
 
 def plot_layers_continuous_obs(
-    model,
-    obs_keys,
-    obs_mats,
-    sort_layer_factors=True,
-    orders=None,
-    layers=None,
-    vmax=None,
-    vmin=None,
-    cb_title="",
-    cb_title_fontsize=10,
-    fontsize=12,
-    title_fontsize=12,
-    pad=0.1,
-    shrink=0.7,
-    figsize=(10, 4),
-    xticks_rotation=90.0,
-    cmap=None,
-    show=True,
-    rasterized=False,
-    **kwargs,
-):
-    """Plot observation matrices across layers."""
+    model: "scDEF",
+    obs_keys: Union[str, List[str]],
+    obs_mats: Dict[str, Dict[int, np.ndarray]],
+    sort_layer_factors: bool = True,
+    orders: Optional[List[np.ndarray]] = None,
+    layers: Optional[List[int]] = None,
+    vmax: Optional[float] = None,
+    vmin: Optional[float] = None,
+    cb_title: str = "",
+    cb_title_fontsize: int = 10,
+    fontsize: int = 12,
+    title_fontsize: int = 12,
+    pad: float = 0.1,
+    shrink: float = 0.7,
+    figsize: Tuple[float, float] = (10, 4),
+    xticks_rotation: float = 90.0,
+    cmap: Optional[str] = None,
+    show: bool = True,
+    rasterized: bool = False,
+    **kwargs: Any,
+) -> None:
+    """Plot continuous observation matrices across layers.
+
+    Args:
+        model: scDEF model instance
+        obs_keys: observation keys to plot
+        obs_mats: observation matrices dictionary
+        sort_layer_factors: whether to sort factors by layer
+        orders: custom factor orders
+        layers: which layers to plot
+        vmax: maximum value for colormap
+        vmin: minimum value for colormap
+        cb_title: colorbar title
+        cb_title_fontsize: colorbar title font size
+        fontsize: font size for labels
+        title_fontsize: title font size
+        pad: padding for colorbar
+        shrink: shrink factor for colorbar
+        figsize: figure size
+        xticks_rotation: rotation angle for x-axis ticks
+        cmap: colormap name
+        show: whether to show the plot
+        rasterized: whether to rasterize the plot
+        **kwargs: additional plotting keyword arguments
+    """
     if not isinstance(obs_keys, list):
         obs_keys = [obs_keys]
 
@@ -337,30 +389,53 @@ def plot_layers_continuous_obs(
 
 
 def plot_layers_obs(
-    model,
-    obs_keys,
-    obs_mats,
-    obs_clusters,
-    obs_vals_dict,
-    sort_layer_factors=True,
-    orders=None,
-    layers=None,
-    vmax=None,
-    vmin=None,
-    cb_title="",
-    cb_title_fontsize=10,
-    fontsize=12,
-    title_fontsize=12,
-    pad=0.1,
-    shrink=0.7,
-    figsize=(10, 4),
-    xticks_rotation=90.0,
-    cmap=None,
-    show=True,
-    rasterized=False,
-    **kwargs,
-):
-    """Plot observation matrices across layers."""
+    model: "scDEF",
+    obs_keys: Union[str, List[str]],
+    obs_mats: Dict[str, Dict[int, np.ndarray]],
+    obs_clusters: Dict[str, np.ndarray],
+    obs_vals_dict: Dict[str, List[str]],
+    sort_layer_factors: bool = True,
+    orders: Optional[List[np.ndarray]] = None,
+    layers: Optional[List[int]] = None,
+    vmax: Optional[float] = None,
+    vmin: Optional[float] = None,
+    cb_title: str = "",
+    cb_title_fontsize: int = 10,
+    fontsize: int = 12,
+    title_fontsize: int = 12,
+    pad: float = 0.1,
+    shrink: float = 0.7,
+    figsize: Tuple[float, float] = (10, 4),
+    xticks_rotation: float = 90.0,
+    cmap: Optional[str] = None,
+    show: bool = True,
+    rasterized: bool = False,
+    **kwargs: Any,
+) -> None:
+    """Plot observation matrices across layers.
+
+    Args:
+        model: scDEF model instance
+        obs_keys: observation keys to plot
+        obs_mats: observation matrices dictionary
+        sort_layer_factors: whether to sort factors by layer
+        orders: custom factor orders
+        layers: which layers to plot
+        vmax: maximum value for colormap
+        vmin: minimum value for colormap
+        cb_title: colorbar title
+        cb_title_fontsize: colorbar title font size
+        fontsize: font size for labels
+        title_fontsize: title font size
+        pad: padding for colorbar
+        shrink: shrink factor for colorbar
+        figsize: figure size
+        xticks_rotation: rotation angle for x-axis ticks
+        cmap: colormap name
+        show: whether to show the plot
+        rasterized: whether to rasterize the plot
+        **kwargs: additional plotting keyword arguments
+    """
     if not isinstance(obs_keys, list):
         obs_keys = [obs_keys]
 
@@ -435,17 +510,18 @@ def plot_layers_obs(
 
 
 def plot_pathway_scores(
-    model,
+    model: "scDEF",
     pathways: pd.DataFrame,
     top_genes: Optional[int] = 20,
-    **kwargs,
-):
+    **kwargs: Any,
+) -> None:
     """Plot the association between a set of cell annotations and a set of gene signatures.
 
     Args:
         model: scDEF model instance
         pathways: a pandas DataFrame containing PROGENy pathways
         top_genes: number of top genes to consider
+        **kwargs: plotting keyword arguments
     """
     (
         obs_mats,
@@ -475,13 +551,13 @@ def plot_pathway_scores(
 
 
 def plot_signatures_scores(
-    model,
+    model: "scDEF",
     obs_keys: Sequence[str],
     markers: Mapping[str, Sequence[str]],
     top_genes: Optional[int] = 10,
-    hierarchy: Optional[dict] = None,
-    **kwargs,
-):
+    hierarchy: Optional[Dict[str, Sequence[str]]] = None,
+    **kwargs: Any,
+) -> None:
     """Plot the association between a set of cell annotations and a set of gene signatures.
 
     Args:
@@ -504,14 +580,14 @@ def plot_signatures_scores(
 
 
 def plot_obs_scores(
-    model,
+    model: "scDEF",
     obs_keys: Sequence[str],
-    hierarchy: Optional[dict] = None,
+    hierarchy: Optional[Dict[str, Sequence[str]]] = None,
     mode: Literal["f1", "fracs", "weights"] = "fracs",
-    vmax=None,
-    vmin=None,
-    **kwargs,
-):
+    vmax: Optional[float] = None,
+    vmin: Optional[float] = None,
+    **kwargs: Any,
+) -> None:
     """Plot the association between a set of cell annotations and factors.
 
     Args:
@@ -554,13 +630,13 @@ def plot_obs_scores(
 
 
 def plot_continuous_obs_scores(
-    model,
+    model: "scDEF",
     obs_keys: Sequence[str],
     mode: Literal["correlations"] = "correlations",
-    vmax=None,
-    vmin=None,
-    **kwargs,
-):
+    vmax: Optional[float] = None,
+    vmin: Optional[float] = None,
+    **kwargs: Any,
+) -> None:
     """Plot the correlations between a set of cell annotations and factors.
 
     Args:
@@ -591,19 +667,35 @@ def plot_continuous_obs_scores(
 
 
 def plot_umaps(
-    model,
-    color=[],
-    layers=None,
-    figsize=(16, 4),
-    fontsize=12,
-    legend_fontsize=10,
-    use_log=False,
-    metric="euclidean",
-    rasterized=True,
-    n_legend_cols=1,
-    show=True,
-):
-    """Plot UMAPs for different layers."""
+    model: "scDEF",
+    color: Union[str, List[str]] = [],
+    layers: Optional[List[int]] = None,
+    figsize: Tuple[float, float] = (16, 4),
+    fontsize: int = 12,
+    legend_fontsize: int = 10,
+    use_log: bool = False,
+    metric: str = "euclidean",
+    rasterized: bool = True,
+    n_legend_cols: int = 1,
+    factor_subset: Optional[List[str]] = None,
+    show: bool = True,
+) -> None:
+    """Plot UMAPs for different layers.
+
+    Args:
+        model: scDEF model instance
+        color: color key(s) to use for coloring
+        layers: which layers to plot
+        figsize: figure size
+        fontsize: font size for labels
+        legend_fontsize: legend font size
+        use_log: whether to use log-transformed data
+        metric: distance metric for neighbors computation
+        rasterized: whether to rasterize the plot
+        n_legend_cols: number of columns in legend
+        factor_subset: subset of factors to plot
+        show: whether to show the plot
+    """
     if layers is None:
         layers = [
             i
@@ -681,22 +773,39 @@ def plot_umaps(
 
 
 def plot_factors_bars(
-    model,
-    obs_keys,
-    sort_layer_factors=True,
-    orders=None,
-    sharey=True,
-    layers=None,
-    vmax=None,
-    vmin=None,
-    fontsize=12,
-    title_fontsize=12,
-    legend_fontsize=8,
-    figsize=(10, 4),
-    total=False,
-    show=True,
-):
-    """Plot factor scores as bar charts."""
+    model: "scDEF",
+    obs_keys: Union[str, List[str]],
+    sort_layer_factors: bool = True,
+    orders: Optional[List[np.ndarray]] = None,
+    sharey: bool = True,
+    layers: Optional[List[int]] = None,
+    vmax: Optional[float] = None,
+    vmin: Optional[float] = None,
+    fontsize: int = 12,
+    title_fontsize: int = 12,
+    legend_fontsize: int = 8,
+    figsize: Tuple[float, float] = (10, 4),
+    total: bool = False,
+    show: bool = True,
+) -> None:
+    """Plot factor scores as bar charts.
+
+    Args:
+        model: scDEF model instance
+        obs_keys: observation keys to plot
+        sort_layer_factors: whether to sort factors by layer
+        orders: custom factor orders
+        sharey: whether to share y-axis across subplots
+        layers: which layers to plot
+        vmax: maximum value for y-axis
+        vmin: minimum value for y-axis
+        fontsize: font size for labels
+        title_fontsize: title font size
+        legend_fontsize: legend font size
+        figsize: figure size
+        total: whether to plot total scores
+        show: whether to show the plot
+    """
     if not isinstance(obs_keys, list):
         obs_keys = [obs_keys]
 
@@ -782,7 +891,11 @@ def plot_factors_bars(
         plt.show()
 
 
-def plot_cell_entropies(model, thres=0.9, show=True):
+def plot_cell_entropies(
+    model: "scDEF",
+    thres: float = 0.9,
+    show: bool = True,
+) -> Optional[Figure]:
     """Plot cell entropies and factor numbers across layers.
 
     Args:
@@ -822,13 +935,20 @@ def plot_cell_entropies(model, thres=0.9, show=True):
         return fig
 
 
-def plot_factor_genes(model, thres=0.9, show=True):
+def plot_factor_genes(
+    model: "scDEF",
+    thres: float = 0.9,
+    show: bool = True,
+) -> Optional[Figure]:
     """Plot number of genes in factors across layers.
 
     Args:
         model: scDEF model instance
-        thres: Threshold for cumulative sum calculation
-        show: Whether to show the plot
+        thres: threshold for cumulative sum calculation
+        show: whether to show the plot
+
+    Returns:
+        Figure object if show is False, None otherwise
     """
     layer_kept_n_genes = []
     layer_removed_n_genes = []
@@ -884,7 +1004,12 @@ def plot_factor_genes(model, thres=0.9, show=True):
         return fig
 
 
-def plot_factor_gini(model, idx, thres=0.9, show=True):
+def plot_factor_gini(
+    model: "scDEF",
+    idx: int,
+    thres: float = 0.9,
+    show: bool = True,
+) -> Optional[Axes]:
     """Plot Gini coefficient for a specific factor.
 
     Args:

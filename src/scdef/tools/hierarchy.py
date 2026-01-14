@@ -1,37 +1,28 @@
 import numpy as np
 import pandas as pd
 import scdef.utils.hierarchy_utils as hierarchy_utils
-from typing import Optional, Sequence, Mapping
+from typing import Optional, Sequence, Mapping, Dict, Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from scdef.models._scdef import scDEF
 
 
 def compute_hierarchy_scores(
-    model,
+    model: "scDEF",
     use_filtered: bool = True,  # use model.factor_lists / model.factor_names
     factor_weight: str = "uniform",  # {"usage","uniform"}
     eps: float = 1e-12,
-):
-    """
-    Computes per-factor and global hierarchy scores from learned W matrices.
+) -> Dict[str, Any]:
+    """Compute per-factor and global hierarchy scores from learned W matrices.
 
-    Definitions (for each child factor j at a transition with K possible parents):
-      P(:,j) = normalized column of W  => p(parent | child=j)
-
-      H_j = -sum_i P_ij log P_ij
-      ambiguity_frac_j = H_j / log(K)              in [0,1]
-      clarity_score_j  = 1 - ambiguity_frac_j      in [0,1]   (COMPARABLE across different K)
-
-      n_eff_parents_j = exp(H_j)                   in [1, K]  (interpretable "effective #parents")
-
-    Global score:
-      weighted mean of clarity_score_j across all children across all transitions,
-      weights chosen by factor_weight.
+    Args:
+        model: scDEF model instance
+        use_filtered: whether to use model.factor_lists / model.factor_names
+        factor_weight: weighting scheme for factors, either "uniform" or "usage"
+        eps: small epsilon value for numerical stability
 
     Returns:
-      dict with:
-        - per_factor: DataFrame (one row per factor that has a parent; i.e. all non-top layers)
-        - per_transition: DataFrame (one row per layer transition)
-        - global_score: float in [0,1]
-        - global_ambiguity: float in [0,1] (= 1 - global_score)
+        dict containing per_factor DataFrame, per_transition DataFrame, global_score, and global_ambiguity
     """
 
     def _col_normalize(W):
@@ -168,8 +159,15 @@ def compute_hierarchy_scores(
     }
 
 
-def make_biological_hierarchy(model):
-    """Make the biological hierarchy of the model."""
+def make_biological_hierarchy(model: "scDEF") -> Dict[str, Sequence[str]]:
+    """Make the biological hierarchy of the model.
+
+    Args:
+        model: scDEF model instance
+
+    Returns:
+        biological_hierarchy: dictionary containing the biological hierarchy
+    """
     technical_factors = model.adata.uns["factor_obs"][
         model.adata.uns["factor_obs"]["technical"]
     ].index.tolist()  # layer 0
@@ -178,8 +176,15 @@ def make_biological_hierarchy(model):
     return biological_hierarchy
 
 
-def make_technical_hierarchy(model):
-    """Make the technical hierarchy of the model."""
+def make_technical_hierarchy(model: "scDEF") -> Dict[str, Sequence[str]]:
+    """Make the technical hierarchy of the model.
+
+    Args:
+        model: scDEF model instance
+
+    Returns:
+        technical_hierarchy: dictionary containing the technical hierarchy
+    """
     technical_factors = model.adata.uns["factor_obs"][
         model.adata.uns["factor_obs"]["technical"]
     ][
@@ -193,17 +198,21 @@ def make_technical_hierarchy(model):
     return technical_hierarchy
 
 
-def make_hierarchies(model):
-    """Store the biological and technical hierarchies of the model."""
+def make_hierarchies(model: "scDEF") -> None:
+    """Store the biological and technical hierarchies of the model.
+
+    Args:
+        model: scDEF model instance
+    """
     make_biological_hierarchy(model)
     make_technical_hierarchy(model)
 
 
 def get_hierarchy(
-    model,
+    model: "scDEF",
     simplified: Optional[bool] = True,
     drop_factors: Optional[Sequence[str]] = None,
-) -> Mapping[str, Sequence[str]]:
+) -> Dict[str, Sequence[str]]:
     """Get a dictionary containing the polytree contained in the scDEF graph.
 
     Args:

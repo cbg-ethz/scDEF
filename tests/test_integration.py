@@ -101,7 +101,7 @@ def test_scdef():
 
     model.logger.info(model.factor_lists)
 
-    assert len(model.elbos) == 1
+    assert len(model.elbos) == 2
     assert "L0" in model.adata.obs.columns
     assert "L1" in model.adata.obs.columns
     assert "L2" in model.adata.obs.columns

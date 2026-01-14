@@ -31,14 +31,15 @@ optional = true
 [tool.poetry.group.extras.dependencies]
 scikit-learn = '*'
 
-[tool.poetry.dev-dependencies]
+[tool.poetry.group.dev.dependencies]
 bump2version = "^1.0.1"
 black = "^23.3.0"
 pytest = "^6.2.4"
-mkdocs = "^1.4.3"
-mkdocstrings = {extras = ["python"], version = "^0.25.2"}
-mkdocs-material = "^9.1.18"
-mkdocs-jupyter = "^0.24.2 "
-notebook = "~6.0.0"
+mkdocs = "^1.6.1"
+mkdocs-material = "^9.7.1"
+mkdocs-jupyter = "^0.25.1"
+mkdocstrings = "^1.0.0"
+mkdocstrings-python = "^2.0.1"
+mkdocs-autorefs = "^1.4.3"
+notebook = ">=6.5.7,<7"
 jupyter_contrib_nbextensions = "^0.7.0"
-

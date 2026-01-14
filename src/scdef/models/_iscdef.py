@@ -8,29 +8,35 @@ from typing import Optional, Sequence, Mapping
 
 
 class iscDEF(scDEF):
-    """Informed scDEF model.
+    """Informed Single-cell Deep Exponential Families (iscDEF) model.
 
-    This model extends the basic scDEF by using gene sets to guide the factors.
-    iscDEF can either set the given sets as top layer factors and learn higher-resolution
-    structure, or use them as the lowest resolution and learn a hierarchy that relates them.
-    All the methods from scDEF are available in iscDEF.
+    iscDEF extends the scDEF framework by incorporating prior biological knowledge in the form of gene sets ("markers").
+    This model can guide the discovery of factors along known biology, either by using gene sets as the highest-resolution
+    (top) factors and learning finer substructure beneath them or as the coarsest layer to learn how they relate hierarchically.
+
+    All methods and functionality available in scDEF are inherited by iscDEF. Additional logic allows for flexible
+    integration of marker sets at a chosen model layer, custom prior settings for marker versus non-marker genes,
+    and automatic handling of cells/gene sets that do not fall into any marker category (via the `add_other` option).
 
     Args:
-        adata: AnnData object containing the gene expression data. scDEF learns a model from
-            counts, so they must be present in either adata.X or in adata.layers.
-        markers_dict: dictionary containing named gene lists.
-        add_other: whether to add factors for cells which don't express any of the sets in markers_dict.
-        markers_layer: scDEF layer at which the gene sets are defined. If > 0, this defines the number of layers.
-        cn_small_scale: scale for low connectivity
-        cn_big_scale: scale for large connectivity
-        cn_small_strength: strength for weak connectivity
-        cn_big_strength: strength for large connectivity
-        gs_small_scale: scale for genes not in set
-        gs_big_scale: scale for genes in set
-        marker_strength: strength for marker genes
-        nonmarker_strength: strength for non-marker genes
-        other_strength: strength for marker genes of other sets
-        **kwargs: keyword arguments for base scDEF.
+        adata: AnnData object containing the gene expression count matrix. Counts must be present 
+            in either `adata.X` or a specified layer.
+        markers_dict: dictionary mapping marker/factor names to gene lists (gene sets). These guide 
+            the formation of factors in the chosen layer.
+        add_other: if > 0, adds one or more "other" factors for cells/observations not matching any 
+            marker set. Only one "other" factor is supported for `markers_layer > 0`.
+        markers_layer: index of the layer at which gene sets are enforced as factors (0 = lowest/finest, 
+            higher = top layer). If > 0, total layers determined by this value.
+        cn_small_mean: mean prior connectivity for "small" (weakly-connected) genes between factors and gene sets.
+        cn_big_mean: mean prior connectivity for "big" (strongly-connected) genes between factors and gene sets.
+        cn_small_strength: concentration parameter for low connectivity (see scDEF prior specification).
+        cn_big_strength: concentration parameter for high connectivity.
+        gs_small_scale: scale parameter for genes *not* in the marker gene set.
+        gs_big_scale: scale parameter for genes *in* the marker gene set (encourages large factor loadings).
+        marker_strength: multiplier for the prior strength for marker genes.
+        nonmarker_strength: multiplier for non-marker gene prior strength.
+        other_strength: prior strength for marker genes belonging to "other" sets.
+        **kwargs: additional arguments passed to the scDEF base model.
     """
 
     def __init__(
