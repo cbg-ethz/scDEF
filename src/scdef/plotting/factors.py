@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from scdef.models._scdef import scDEF
 
 
-def plot_obs_factor_dotplot(
+def obs_factor_dotplot(
     model: "scDEF",
     obs_key: str,
     layer_idx: int,
@@ -202,7 +202,7 @@ def plot_obs_factor_dotplot(
         plt.show()
 
 
-def plot_multilevel_paga(
+def multilevel_paga(
     model: "scDEF",
     neighbors_rep: Optional[str] = "X_L0",
     layers: Optional[List[int]] = None,
@@ -281,7 +281,7 @@ def plot_multilevel_paga(
         plt.show()
 
 
-def plot_layers_continuous_obs(
+def layers_continuous_obs(
     model: "scDEF",
     obs_keys: Union[str, List[str]],
     obs_mats: Dict[str, Dict[int, np.ndarray]],
@@ -399,7 +399,7 @@ def plot_layers_continuous_obs(
         plt.show()
 
 
-def plot_layers_obs(
+def layers_obs(
     model: "scDEF",
     obs_keys: Union[str, List[str]],
     obs_mats: Dict[str, Dict[int, np.ndarray]],
@@ -520,7 +520,7 @@ def plot_layers_obs(
         plt.show()
 
 
-def plot_pathway_scores(
+def pathway_scores(
     model: "scDEF",
     pathways: pd.DataFrame,
     top_genes: Optional[int] = 20,
@@ -551,7 +551,7 @@ def plot_pathway_scores(
     if "vmin" not in kwargs:
         kwargs["vmin"] = joined_mats.min()
 
-    plot_layers_obs(
+    layers_obs(
         model,
         ["Pathway"],
         obs_mats,
@@ -561,7 +561,7 @@ def plot_pathway_scores(
     )
 
 
-def plot_signatures_scores(
+def signatures_scores(
     model: "scDEF",
     obs_keys: Sequence[str],
     markers: Mapping[str, Sequence[str]],
@@ -587,10 +587,10 @@ def plot_signatures_scores(
         top_genes=top_genes,
         hierarchy=hierarchy,
     )
-    plot_layers_obs(model, obs_keys, obs_mats, obs_clusters, obs_vals_dict, **kwargs)
+    layers_obs(model, obs_keys, obs_mats, obs_clusters, obs_vals_dict, **kwargs)
 
 
-def plot_obs_scores(
+def obs_scores(
     model: "scDEF",
     obs_keys: Sequence[str],
     hierarchy: Optional[Dict[str, Sequence[str]]] = None,
@@ -628,7 +628,7 @@ def plot_obs_scores(
         vmax = 1.0
         vmin = 0.0
 
-    plot_layers_obs(
+    layers_obs(
         model,
         obs_keys,
         obs_mats,
@@ -640,7 +640,7 @@ def plot_obs_scores(
     )
 
 
-def plot_continuous_obs_scores(
+def continuous_obs_scores(
     model: "scDEF",
     obs_keys: Sequence[str],
     mode: Literal["correlations"] = "correlations",
@@ -667,7 +667,7 @@ def plot_continuous_obs_scores(
         f,
     )
 
-    plot_layers_continuous_obs(
+    layers_continuous_obs(
         model,
         obs_keys,
         obs_mats,
@@ -677,21 +677,21 @@ def plot_continuous_obs_scores(
     )
 
 
-def plot_umaps(
+def umap(
     model: "scDEF",
     color: Union[str, List[str]] = [],
     layers: Optional[List[int]] = None,
     figsize: Tuple[float, float] = (16, 4),
     fontsize: int = 12,
     legend_fontsize: int = 10,
-    use_log: bool = False,
-    metric: str = "euclidean",
     rasterized: bool = True,
     n_legend_cols: int = 1,
     factor_subset: Optional[List[str]] = None,
     show: bool = True,
 ) -> None:
-    """Plot UMAPs for different layers.
+    """Plot pre-computed UMAPs for different layers.
+
+    UMAP embeddings must have been computed first via ``scdef.tl.umap``.
 
     Args:
         model: scDEF model instance
@@ -700,8 +700,6 @@ def plot_umaps(
         figsize: figure size
         fontsize: font size for labels
         legend_fontsize: legend font size
-        use_log: whether to use log-transformed data
-        metric: distance metric for neighbors computation
         rasterized: whether to rasterize the plot
         n_legend_cols: number of columns in legend
         factor_subset: subset of factors to plot
@@ -716,9 +714,6 @@ def plot_umaps(
 
     n_layers = len(layers)
 
-    if "X_umap" in model.adata.obsm:
-        model.adata.obsm["X_umap_original"] = model.adata.obsm["X_umap"].copy()
-
     if not isinstance(color, list):
         color = [color]
 
@@ -728,19 +723,15 @@ def plot_umaps(
 
     fig, axes = plt.subplots(n_rows, n_layers, figsize=figsize)
     for layer in layers:
-        # Compute UMAP
-        model.adata.obsm[f"X_{model.layer_names[layer]}_log"] = np.log(
-            model.adata.obsm[f"X_{model.layer_names[layer]}"]
-        )
-        if use_log:
-            sc.pp.neighbors(model.adata, use_rep=f"X_{model.layer_names[layer]}_log")
-        else:
-            sc.pp.neighbors(
-                model.adata,
-                use_rep=f"X_{model.layer_names[layer]}",
-                metric=metric,
+        layer_name = model.layer_names[layer]
+        umap_key = f"X_umap_{layer_name}"
+        if umap_key not in model.adata.obsm:
+            raise KeyError(
+                f"UMAP embedding '{umap_key}' not found in model.adata.obsm. "
+                f"Run scdef.tl.umap(model) first."
             )
-        sc.tl.umap(model.adata)
+        # Temporarily set X_umap so sc.pl.umap can find it
+        model.adata.obsm["X_umap"] = model.adata.obsm[umap_key]
 
         for row in range(len(color)):
             if n_rows > 1:
@@ -775,15 +766,11 @@ def plot_umaps(
                 )
                 leg._legend_box.align = "left"
 
-    # Put the original one back
-    if "X_umap_original" in model.adata.obsm:
-        model.adata.obsm["X_umap"] = model.adata.obsm["X_umap_original"].copy()
-
     if show:
         plt.show()
 
 
-def plot_factors_bars(
+def factors_bars(
     model: "scDEF",
     obs_keys: Union[str, List[str]],
     sort_layer_factors: bool = True,
@@ -902,7 +889,7 @@ def plot_factors_bars(
         plt.show()
 
 
-def plot_cell_entropies(
+def cell_entropies(
     model: "scDEF",
     thres: float = 0.9,
     show: bool = True,
@@ -946,7 +933,7 @@ def plot_cell_entropies(
         return fig
 
 
-def plot_factor_genes(
+def factor_genes(
     model: "scDEF",
     thres: float = 0.9,
     show: bool = True,
@@ -1015,7 +1002,7 @@ def plot_factor_genes(
         return fig
 
 
-def plot_factor_gini(
+def factor_gini(
     model: "scDEF",
     idx: int,
     thres: float = 0.9,

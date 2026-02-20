@@ -202,8 +202,8 @@ def _compute_wedged_fillcolor(model, wedged, cells):
     )
 
 
-def _compute_wedged_fillcolor_with_scores(model, wedged, factor_idx):
-    scores = model.adata.obs[f"{model.layer_names[0]}_{factor_idx}_score"].values
+def _compute_wedged_fillcolor_with_scores(model, wedged, factor_name):
+    scores = model.adata.obs[f"{factor_name}_prob"].values
     prevs = []
     for b in model.adata.obs[wedged].cat.categories:
         group_mask = (model.adata.obs[wedged] == b).values
@@ -472,6 +472,7 @@ def make_graph(
     show_batch_counts: Optional[bool] = False,
     filled: Optional[Union[str, Dict[str, float]]] = None,
     wedged: Optional[str] = None,
+    assignments: Optional[bool] = True,
     color_edges: Optional[bool] = True,
     show_confidences: Optional[bool] = False,
     mc_samples: Optional[int] = 100,
@@ -505,6 +506,7 @@ def make_graph(
         show_batch_counts: whether to show the number of cells from each batch that attach to each factor
         filled: key from model.adata.obs to use to fill the nodes with, or dictionary of factor scores
         wedged: key from model.adata.obs to use to wedge the nodes with
+        assignments: whether to use the assignments of cells to factors to wedge the nodes, rather than the scores
         color_edges: whether to color the graph edges according to the upper factors
         show_confidences: whether to show the confidence score for each signature
         mc_samples: number of Monte Carlo samples to take from the posterior to compute signature confidences
@@ -613,9 +615,15 @@ def make_graph(
             elif style == "wedged":
                 if assignments:
                     fillcolor = _compute_wedged_fillcolor(model, wedged, cells)
+                    if len(cells) == 0:
+                        fillcolor = _compute_wedged_fillcolor_with_scores(
+                            model,
+                            wedged,
+                            factor_name,
+                        )
                 else:
                     fillcolor = _compute_wedged_fillcolor_with_scores(
-                        model, wedged, factor_idx
+                        model, wedged, factor_name
                     )
 
             # Add enrichments or signatures to label
@@ -736,7 +744,7 @@ def make_technical_hierarchy_graph(
     top_genes: Optional[int] = None,
     filled: Optional[str] = None,
     wedged: Optional[str] = None,
-    assignments: Optional[bool] = False,
+    assignments: Optional[bool] = True,
     color_edges: Optional[bool] = True,
     show_confidences: Optional[bool] = False,
     mc_samples: Optional[int] = 100,
@@ -887,10 +895,19 @@ def make_technical_hierarchy_graph(
             elif style == "wedged":
                 if assignments:
                     fillcolor = _compute_wedged_fillcolor(model, wedged, cells)
+                    if len(cells) == 0 and layer_idx == 0:
+                        fillcolor = _compute_wedged_fillcolor_with_scores(
+                            model,
+                            wedged,
+                            factor_name,
+                        )
                 else:
-                    fillcolor = _compute_wedged_fillcolor_with_scores(
-                        model, wedged, factor_idx
-                    )
+                    if layer_idx == 0:
+                        fillcolor = _compute_wedged_fillcolor_with_scores(
+                            model,
+                            wedged,
+                            factor_name,
+                        )
 
             # Add enrichments or signatures to label
             if enrichments is not None:
@@ -975,7 +992,7 @@ def make_technical_hierarchy_graph(
     return g
 
 
-def plot_biological_hierarchy(model: "scDEF", **kwargs: Any) -> Graph:
+def biological_hierarchy(model: "scDEF", **kwargs: Any) -> Graph:
     """Plot the biological hierarchy of the model.
 
     Args:
@@ -998,7 +1015,7 @@ def plot_biological_hierarchy(model: "scDEF", **kwargs: Any) -> Graph:
     return g
 
 
-def plot_technical_hierarchy(
+def technical_hierarchy(
     model: "scDEF", show_signatures: bool = True, **kwargs: Any
 ) -> Graph:
     """Plot the technical hierarchy of the model.

@@ -106,16 +106,16 @@ def test_scdef():
     assert "L1" in model.adata.obs.columns
     assert "L2" in model.adata.obs.columns
 
-    scd.pl.plot_qc(model, show=False)
+    scd.pl.qc(model, show=False)
 
-    scd.pl.plot_multilevel_paga(
+    scd.pl.multilevel_paga(
         model, figsize=(16, 4), reuse_pos=True, frameon=False, show=False
     )
 
-    scd.pl.plot_signatures_scores(model, "celltypes", markers, top_genes=10, show=False)
+    scd.pl.signatures_scores(model, "celltypes", markers, top_genes=10, show=False)
 
     for mode in ["f1", "fracs", "weights"]:
-        scd.pl.plot_obs_scores(
+        scd.pl.obs_scores(
             model,
             ["celltypes", "celltypes_coarse"],
             mode=mode,
@@ -142,7 +142,8 @@ def test_scdef():
     signatures, scores = model.get_signatures_dict(scores=True, sorted_scores=False)
     sizes = model.get_sizes_dict()
 
-    scd.pl.plot_umaps(
+    scd.tl.umap(model)
+    scd.pl.umap(
         model,
         color=["celltypes", "celltypes_coarse"],
         fontsize=16,
@@ -150,4 +151,4 @@ def test_scdef():
         show=False,
     )
 
-    scd.pl.plot_factors_bars(model, ["celltypes", "celltypes_coarse"], show=False)
+    scd.pl.factors_bars(model, ["celltypes", "celltypes_coarse"], show=False)

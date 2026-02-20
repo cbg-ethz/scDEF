@@ -14,6 +14,7 @@ from .factor import (
     get_technical_signature,
     get_biological_signature,
     make_factor_obs,
+    umap,
 )
 
 __all__ = [
@@ -27,4 +28,5 @@ __all__ = [
     "get_biological_signature",
     "compute_hierarchy_scores",
     "make_factor_obs",
+    "umap",
 ]

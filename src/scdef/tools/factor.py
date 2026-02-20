@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import scanpy as sc
 from .hierarchy import get_hierarchy, compute_hierarchy_scores
 from typing import Optional, Sequence, Dict, List, Tuple, Any, Union, TYPE_CHECKING
 
@@ -141,3 +142,48 @@ def get_biological_signature(model: "scDEF", top_genes: int = 10) -> List[str]:
     )
     signature = signatures_dict[f"{model.layer_names[model.n_layers - 1]}_0"]
     return signature
+
+
+def umap(
+    model: "scDEF",
+    layers: Optional[List[int]] = None,
+    use_log: bool = False,
+    metric: str = "euclidean",
+) -> None:
+    """Compute UMAP embeddings for each scDEF layer.
+
+    The resulting embeddings are stored in
+    ``model.adata.obsm[f"X_umap_{layer_name}"]`` for each layer.
+
+    Args:
+        model: scDEF model instance
+        layers: which layers to compute UMAPs for. If None, all layers
+            with more than one factor are used (in descending order).
+        use_log: whether to use log-transformed cell-factor weights for
+            the neighbor graph computation.
+        metric: distance metric for neighbors computation.
+    """
+    if layers is None:
+        layers = [
+            i
+            for i in range(model.n_layers - 1, -1, -1)
+            if len(model.factor_lists[i]) > 1
+        ]
+
+    for layer in layers:
+        layer_name = model.layer_names[layer]
+        # Compute log representation
+        model.adata.obsm[f"X_{layer_name}_log"] = np.log(
+            model.adata.obsm[f"X_{layer_name}"]
+        )
+        if use_log:
+            sc.pp.neighbors(model.adata, use_rep=f"X_{layer_name}_log")
+        else:
+            sc.pp.neighbors(
+                model.adata,
+                use_rep=f"X_{layer_name}",
+                metric=metric,
+            )
+        sc.tl.umap(model.adata)
+        # Store under a layer-specific key
+        model.adata.obsm[f"X_umap_{layer_name}"] = model.adata.obsm["X_umap"].copy()
