@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import scdef.utils.hierarchy_utils as hierarchy_utils
-from typing import Optional, Sequence, Mapping, Dict, Any, TYPE_CHECKING
+from typing import Optional, Sequence, Mapping, Dict, Any, Union, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from scdef.models._scdef import scDEF
@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 def compute_hierarchy_scores(
     model: "scDEF",
     use_filtered: bool = True,  # use model.factor_lists / model.factor_names
+    filter_upper_layers: bool = False,
     factor_weight: str = "uniform",  # {"usage","uniform"}
     eps: float = 1e-12,
 ) -> Dict[str, Any]:
@@ -18,6 +19,8 @@ def compute_hierarchy_scores(
     Args:
         model: scDEF model instance
         use_filtered: whether to use model.factor_lists / model.factor_names
+        filter_upper_layers: when use_filtered is False, whether to still use
+            filtered factors for layers > 0 (both as parents and children)
         factor_weight: weighting scheme for factors, either "uniform" or "usage"
         eps: small epsilon value for numerical stability
 
@@ -51,15 +54,20 @@ def compute_hierarchy_scores(
         child_name = model.layer_names[child_layer]
         parent_name = model.layer_names[parent_layer]
 
-        if use_filtered:
+        use_filtered_child = use_filtered or (filter_upper_layers and child_layer > 0)
+        use_filtered_parent = use_filtered or (filter_upper_layers and parent_layer > 0)
+
+        if use_filtered_child:
             child_idx = np.array(model.factor_lists[child_layer], dtype=int)
-            parent_idx = np.array(model.factor_lists[parent_layer], dtype=int)
             child_factor_names = list(model.factor_names[child_layer])
-            parent_factor_names = list(model.factor_names[parent_layer])
         else:
             child_idx = np.arange(model.layer_sizes[child_layer], dtype=int)
-            parent_idx = np.arange(model.layer_sizes[parent_layer], dtype=int)
             child_factor_names = [f"{child_name}_{i}" for i in child_idx]
+        if use_filtered_parent:
+            parent_idx = np.array(model.factor_lists[parent_layer], dtype=int)
+            parent_factor_names = list(model.factor_names[parent_layer])
+        else:
+            parent_idx = np.arange(model.layer_sizes[parent_layer], dtype=int)
             parent_factor_names = [f"{parent_name}_{i}" for i in parent_idx]
 
         # W_parent has shape (#parents x #children)
@@ -157,6 +165,91 @@ def compute_hierarchy_scores(
         "global_ambiguity": 1.0 - global_score,  # also comparable
         "weighting": factor_weight,
     }
+
+
+def effective_parents_from_clarity(
+    clarity_score: Union[float, np.ndarray],
+    n_parents: int,
+    clip: bool = True,
+) -> Union[float, np.ndarray]:
+    """Compute effective number of parents from a clarity score.
+
+    This uses the same definitions as ``compute_hierarchy_scores``:
+    ``clarity = 1 - H/log(K)`` and ``n_eff = exp(H)``.
+    Therefore, for ``K > 1``:
+    ``n_eff = K ** (1 - clarity)``.
+
+    Args:
+        clarity_score: clarity score(s), typically in [0, 1]
+        n_parents: number of candidate parents ``K``
+        clip: if True, clip clarity values to [0, 1]. If False, values
+            outside [0, 1] raise a ValueError.
+
+    Returns:
+        Effective number of parents, with the same shape as clarity_score.
+    """
+    if n_parents < 1:
+        raise ValueError("n_parents must be >= 1")
+
+    clarity = np.asarray(clarity_score, dtype=float)
+
+    if clip:
+        clarity = np.clip(clarity, 0.0, 1.0)
+    elif np.any((clarity < 0.0) | (clarity > 1.0)):
+        raise ValueError("clarity_score must be in [0, 1] when clip=False")
+
+    # Degenerate case: only one possible parent.
+    if n_parents == 1:
+        n_eff = np.ones_like(clarity, dtype=float)
+    else:
+        n_eff = np.power(float(n_parents), 1.0 - clarity)
+
+    if np.ndim(n_eff) == 0:
+        return float(n_eff)
+    return n_eff
+
+
+def clarity_from_effective_parents(
+    n_eff_parents: Union[float, np.ndarray],
+    n_parents: int,
+    clip: bool = True,
+) -> Union[float, np.ndarray]:
+    """Compute clarity score from effective number of parents.
+
+    Inverse of ``effective_parents_from_clarity`` under the same definitions
+    used in ``compute_hierarchy_scores``:
+    ``clarity = 1 - H/log(K)`` and ``n_eff = exp(H)``.
+    Therefore, for ``K > 1``:
+    ``clarity = 1 - log(n_eff)/log(K)``.
+
+    Args:
+        n_eff_parents: effective parent count(s)
+        n_parents: number of candidate parents ``K``
+        clip: if True, clip n_eff to [1, n_parents]. If False, values
+            outside this range raise a ValueError.
+
+    Returns:
+        Clarity score(s), with the same shape as n_eff_parents.
+    """
+    if n_parents < 1:
+        raise ValueError("n_parents must be >= 1")
+
+    n_eff = np.asarray(n_eff_parents, dtype=float)
+
+    if clip:
+        n_eff = np.clip(n_eff, 1.0, float(n_parents))
+    elif np.any((n_eff < 1.0) | (n_eff > float(n_parents))):
+        raise ValueError("n_eff_parents must be in [1, n_parents] when clip=False")
+
+    # Degenerate case: only one possible parent.
+    if n_parents == 1:
+        clarity = np.ones_like(n_eff, dtype=float)
+    else:
+        clarity = 1.0 - (np.log(n_eff) / np.log(float(n_parents)))
+
+    if np.ndim(clarity) == 0:
+        return float(clarity)
+    return clarity
 
 
 def make_biological_hierarchy(model: "scDEF") -> Dict[str, Sequence[str]]:

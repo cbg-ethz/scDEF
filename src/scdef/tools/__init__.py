@@ -9,11 +9,11 @@ from .hierarchy import (
     compute_hierarchy_scores,
 )
 from .factor import (
+    factor_diagnostics,
     set_factor_signatures,
     set_technical_factors,
     get_technical_signature,
     get_biological_signature,
-    make_factor_obs,
     umap,
 )
 
@@ -22,11 +22,11 @@ __all__ = [
     "make_hierarchies",
     "make_biological_hierarchy",
     "make_technical_hierarchy",
+    "factor_diagnostics",
     "set_factor_signatures",
     "set_technical_factors",
     "get_technical_signature",
     "get_biological_signature",
     "compute_hierarchy_scores",
-    "make_factor_obs",
     "umap",
 ]

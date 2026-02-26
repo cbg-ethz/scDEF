@@ -8,8 +8,64 @@ if TYPE_CHECKING:
     from scdef.models._scdef import scDEF
 
 
-def make_factor_obs(model: "scDEF") -> None:
-    res = compute_hierarchy_scores(model)
+def _get_l0_unfiltered_names(model: "scDEF") -> List[str]:
+    """Build layer-0 names for all unfiltered factors in a model-aware way."""
+    n0 = int(model.layer_sizes[0])
+
+    # Best case: factor_names/factor_lists already cover all layer-0 factors.
+    if (
+        hasattr(model, "factor_names")
+        and hasattr(model, "factor_lists")
+        and len(model.factor_names) > 0
+        and len(model.factor_lists) > 0
+        and len(model.factor_names[0]) == n0
+        and len(model.factor_lists[0]) == n0
+        and set(np.asarray(model.factor_lists[0], dtype=int)) == set(range(n0))
+    ):
+        full_names = [None] * n0
+        for name, idx in zip(model.factor_names[0], model.factor_lists[0]):
+            full_names[int(idx)] = name
+        if all(name is not None for name in full_names):
+            return full_names  # type: ignore[return-value]
+
+    # iscDEF markers_layer == 0: layer-0 names are marker names.
+    if hasattr(model, "markers_layer") and getattr(model, "markers_layer") == 0:
+        if hasattr(model, "marker_names") and len(model.marker_names) == n0:
+            return list(model.marker_names)
+
+    # iscDEF markers_layer > 0: layer-0 names are marker_name + "_L0_<subfactor>".
+    if hasattr(model, "marker_names") and hasattr(model, "n_factors_per_marker"):
+        n_fpm = int(model.n_factors_per_marker)
+        if n_fpm > 0 and len(model.marker_names) * n_fpm == n0:
+            return [
+                f"{marker}_{model.layer_names[0]}_{sub}"
+                for marker in model.marker_names
+                for sub in range(n_fpm)
+            ]
+
+    # Fallback: canonical names, patched with currently available mapped names.
+    names = [f"{model.layer_names[0]}_{i}" for i in range(n0)]
+    if (
+        hasattr(model, "factor_names")
+        and hasattr(model, "factor_lists")
+        and len(model.factor_names) > 0
+        and len(model.factor_lists) > 0
+        and len(model.factor_names[0]) == len(model.factor_lists[0])
+    ):
+        for name, idx in zip(model.factor_names[0], model.factor_lists[0]):
+            idx = int(idx)
+            if 0 <= idx < n0:
+                names[idx] = name
+    return names
+
+
+def factor_diagnostics(model: "scDEF") -> None:
+    # Keep all L0 factors, but use filtered factors on upper layers.
+    res = compute_hierarchy_scores(
+        model,
+        use_filtered=False,
+        filter_upper_layers=True,
+    )
     model.adata.uns["factor_obs"] = res["per_factor"].set_index("child_factor")
     model.adata.uns["factor_obs"]["ARD"] = np.array(
         [np.nan] * len(model.adata.uns["factor_obs"])
@@ -17,12 +73,14 @@ def make_factor_obs(model: "scDEF") -> None:
     model.adata.uns["factor_obs"]["BRD"] = np.array(
         [np.nan] * len(model.adata.uns["factor_obs"])
     )
-    model.adata.uns["factor_obs"].loc[model.factor_names[0], "ARD"] = np.asarray(
+    l0_idx = np.arange(model.layer_sizes[0], dtype=int)
+    l0_names = _get_l0_unfiltered_names(model)
+    model.adata.uns["factor_obs"].loc[l0_names, "ARD"] = np.asarray(
         model.pmeans["factor_means"]
-    )[model.factor_lists[0]].ravel()
-    model.adata.uns["factor_obs"].loc[model.factor_names[0], "BRD"] = np.asarray(
+    )[l0_idx].ravel()
+    model.adata.uns["factor_obs"].loc[l0_names, "BRD"] = np.asarray(
         model.pmeans["factor_concentrations"]
-    )[model.factor_lists[0]].ravel()
+    )[l0_idx].ravel()
 
 
 def set_factor_signatures(
@@ -48,14 +106,10 @@ def set_technical_factors(
         factors: list of factor names to mark as technical
     """
     # in model.adata.uns["factor_obs"], annotate as technical or not.
-    all_factor_names = [name for names in model.factor_names for name in names][
-        :-1
-    ]  # do not use root
     if "factor_obs" not in model.adata.uns:
-        # Collect all factor names from all layers into a flat list
-        make_factor_obs(model)
+        factor_diagnostics(model)
     model.adata.uns["factor_obs"]["technical"] = np.array(
-        [False] * len(all_factor_names)
+        [False] * len(model.adata.uns["factor_obs"])
     )
     model.adata.uns["factor_obs"].loc[factors, "technical"] = True
 

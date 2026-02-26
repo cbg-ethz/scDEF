@@ -102,6 +102,7 @@ class scDEF(object):
         layer_concentration: Optional[float] = 1.0,
         shrinkage_shape: Optional[float] = 1.0,
         shrinkage_rate: Optional[float] = 1.0,
+        shrinkage_mean: Optional[float] = 20.0,
         top_alpha: Optional[float] = 1.0,
         factor_shape: Optional[float] = 0.1,
         brd_strength: Optional[float] = 1.0,
@@ -136,6 +137,7 @@ class scDEF(object):
         self.brd_mean = brd_mean
         self.shrinkage_shape = shrinkage_shape
         self.shrinkage_rate = shrinkage_rate
+        self.shrinkage_mean = shrinkage_mean
         self.cell_scale_shape = cell_scale_shape
         self.gene_scale_shape = gene_scale_shape
         self.use_brd = use_brd
@@ -155,6 +157,7 @@ class scDEF(object):
         else:
             self.layer_names = [f"L{i}" for i in range(self.n_layers)]
         self.factor_lists = [np.arange(size) for size in self.layer_sizes]
+        self.set_factor_names()
 
         self.update_model_priors()
 
@@ -326,7 +329,25 @@ class scDEF(object):
         self,
         max_n_factors,
         max_n_layers=None,
+        layer_sizes=None,
     ):
+        if layer_sizes is not None:
+            # If two consecutive layers have increasing sizes, clip
+            for i in range(len(layer_sizes) - 1):
+                if layer_sizes[i + 1] > layer_sizes[i]:
+                    layer_sizes[i + 1] = layer_sizes[i]
+            # If two consecutive layers have the same size, keep only one of them
+            for i in range(len(layer_sizes) - 1):
+                if layer_sizes[i] == layer_sizes[i + 1]:
+                    layer_sizes[i + 1] = None
+            layer_sizes = [size for size in layer_sizes if size is not None]
+            self.layer_sizes = layer_sizes
+            self.n_layers = len(self.layer_sizes)
+            self.layer_names = [f"L{i}" for i in range(self.n_layers)]
+            self.factor_lists = [np.arange(size) for size in self.layer_sizes]
+            self.set_factor_names()
+            return
+
         if max_n_layers is None:
             max_n_layers = self.max_n_layers
         n_factors = int(max_n_factors)
@@ -344,6 +365,7 @@ class scDEF(object):
         self.n_layers = len(self.layer_sizes)
         self.layer_names = [f"L{i}" for i in range(self.n_layers)]
         self.factor_lists = [np.arange(size) for size in self.layer_sizes]
+        self.set_factor_names()
 
     def update_model_priors(self):
         if self.use_brd:
@@ -379,10 +401,10 @@ class scDEF(object):
 
     def get_effective_factors(
         self,
-        thres: Optional[float] = None,
-        iqr_mult: Optional[float] = 0.0,
+        brd_thres: Optional[float] = 1.0,
+        ard_thres: Optional[float] = 0.001,
+        clarity_thres: Optional[float] = 0.5,
         min_cells: Optional[float] = 0.001,
-        normalized: Optional[bool] = False,
     ):
         layer_name = self.layer_names[0]
         if min_cells != 0:
@@ -392,15 +414,6 @@ class scDEF(object):
                 else min_cells
             )
 
-        ard = []
-        if thres is not None:
-            ard = thres
-        else:
-            ard = iqr_mult
-
-        if not self.use_brd:
-            ard = 0.0
-
         normed = (
             self.pmeans[f"{layer_name}z"]
             / np.sum(self.pmeans[f"{layer_name}z"], axis=1)[:, None]
@@ -409,24 +422,60 @@ class scDEF(object):
         counts = np.array(
             [np.count_nonzero(assignments == a) for a in range(self.layer_sizes[0])]
         )
-        masses = np.sum(normed, axis=0)
+
         keep = np.array(range(self.layer_sizes[0]))[np.where(counts >= min_cells)[0]]
-        brd_keep = np.arange(self.layer_sizes[0])
         if self.use_brd:
-            rels = self.pmeans[f"brd"].ravel()
-            if normalized:
-                rels = rels - np.min(rels)
-                rels = rels / np.max(rels)
-            if thres is None:
-                median = np.median(rels)
-                q3 = np.percentile(rels, 75)
-                cutoff = ard * (q3 - median)
+            required_cols = {"BRD", "ARD", "clarity_score_01"}
+            if "factor_obs" not in self.adata.uns or not required_cols.issubset(
+                set(self.adata.uns["factor_obs"].columns)
+            ):
+                from scdef.tools.factor import factor_diagnostics
+
+                factor_diagnostics(self)
+
+            factor_obs = self.adata.uns["factor_obs"]
+            if "child_layer" in factor_obs.columns:
+                factor_obs_l0 = factor_obs[
+                    factor_obs["child_layer"] == self.layer_names[0]
+                ]
             else:
-                cutoff = ard
-            brd_keep = np.where(rels >= cutoff)[0]
-            if len(brd_keep) == 0:
-                brd_keep = np.arange(self.layer_sizes[0]).astype(int)
-        keep = np.unique(list(set(brd_keep).intersection(keep)))
+                factor_obs_l0 = factor_obs
+
+            # Robust alignment by L0 factor names -> absolute L0 factor indices.
+            l0_prefix = f"{self.layer_names[0]}_"
+            name_to_idx = {
+                name: int(idx)
+                for name, idx in zip(self.factor_names[0], self.factor_lists[0])
+            }
+
+            brd = np.full(self.layer_sizes[0], np.nan, dtype=float)
+            ard = np.full(self.layer_sizes[0], np.nan, dtype=float)
+            clarity = np.full(self.layer_sizes[0], np.nan, dtype=float)
+
+            for name in factor_obs_l0.index:
+                idx = None
+                if isinstance(name, str) and name in name_to_idx:
+                    idx = name_to_idx[name]
+                elif isinstance(name, str) and name.startswith(l0_prefix):
+                    suffix = name[len(l0_prefix) :]
+                    if suffix.isdigit():
+                        idx = int(suffix)
+                if idx is None or idx < 0 or idx >= self.layer_sizes[0]:
+                    continue
+                brd[idx] = float(factor_obs_l0.loc[name, "BRD"])
+                ard[idx] = float(factor_obs_l0.loc[name, "ARD"])
+                clarity[idx] = float(factor_obs_l0.loc[name, "clarity_score_01"])
+
+            valid = np.isfinite(brd) & np.isfinite(ard) & np.isfinite(clarity)
+            ard_sum = np.nansum(ard)
+            brd_keep = np.where(
+                valid
+                & (brd >= brd_thres)
+                & (clarity >= clarity_thres)
+                & (ard >= ard_thres * ard_sum)
+            )[0]
+            keep = np.unique(list(set(brd_keep).intersection(keep)))
+
         return keep
 
     def init_var_params(
@@ -443,8 +492,11 @@ class scDEF(object):
         rngs = random.split(random.PRNGKey(self.seed), self.n_layers)
 
         if init_budgets:
-            m = 1.0
-            v = m
+            m = np.array(self.batch_lib_sizes / np.mean(self.batch_lib_sizes))[
+                :, None
+            ]  # (N,1)
+            m = np.clip(m, 1e-3, 1e2)
+            v = m / 10.0
             self.local_params = [
                 jnp.array(
                     (
@@ -484,7 +536,7 @@ class scDEF(object):
             seed=rngs[0],
             sample_shape=[self.layer_sizes[0], 1],
         )  # self.brd_mean
-        v_brd = m_brd
+        v_brd = m_brd / 100.0
         if init_brd is not None:
             m_brd = init_brd
             v_brd = m_brd / 1.0
@@ -499,7 +551,7 @@ class scDEF(object):
             ),
         )
 
-        if nmf_init:
+        if nmf_init and init_w is None:
             self.logger.info(f"Initializing the factor weights with NMF.")
             init_z, init_w = self.get_nmf_init(**kwargs)
 
@@ -597,7 +649,9 @@ class scDEF(object):
             self.global_params.append(jnp.array((w_shape, w_rate)))
 
         # Gamma(1e3, 1e3/m)
-        m = self.shrinkage_shape / self.shrinkage_rate
+        m = (
+            self.shrinkage_shape
+        )  # self.shrinkage_mean * self.shrinkage_shape  / self.shrinkage_rate
         v = m / 10.0
 
         self.global_params.append(
@@ -612,9 +666,11 @@ class scDEF(object):
         )
 
         if init_alpha:
-            m = self.layer_concentration
+            m = self.layer_concentration  # + 0. * np.array(self.gene_ratio_init)
         else:
-            m = self.pmeans["layer_concentration"]
+            m = self.pmeans[
+                "layer_concentration"
+            ]  # + 0. * np.array(self.gene_ratio_init)
         v = m / 10.0
 
         self.global_params.append(
@@ -818,6 +874,9 @@ class scDEF(object):
             fscale_samples = lognormal_sample(rng, fscale_shapes, fscale_rates)
             _wm_sample = lognormal_sample(rng, wm_shape, wm_rate)
             brd_samples = fscale_samples  # / jnp.maximum(_wm_sample, 1.0)
+            # log_brd = jnp.log(fscale_samples + 1e-8)
+            # log_brd = log_brd - jnp.mean(log_brd) + jnp.log(self.brd_mean)
+            # brd_samples = jnp.exp(log_brd)
         # w will be sampled in a loop below because it cannot be vectorized
 
         # Compute ELBO
@@ -827,6 +886,12 @@ class scDEF(object):
             self.gene_scale_shape * self.gene_ratio,
         )
         global_en = lognormal_entropy(gene_budget_shape, gene_budget_rate)
+        # exposure = (self.batch_lib_sizes)[:, None]
+        # local_pl = 0.0
+        # local_en = 0.0
+        # local_pl = gamma_logpdf(cell_budget_sample,
+        #                         self.cell_scale_shape,
+        #                         self.cell_scale_shape / exposure[indices])
         local_pl = gamma_logpdf(
             cell_budget_sample,
             self.cell_scale_shape,
@@ -836,7 +901,7 @@ class scDEF(object):
 
         # scale
         s_sample = lognormal_sample(rng, s_shape, s_rate)
-        global_pl += gamma_logpdf(s_sample, 1.0, 1.0 / self.layer_concentration)
+        global_pl += gamma_logpdf(s_sample, 100.0, 100.0 / self.layer_concentration)
         global_en += lognormal_entropy(s_shape, s_rate)
         if self.use_brd:
             global_pl += gamma_logpdf(
@@ -875,30 +940,33 @@ class scDEF(object):
             if idx == 0 and self.use_brd:
                 global_pl += gamma_logpdf(
                     _w_sample,
-                    self.w_priors[idx][0] * (1.0 / fscale_samples),
+                    self.w_priors[idx][0] * (1.0 / brd_samples),
                     self.w_priors[idx][1]
-                    # * (1.0 / fscale_samples)
-                    # * (1.0 / _wm_sample)
-                    # * self.layer_sizes[idx],
+                    * (1.0 / brd_samples)
+                    * (1.0 / _wm_sample)
+                    * self.layer_sizes[idx],
                 )
             elif idx == 0:
                 global_pl += gamma_logpdf(
                     _w_sample,
                     self.w_priors[idx][0],
-                    self.w_priors[idx][1],
+                    self.w_priors[idx][1] * self.layer_sizes[idx],
                 )
             else:
                 if idx == 1 and self.use_brd:
                     global_pl += gamma_logpdf(
                         _w_sample,
                         self.w_priors[idx][0],
-                        self.w_priors[idx][1] / brd_samples.T,
+                        self.w_priors[idx][1]
+                        * 1.0
+                        / brd_samples.T
+                        * self.layer_sizes[idx],
                     )
                 else:
                     global_pl += gamma_logpdf(
                         _w_sample,
                         self.w_priors[idx][0],
-                        self.w_priors[idx][1],
+                        self.w_priors[idx][1] * self.layer_sizes[idx],
                     )
             global_en += lognormal_entropy(_w_shape, _w_rate)
 
@@ -918,6 +986,9 @@ class scDEF(object):
             )
             _z_sample = lognormal_sample(rng, _z_shape, _z_rate)
 
+            # if idx == 0 and self.use_brd:
+            #     z_mean = z_mean * _wm_sample.T
+
             local_pl += jax.lax.cond(
                 idx == self.n_layers - 1,
                 lambda: gamma_logpdf(_z_sample, self.top_alpha, self.top_alpha),
@@ -931,30 +1002,42 @@ class scDEF(object):
             local_en += lognormal_entropy(_z_shape, _z_rate)
             z_mean = jnp.einsum("nk,kp->np", _z_sample, _w_sample)
 
-        n_w_sample = _w_sample / jnp.sum(_w_sample, axis=1, keepdims=True)
+        n_w_sample = _w_sample  # / jnp.sum(_w_sample, axis=1, keepdims=True)
+        n_z_sample = _z_sample  # / jnp.sum(_z_sample, axis=1, keepdims=True)
         if self.use_brd:
-            n_w_sample = n_w_sample * _wm_sample
-        n_z_sample = _z_sample / jnp.sum(_z_sample, axis=1, keepdims=True)
+            n_w_sample = n_w_sample  # * _wm_sample
         mean_bottom = (
             jnp.einsum("nk,kg->ng", n_z_sample, n_w_sample) * cell_budget_sample
         )  # self.exposures[indices]
         mean_bottom = mean_bottom * (batch_indices_onehot.dot(gene_budget_sample))
 
-        x = jnp.array(batch)
-        lam = mean_bottom  # same shape
+        # x = jnp.array(batch)
+        # lam = mean_bottom  # same shape
 
-        mask = x > 0
-        x_nz = jnp.where(mask, x, 0.0)
+        # mask = x > 0
+        # x_nz = jnp.where(mask, x, 0.0)
 
-        # X log λ  -  log(X!)
-        ll_nz = jnp.sum(x_nz * jnp.log(lam + 1e-8))
-        ll_nz -= jnp.sum(jax.scipy.special.gammaln(x_nz + 1.0))
+        # # X log λ  -  log(X!)
+        # ll_nz = jnp.sum(x_nz * jnp.log(lam + 1e-8))
+        # ll_nz -= jnp.sum(jax.scipy.special.gammaln(x_nz + 1.0))
 
-        # -∑ λ over *all* entries
-        ll_zero = -jnp.sum(lam)
+        # # -∑ λ over *all* entries
+        # ll_zero = -jnp.sum(lam)
 
-        ll = ll_nz + ll_zero
-        # ll = jnp.sum(vmap(poisson.logpmf)(jnp.array(batch), mean_bottom))
+        # ll = ll_nz + ll_zero
+        ll = jnp.sum(vmap(poisson.logpmf)(jnp.array(batch), mean_bottom))
+        # x = jnp.asarray(batch)
+        # x = jnp.maximum(x, 0.0)
+        # x = jnp.rint(x).astype(jnp.int32)   # counts should be ints
+        # mu = jnp.clip(mean_bottom, 1e-8, 1e8)
+
+        # # phi_sample should be shape (1,G) or (B,G)->(N,G); make sure it broadcasts to mu
+        # phi = jnp.clip(s_sample, 1e-3, 1e6)          # IMPORTANT: keep total_count away from 0
+
+        # logits = jnp.log(mu + 1e-8) - jnp.log(phi + 1e-8)
+
+        # nb = tfd.NegativeBinomial(total_count=phi, logits=logits)
+        # ll = jnp.sum(nb.log_prob(x))
         ll = jax.lax.cond(
             stop_gradients[0],
             lambda: ll * 0.0,
@@ -1171,7 +1254,6 @@ class scDEF(object):
         pretrain: bool = True,
         nmf_init: bool = True,
         max_cells_init: int = 5000,
-        unmix: bool = False,
         eff_min: float = 0.0,
         save_pretrain_factors: bool = True,
         n_rounds: int = 2,
@@ -1196,15 +1278,22 @@ class scDEF(object):
             self.elbos = []
             self.step_sizes = []
             self._learn(filter=False, annotate=False, n_rounds=1, **kwargs)
-            eff_factors = self.get_effective_factors(thres=1.0, min_cells=eff_min)
-            mixture_factors = self.identify_mixture_factors()
-            if len(mixture_factors) > 0 and unmix:
-                self.logger.info(
-                    f"Found {len(mixture_factors)} factors that activate more than 10 genes. Re-fitting to enhance sparsity"
-                )
-                self.reinit_factors(mixture_factors=mixture_factors)
-                self._learn(filter=False, annotate=False, n_rounds=1, **kwargs)
-                eff_factors = self.get_effective_factors(thres=1.0, min_cells=eff_min)
+            # Compute factor diagnostics
+            from scdef.tools.factor import factor_diagnostics
+
+            factor_diagnostics(self)
+            # Filter up
+            self.filter_factors(
+                brd_thres=0.0,
+                ard_thres=0.00,
+                clarity_thres=0.0,
+                min_cells_lower=eff_min,
+                filter_up=True,
+                annotate=False,
+            )
+            eff_factors = self.get_effective_factors(
+                brd_thres=1.0, ard_thres=0.001, clarity_thres=0.5, min_cells=eff_min
+            )
             n_eff_factors = len(eff_factors)
             if n_eff_factors == 0:
                 self.logger.info("No effective factors found. Using all factors.")
@@ -1214,13 +1303,23 @@ class scDEF(object):
                 f"scDEF pretraining finished. Found {n_eff_factors} effective factors."
             )
             if save_pretrain_factors:
+                self.pretrain_gene_scales = np.array(self.pmeans["gene_scale"])
+                self.pretrain_cell_scales = np.array(self.pmeans["cell_scale"])
                 self.pretrain_brd = np.array(self.pmeans["brd"]).ravel()
-                self.pretrain_wm = np.array(self.pmeans["wm"]).ravel()
+                self.pretrain_ard = np.array(self.pmeans["ard"]).ravel()
                 self.pretrain_w = np.array(self.pmeans["L0W"])
-
-            self.update_model_size(n_eff_factors)
+                self.pretrain_elbos = self.elbos
+                self.pretrain_factors = eff_factors
+            self.filter_factors(
+                min_cells_lower=eff_min, filter_up=True, annotate=False
+            )  # Actually filter the factors in the whole hierarchy
+            layer_sizes = [len(self.factor_lists[i]) for i in range(self.n_layers)]
+            self.update_model_size(
+                max_n_factors=max(layer_sizes), layer_sizes=layer_sizes
+            )
             self.update_model_priors()
             self.logger.info(f"Learning scDEF with layer sizes {self.layer_sizes}.")
+            nmf_init = False
             init_budgets = False
             init_alpha = False
             init_w = self.pmeans["L0W"][eff_factors]
@@ -1263,7 +1362,7 @@ class scDEF(object):
         stop_cell_budgets: Optional[int] = 0,
         stop_gene_budgets: Optional[int] = 0,
         opt_layer: Optional[int] = None,
-        filter: Optional[bool] = True,
+        filter: Optional[bool] = False,
         annotate: Optional[bool] = True,
         **kwargs,
     ):
@@ -1515,7 +1614,7 @@ class scDEF(object):
         #  self.pmeans["factor_means"], 1.0
         #  )
         self.pmeans["wm"] = self.pmeans["factor_means"]
-
+        self.pmeans["ard"] = self.pmeans["wm"]
         for idx in range(self.n_layers):
             start = sum(self.layer_sizes[:idx])
             end = start + self.layer_sizes[idx]
@@ -1568,12 +1667,13 @@ class scDEF(object):
 
     def filter_factors(
         self,
-        thres: Optional[float] = 1.0,
-        iqr_mult: Optional[float] = 0.0,
+        brd_thres: Optional[float] = 1.0,
+        ard_thres: Optional[float] = 0.001,
+        clarity_thres: Optional[float] = 0.5,
         min_cells_upper: Optional[float] = 0.001,
         min_cells_lower: Optional[float] = 0.0,
         filter_up: Optional[bool] = True,
-        normalized: Optional[bool] = False,
+        annotate: Optional[bool] = True,
     ):
         """Filter our irrelevant factors based on the BRD posterior or the cell attachments.
 
@@ -1591,14 +1691,14 @@ class scDEF(object):
             if min_cells_lower < 1.0:
                 min_cells_lower = max(min_cells_lower * self.adata.shape[0], 10)
 
-        self.factor_lists = []
+        new_factor_lists = []
         for i, layer_name in enumerate(self.layer_names):
             if i == 0:
                 keep = self.get_effective_factors(
-                    thres=thres,
-                    iqr_mult=iqr_mult,
+                    brd_thres=brd_thres,
+                    ard_thres=ard_thres,
+                    clarity_thres=clarity_thres,
                     min_cells=min_cells_lower,
-                    normalized=normalized,
                 )
             else:
                 assignments = np.argmax(self.pmeans[f"{layer_name}z"], axis=1)
@@ -1614,7 +1714,7 @@ class scDEF(object):
                 if filter_up:
                     mat = self.pmeans[f"{layer_name}W"][keep]
                     assignments = []
-                    for factor in self.factor_lists[i - 1]:
+                    for factor in new_factor_lists[i - 1]:
                         assignments.append(keep[np.argmax(mat[:, factor])])
 
                     keep = np.unique(
@@ -1627,12 +1727,16 @@ class scDEF(object):
                     f"Keeping all factors for layer {i} for now."
                 )
                 keep = np.arange(self.layer_sizes[i])
-            self.factor_lists.append(keep)
+            new_factor_lists.append(keep)
+
+        self.factor_lists = new_factor_lists
+        self.set_factor_names()
 
         self.make_layercolors(
             layer_cpal=self.layer_cpal, lightness_mult=self.lightness_mult
         )
-        self.annotate_adata()
+        if annotate:
+            self.annotate_adata()
 
     def set_factor_names(self):
         self.factor_names = [
@@ -1768,6 +1872,13 @@ class scDEF(object):
             self.logger.info(
                 f"Updated adata.uns with layer {idx} signatures: `{layer_name}_signatures`."
             )
+
+        self.normalize_cellscores()
+
+        # Compute factor diagnostics
+        from scdef.tools.factor import factor_diagnostics
+
+        factor_diagnostics(self)
 
     def normalize_cellscores(self):
         for idx in range(self.n_layers):

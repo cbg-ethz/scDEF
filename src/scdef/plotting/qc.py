@@ -9,6 +9,7 @@ from matplotlib.gridspec import GridSpec
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from typing import Optional, Tuple, Literal, Any, TYPE_CHECKING
+from scdef.tools.hierarchy import effective_parents_from_clarity
 
 if TYPE_CHECKING:
     from scdef.models._scdef import scDEF
@@ -38,8 +39,28 @@ def scales(
         Figure object if show is False, None otherwise
     """
     fig, axes = plt.subplots(1, 2, figsize=figsize)
-    scale(model, "cell", figsize, alpha, fontsize, legend_fontsize, axes[0], False, pretrain=pretrain)
-    scale(model, "gene", figsize, alpha, fontsize, legend_fontsize, axes[1], False, pretrain=pretrain)
+    scale(
+        model,
+        "cell",
+        figsize,
+        alpha,
+        fontsize,
+        legend_fontsize,
+        axes[0],
+        False,
+        pretrain=pretrain,
+    )
+    scale(
+        model,
+        "gene",
+        figsize,
+        alpha,
+        fontsize,
+        legend_fontsize,
+        axes[1],
+        False,
+        pretrain=pretrain,
+    )
     if show:
         fig.tight_layout()
         plt.show()
@@ -374,6 +395,7 @@ def loss(
     else:
         return ax
 
+
 def ard_brd(
     model: "scDEF",
     pretrain: bool = False,
@@ -405,7 +427,7 @@ def ard_brd(
     ax.legend(["Kept", "Removed"], fontsize=legend_fontsize)
     ax.set_xlabel("BRD", fontsize=fontsize)
     ax.set_ylabel("ARD", fontsize=fontsize)
-    if annotate_threshold is not None:  
+    if annotate_threshold is not None:
         for i in np.where(x > annotate_threshold)[0]:
             ax.annotate(
                 str(i),  # label (factor index)
@@ -417,6 +439,7 @@ def ard_brd(
         plt.show()
     else:
         return ax
+
 
 def qc(
     model: "scDEF",
@@ -443,9 +466,7 @@ def qc(
         gs = GridSpec(4, 2)
         # First row
         loss(model, pretrain=pretrain, ax=fig.add_subplot(gs[0, 0]), show=False)
-        gini_brd(
-            model, pretrain=pretrain, ax=fig.add_subplot(gs[0, 1]), show=False
-        )
+        gini_brd(model, pretrain=pretrain, ax=fig.add_subplot(gs[0, 1]), show=False)
         # Second row
         scale(
             model, "cell", pretrain=pretrain, ax=fig.add_subplot(gs[1, 0]), show=False
@@ -487,3 +508,95 @@ def qc(
         plt.show()
     else:
         return fig
+
+
+def factor_diagnostic(
+    model: "scDEF",
+    brd_min: float = 1.0,
+    ard_min: float = 0.001,
+    clarity_min: float = 0.5,
+    figsize: tuple = (6, 4),
+    ax: Optional[Axes] = None,
+    show: bool = True,
+) -> Optional[Axes]:
+    """
+    Diagnostic scatter plot of factors: BRD vs Effective parents colored by ARD.
+
+    Args:
+        model: scDEF model instance
+        brd_min: minimum BRD filter threshold
+        ard_min: minimum ARD filter threshold (fraction of total ARD)
+        clarity: clarity threshold for effective parents calculation
+        figsize: Figure size (if ax is None)
+        ax: matplotlib Axes to plot on
+        show: whether to show the plot
+
+    Returns:
+        Axes object if show is False, None otherwise.
+    """
+    n_factors = model.layer_sizes[0]
+    neffective_parents_max = effective_parents_from_clarity(
+        clarity_min, len(model.factor_lists[1])
+    )
+
+    x = model.adata.uns["factor_obs"]["BRD"].values[:n_factors]
+    y = model.adata.uns["factor_obs"]["n_eff_parents"].values[:n_factors]
+    z = model.adata.uns["factor_obs"]["ARD"].values[:n_factors]
+
+    factors_pass = np.where(
+        (x > brd_min) & (y < neffective_parents_max) & (z > ard_min * np.sum(z))
+    )[0]
+
+    if ax is None:
+        fig, ax = plt.subplots(1, 1, figsize=figsize)
+    im = ax.scatter(x, y, c=z, cmap="viridis")
+    # Draw blue circle around dots that pass filters
+    if len(factors_pass) > 0:
+        ax.scatter(
+            x[factors_pass],
+            y[factors_pass],
+            s=80,
+            facecolors="none",
+            edgecolors=plt.rcParams["axes.prop_cycle"].by_key()["color"][
+                0
+            ],  # default blue
+            marker="o",
+            label="Keep",
+        )
+    ax.set_xlabel("BRD")
+    ax.set_ylabel("Effective number of parents")
+    ax.axvline(
+        brd_min,
+        linestyle="--",
+        color=plt.rcParams["axes.prop_cycle"].by_key()["color"][0],
+    )
+    ax.axhline(
+        neffective_parents_max,
+        linestyle="--",
+        color=plt.rcParams["axes.prop_cycle"].by_key()["color"][0],
+    )
+    # Add ARD colorbar with threshold line
+    cbar = plt.colorbar(im, ax=ax, label="ARD")
+    ard_thresh = ard_min * np.sum(z)
+    # ARD color range
+    norm = im.norm
+    cbar_min, cbar_max = norm.vmin, norm.vmax
+    if cbar_min == cbar_max:
+        cbar_min, cbar_max = np.min(z), np.max(z)
+    # Only draw threshold line if in colorbar range
+    if cbar_min < ard_thresh < cbar_max:
+        cb_ax = cbar.ax
+        rel_pos = (ard_thresh - cbar_min) / (cbar_max - cbar_min)
+        cb_ax.axhline(
+            rel_pos,
+            color=plt.rcParams["axes.prop_cycle"].by_key()["color"][0],
+            linestyle="--",
+            linewidth=5,
+            # label='ARD threshold'
+        )
+    ax.set_title(f"{len(factors_pass)} factors pass filters")
+    plt.legend()
+    if show:
+        plt.show()
+    else:
+        return ax
