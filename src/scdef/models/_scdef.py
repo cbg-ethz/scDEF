@@ -1249,6 +1249,66 @@ class scDEF(object):
             global_grads,
         )
 
+    def pretrain(
+        self,
+        nmf_init: bool = True,
+        max_cells_init: int = 5000,
+        eff_min: float = 0.0,
+        save_pretrain_factors: bool = True,
+        tolerance: float = 1e-3,
+        **kwargs: Any,
+    ) -> None:
+        """Pretrain the model to find the initial set of factors."""
+        self.logger.info(f"Pretraining to find initial estimate of number of factors")
+        # self.update_model_size(self.n_factors, max_n_layers=5)
+        # self.update_model_priors()
+        self.init_var_params(
+            init_budgets=True,
+            nmf_init=nmf_init,
+            max_cells=max_cells_init,
+        )
+        self.elbos = []
+        self.step_sizes = []
+        self._learn(
+            filter=False, annotate=False, n_rounds=1, tolerance=tolerance, **kwargs
+        )
+        # Compute factor diagnostics
+        from scdef.tools.factor import factor_diagnostics
+
+        factor_diagnostics(self)
+        # Filter up
+        self.filter_factors(
+            brd_thres=0.0,
+            ard_thres=0.00,
+            clarity_thres=0.0,
+            min_cells_lower=eff_min,
+            filter_up=True,
+            annotate=False,
+        )
+        eff_factors = self.get_effective_factors(
+            brd_thres=1.0, ard_thres=0.001, clarity_thres=0.5, min_cells=eff_min
+        )
+        n_eff_factors = len(eff_factors)
+        if n_eff_factors == 0:
+            self.logger.info("No effective factors found. Using all factors.")
+            n_eff_factors = self.n_factors
+            eff_factors = np.arange(n_eff_factors)
+        self.logger.info(
+            f"scDEF pretraining finished. Found {n_eff_factors} effective factors."
+        )
+        if save_pretrain_factors:
+            self.pretrain_gene_scales = np.array(self.pmeans["gene_scale"])
+            self.pretrain_cell_scales = np.array(self.pmeans["cell_scale"])
+            self.pretrain_brd = np.array(self.pmeans["brd"]).ravel()
+            self.pretrain_ard = np.array(self.pmeans["ard"]).ravel()
+            self.pretrain_w = np.array(self.pmeans["L0W"])
+            self.pretrain_elbos = self.elbos
+            self.pretrain_factors = eff_factors
+        self.filter_factors(
+            min_cells_lower=eff_min, filter_up=True, annotate=False
+        )  # Actually filter the factors in the whole hierarchy
+        return eff_factors
+
     def fit(
         self,
         pretrain: bool = True,
@@ -1265,54 +1325,13 @@ class scDEF(object):
         The cell and gene scales take most of the gradient weights, so we run a first round of epochs to get them right, and then restart the optimization with the same learning rate.
         """
         if pretrain:
-            self.logger.info(
-                f"Pretraining to find initial estimate of number of factors"
-            )
-            # self.update_model_size(self.n_factors, max_n_layers=5)
-            # self.update_model_priors()
-            self.init_var_params(
-                init_budgets=True,
+            eff_factors = self.pretrain(
+                eff_min=eff_min,
+                save_pretrain_factors=save_pretrain_factors,
                 nmf_init=nmf_init,
-                max_cells=max_cells_init,
+                max_cells_init=max_cells_init,
+                **kwargs,
             )
-            self.elbos = []
-            self.step_sizes = []
-            self._learn(filter=False, annotate=False, n_rounds=1, **kwargs)
-            # Compute factor diagnostics
-            from scdef.tools.factor import factor_diagnostics
-
-            factor_diagnostics(self)
-            # Filter up
-            self.filter_factors(
-                brd_thres=0.0,
-                ard_thres=0.00,
-                clarity_thres=0.0,
-                min_cells_lower=eff_min,
-                filter_up=True,
-                annotate=False,
-            )
-            eff_factors = self.get_effective_factors(
-                brd_thres=1.0, ard_thres=0.001, clarity_thres=0.5, min_cells=eff_min
-            )
-            n_eff_factors = len(eff_factors)
-            if n_eff_factors == 0:
-                self.logger.info("No effective factors found. Using all factors.")
-                n_eff_factors = self.n_factors
-                eff_factors = np.arange(n_eff_factors)
-            self.logger.info(
-                f"scDEF pretraining finished. Found {n_eff_factors} effective factors."
-            )
-            if save_pretrain_factors:
-                self.pretrain_gene_scales = np.array(self.pmeans["gene_scale"])
-                self.pretrain_cell_scales = np.array(self.pmeans["cell_scale"])
-                self.pretrain_brd = np.array(self.pmeans["brd"]).ravel()
-                self.pretrain_ard = np.array(self.pmeans["ard"]).ravel()
-                self.pretrain_w = np.array(self.pmeans["L0W"])
-                self.pretrain_elbos = self.elbos
-                self.pretrain_factors = eff_factors
-            self.filter_factors(
-                min_cells_lower=eff_min, filter_up=True, annotate=False
-            )  # Actually filter the factors in the whole hierarchy
             layer_sizes = [len(self.factor_lists[i]) for i in range(self.n_layers)]
             self.update_model_size(
                 max_n_factors=max(layer_sizes), layer_sizes=layer_sizes
