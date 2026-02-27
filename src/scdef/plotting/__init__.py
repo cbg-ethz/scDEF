@@ -23,6 +23,7 @@ from .qc import (
     relevance,
     gini_brd,
     loss,
+    factor_diagnostics,
 )
 
 __all__ = [
@@ -47,4 +48,5 @@ __all__ = [
     "relevance",
     "gini_brd",
     "loss",
+    "factor_diagnostics",
 ]

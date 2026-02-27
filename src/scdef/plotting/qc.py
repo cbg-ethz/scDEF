@@ -510,7 +510,7 @@ def qc(
         return fig
 
 
-def factor_diagnostic(
+def factor_diagnostics(
     model: "scDEF",
     brd_min: float = 1.0,
     ard_min: float = 0.001,
