@@ -463,17 +463,20 @@ class iscDEF(scDEF):
             init_brd = (
                 np.array(self.pmeans["brd"])[l0_keep] if self.use_brd else None
             )
+            init_ard = np.array(self.pmeans["factor_means"])[l0_keep]
             z_init_concentration = 100.0
         else:
             init_budgets = True
             init_alpha = True
             init_w = None
             init_brd = None
+            init_ard = None
         self.init_var_params(
             init_budgets=init_budgets,
             init_alpha=init_alpha,
             init_w=init_w,
             init_brd=init_brd,
+            init_ard=init_ard,
             nmf_init=nmf_init,
             max_cells=max_cells_init,
             z_init_concentration=z_init_concentration,

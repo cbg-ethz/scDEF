@@ -406,6 +406,7 @@ class scDEF(object):
         ard_thres: Optional[float] = 0.001,
         clarity_thres: Optional[float] = 0.5,
         min_cells: Optional[float] = 0.001,
+        min_cells_upper_for_clarity: Optional[float] = 0.001,
     ):
         layer_name = self.layer_names[0]
         if min_cells != 0:
@@ -426,46 +427,81 @@ class scDEF(object):
 
         keep = np.array(range(self.layer_sizes[0]))[np.where(counts >= min_cells)[0]]
         if self.use_brd:
-            required_cols = {"BRD", "ARD", "clarity_score_01"}
-            if "factor_obs" not in self.adata.uns or not required_cols.issubset(
-                set(self.adata.uns["factor_obs"].columns)
-            ):
-                from scdef.tools.factor import factor_diagnostics
-
-                factor_diagnostics(self)
-
-            factor_obs = self.adata.uns["factor_obs"]
-            if "child_layer" in factor_obs.columns:
-                factor_obs_l0 = factor_obs[
-                    factor_obs["child_layer"] == self.layer_names[0]
-                ]
-            else:
-                factor_obs_l0 = factor_obs
-
-            # Robust alignment by L0 factor names -> absolute L0 factor indices.
-            l0_prefix = f"{self.layer_names[0]}_"
-            name_to_idx = {
-                name: int(idx)
-                for name, idx in zip(self.factor_names[0], self.factor_lists[0])
-            }
-
-            brd = np.full(self.layer_sizes[0], np.nan, dtype=float)
-            ard = np.full(self.layer_sizes[0], np.nan, dtype=float)
+            # Use unfiltered BRD/ARD on L0.
+            brd = np.asarray(self.pmeans["factor_concentrations"], dtype=float).ravel()[
+                : self.layer_sizes[0]
+            ]
+            ard = np.asarray(self.pmeans["factor_means"], dtype=float).ravel()[
+                : self.layer_sizes[0]
+            ]
             clarity = np.full(self.layer_sizes[0], np.nan, dtype=float)
 
-            for name in factor_obs_l0.index:
-                idx = None
-                if isinstance(name, str) and name in name_to_idx:
-                    idx = name_to_idx[name]
-                elif isinstance(name, str) and name.startswith(l0_prefix):
-                    suffix = name[len(l0_prefix) :]
-                    if suffix.isdigit():
-                        idx = int(suffix)
-                if idx is None or idx < 0 or idx >= self.layer_sizes[0]:
-                    continue
-                brd[idx] = float(factor_obs_l0.loc[name, "BRD"])
-                ard[idx] = float(factor_obs_l0.loc[name, "ARD"])
-                clarity[idx] = float(factor_obs_l0.loc[name, "clarity_score_01"])
+            # Compute a fixed clarity score using:
+            # - unfiltered layer 0
+            # - upper layers filtered ONLY by min_cells_upper_for_clarity
+            min_cells_upper = min_cells_upper_for_clarity
+            if min_cells_upper is None:
+                min_cells_upper = 0.0
+            if min_cells_upper != 0 and min_cells_upper < 1.0:
+                min_cells_upper = max(min_cells_upper * self.adata.shape[0], 10)
+
+            temp_factor_lists = [np.arange(self.layer_sizes[0], dtype=int)]
+            for i in range(1, self.n_layers):
+                layer_i_name = self.layer_names[i]
+                assignments_i = np.argmax(self.pmeans[f"{layer_i_name}z"], axis=1)
+                counts_i = np.array(
+                    [
+                        np.count_nonzero(assignments_i == a)
+                        for a in range(self.layer_sizes[i])
+                    ]
+                )
+                keep_i = np.array(range(self.layer_sizes[i]))[
+                    np.where(counts_i >= min_cells_upper)[0]
+                ]
+                if len(keep_i) == 0:
+                    keep_i = np.arange(self.layer_sizes[i])
+                temp_factor_lists.append(keep_i)
+
+            from scdef.tools.hierarchy import compute_hierarchy_scores
+
+            old_factor_lists = [np.array(f).copy() for f in self.factor_lists]
+            old_factor_names = (
+                [list(names) for names in self.factor_names]
+                if hasattr(self, "factor_names")
+                else None
+            )
+            try:
+                self.factor_lists = temp_factor_lists
+                self.set_factor_names()
+                scores_fixed = compute_hierarchy_scores(
+                    self,
+                    use_filtered=False,
+                    filter_upper_layers=True,
+                )
+            finally:
+                self.factor_lists = old_factor_lists
+                if old_factor_names is not None:
+                    self.factor_names = old_factor_names
+
+            per_factor_fixed = scores_fixed["per_factor"]
+            l0_rows = per_factor_fixed[
+                per_factor_fixed["child_layer"] == self.layer_names[0]
+            ]
+            if "original_factor_idx" in l0_rows.columns:
+                for _, row in l0_rows.iterrows():
+                    idx = int(row["original_factor_idx"])
+                    if 0 <= idx < self.layer_sizes[0]:
+                        clarity[idx] = float(row["clarity_score_01"])
+            else:
+                for _, row in l0_rows.iterrows():
+                    fac = str(row["child_factor"])
+                    prefix = f"{self.layer_names[0]}_"
+                    if fac.startswith(prefix):
+                        suffix = fac[len(prefix) :]
+                        if suffix.isdigit():
+                            idx = int(suffix)
+                            if 0 <= idx < self.layer_sizes[0]:
+                                clarity[idx] = float(row["clarity_score_01"])
 
             valid = np.isfinite(brd) & np.isfinite(ard) & np.isfinite(clarity)
             ard_sum = np.nansum(ard)
@@ -486,6 +522,7 @@ class scDEF(object):
         init_z=None,
         init_w=None,
         init_brd=None,
+        init_ard=None,
         nmf_init=False,
         z_init_concentration=1.0,
         **kwargs,
@@ -654,6 +691,9 @@ class scDEF(object):
             self.shrinkage_shape
         )  # self.shrinkage_mean * self.shrinkage_shape  / self.shrinkage_rate
         v = m / 10.0
+        if init_ard is not None:
+            m = init_ard
+            v = m / 1.0
 
         self.global_params.append(
             jnp.array(
@@ -1279,18 +1319,21 @@ class scDEF(object):
             init_w = np.array(self.pmeans["L0W"])[l0_keep]
             # Keep (k, 1) shape for BRD init to match init_var_params expectations.
             init_brd = np.array(self.pmeans["brd"])[l0_keep]
+            init_ard = np.array(self.pmeans["factor_means"])[l0_keep]
             z_init_concentration = 100.0
         else:
             init_budgets = True
             init_alpha = True
             init_w = None
             init_brd = None
+            init_ard = None
             z_init_concentration = 1.0
         self.init_var_params(
             init_budgets=init_budgets,
             init_alpha=init_alpha,
             init_w=init_w,
             init_brd=init_brd,
+            init_ard=init_ard,
             nmf_init=nmf_init,
             max_cells=max_cells_init,
             z_init_concentration=z_init_concentration,
@@ -1660,6 +1703,7 @@ class scDEF(object):
                         ard_thres=ard_thres,
                         clarity_thres=clarity_thres,
                         min_cells=min_cells_lower,
+                    min_cells_upper_for_clarity=min_cells_upper,
                     )
             else:
                 assignments = np.argmax(self.pmeans[f"{layer_name}z"], axis=1)
