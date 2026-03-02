@@ -60,7 +60,7 @@ def _get_l0_unfiltered_names(model: "scDEF") -> List[str]:
 
 
 def factor_diagnostics(model: "scDEF") -> None:
-    # Keep all L0 factors, but use filtered factors on upper layers.
+    # Keep layer 0 unfiltered, but use filtered factors on upper layers.
     res = compute_hierarchy_scores(
         model,
         use_filtered=False,

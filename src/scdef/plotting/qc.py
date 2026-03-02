@@ -482,42 +482,53 @@ def factor_diagnostics(
     Returns:
         Axes object if show is False, None otherwise.
     """
-    n_factors = model.layer_sizes[0]
-    neffective_parents_max = effective_parents_from_clarity(
-        clarity_min, len(model.factor_lists[1])
+    if "factor_obs" not in model.adata.uns:
+        raise KeyError(
+            "model.adata.uns['factor_obs'] not found. Run scdef.tools.factor_diagnostics(model) first."
+        )
+
+    factor_obs = model.adata.uns["factor_obs"]
+    l0_name = model.layer_names[0]
+    if "child_layer" in factor_obs.columns:
+        factor_obs_l0 = factor_obs[factor_obs["child_layer"] == l0_name].copy()
+    else:
+        factor_obs_l0 = factor_obs.copy()
+        l0_prefix = f"{l0_name}_"
+        factor_obs_l0 = factor_obs_l0[
+            [isinstance(idx, str) and idx.startswith(l0_prefix) for idx in factor_obs_l0.index]
+        ]
+
+    if "original_factor_idx" in factor_obs_l0.columns:
+        factor_obs_l0 = factor_obs_l0.sort_values("original_factor_idx")
+
+    labels = factor_obs_l0.index.to_numpy()
+    x = factor_obs_l0["BRD"].to_numpy(dtype=float)
+    y = factor_obs_l0["n_eff_parents"].to_numpy(dtype=float)
+    z = factor_obs_l0["ARD"].to_numpy(dtype=float)
+    k_parents = factor_obs_l0["K_parents"].to_numpy(dtype=float)
+    finite_k = k_parents[np.isfinite(k_parents)]
+    if len(finite_k) == 0:
+        raise ValueError("No valid K_parents values found in factor_obs for layer 0.")
+    k_for_threshold = int(finite_k[0])
+    neffective_parents_max = float(
+        effective_parents_from_clarity(clarity_min, k_for_threshold)
     )
 
-    x = model.adata.uns["factor_obs"]["BRD"].values[:n_factors]
-    y = model.adata.uns["factor_obs"]["n_eff_parents"].values[:n_factors]
-    z = model.adata.uns["factor_obs"]["ARD"].values[:n_factors]
-
+    ard_total = np.nansum(z)
     factors_pass = np.where(
-        (x > brd_min) & (y < neffective_parents_max) & (z > ard_min * np.sum(z))
+        (x > brd_min) & (y < neffective_parents_max) & (z > ard_min * ard_total)
     )[0]
 
     if ax is None:
         fig, ax = plt.subplots(1, 1, figsize=figsize)
     im = ax.scatter(x, y, c=z, cmap="viridis")
     if annotate_factors:
-        labels = [f"{model.layer_names[0]}_{i}" for i in range(n_factors)]
-        if (
-            hasattr(model, "factor_names")
-            and hasattr(model, "factor_lists")
-            and len(model.factor_names) > 0
-            and len(model.factor_lists) > 0
-            and len(model.factor_names[0]) == len(model.factor_lists[0])
-        ):
-            for name, idx in zip(model.factor_names[0], model.factor_lists[0]):
-                idx = int(idx)
-                if 0 <= idx < n_factors:
-                    labels[idx] = name
-
-        for i in range(n_factors):
+        for i in range(len(labels)):
             if np.isfinite(x[i]) and np.isfinite(y[i]):
                 ax.text(
                     x[i],
                     y[i],
-                    labels[i],
+                    str(labels[i]),
                     fontsize=annotation_fontsize,
                     alpha=annotation_alpha,
                 )
@@ -548,7 +559,7 @@ def factor_diagnostics(
     )
     # Add ARD colorbar with threshold line
     cbar = plt.colorbar(im, ax=ax, label="ARD")
-    ard_thresh = ard_min * np.sum(z)
+    ard_thresh = ard_min * ard_total
     # ARD color range
     norm = im.norm
     cbar_min, cbar_max = norm.vmin, norm.vmax
