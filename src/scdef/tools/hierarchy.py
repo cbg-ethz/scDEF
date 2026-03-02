@@ -9,8 +9,8 @@ if TYPE_CHECKING:
 
 def compute_hierarchy_scores(
     model: "scDEF",
-    use_filtered: bool = True,  # use model.factor_lists / model.factor_names
-    filter_upper_layers: bool = False,
+    use_filtered: bool = False,  # use model.factor_lists / model.factor_names
+    filter_upper_layers: bool = True,
     factor_weight: str = "uniform",  # {"usage","uniform"}
     eps: float = 1e-12,
 ) -> Dict[str, Any]:
@@ -127,6 +127,7 @@ def compute_hierarchy_scores(
                 {
                     "child_layer": child_name,
                     "child_factor": child_factor_names[j],
+                    "original_factor_idx": int(child_idx[j]),
                     "parent_layer": parent_name,
                     "K_parents": int(K),
                     "best_parent": parent_factor_names[int(best_parent_pos[j])],

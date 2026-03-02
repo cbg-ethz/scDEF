@@ -459,6 +459,9 @@ def factor_diagnostics(
     clarity_min: float = 0.5,
     figsize: tuple = (6, 4),
     ax: Optional[Axes] = None,
+    annotate_factors: bool = False,
+    annotation_fontsize: int = 8,
+    annotation_alpha: float = 0.8,
     show: bool = True,
 ) -> Optional[Axes]:
     """
@@ -471,6 +474,9 @@ def factor_diagnostics(
         clarity: clarity threshold for effective parents calculation
         figsize: Figure size (if ax is None)
         ax: matplotlib Axes to plot on
+        annotate_factors: whether to annotate each point with its factor label
+        annotation_fontsize: fontsize for factor text annotations
+        annotation_alpha: alpha value for factor text annotations
         show: whether to show the plot
 
     Returns:
@@ -492,6 +498,29 @@ def factor_diagnostics(
     if ax is None:
         fig, ax = plt.subplots(1, 1, figsize=figsize)
     im = ax.scatter(x, y, c=z, cmap="viridis")
+    if annotate_factors:
+        labels = [f"{model.layer_names[0]}_{i}" for i in range(n_factors)]
+        if (
+            hasattr(model, "factor_names")
+            and hasattr(model, "factor_lists")
+            and len(model.factor_names) > 0
+            and len(model.factor_lists) > 0
+            and len(model.factor_names[0]) == len(model.factor_lists[0])
+        ):
+            for name, idx in zip(model.factor_names[0], model.factor_lists[0]):
+                idx = int(idx)
+                if 0 <= idx < n_factors:
+                    labels[idx] = name
+
+        for i in range(n_factors):
+            if np.isfinite(x[i]) and np.isfinite(y[i]):
+                ax.text(
+                    x[i],
+                    y[i],
+                    labels[i],
+                    fontsize=annotation_fontsize,
+                    alpha=annotation_alpha,
+                )
     # Draw blue circle around dots that pass filters
     if len(factors_pass) > 0:
         ax.scatter(

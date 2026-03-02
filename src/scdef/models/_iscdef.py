@@ -461,7 +461,7 @@ class iscDEF(scDEF):
             l0_keep = np.array(self.factor_lists[0], dtype=int)
             init_w = np.array(self.pmeans[f"{self.layer_names[0]}W"])[l0_keep]
             init_brd = (
-                np.array(self.pmeans["brd"]).ravel()[l0_keep] if self.use_brd else None
+                np.array(self.pmeans["brd"])[l0_keep] if self.use_brd else None
             )
             z_init_concentration = 100.0
         else:

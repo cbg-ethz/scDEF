@@ -95,11 +95,13 @@ def test_scdef():
     )
     assert hasattr(model, "adata")
 
-    model.fit(n_epoch=3)
+    model.fit(n_epoch=10)
 
-    model.filter_factors(brd_thres=0.0, min_cells_lower=0)  # make sure we keep factors
+    model.filter_factors(brd_thres=1.0, min_cells_lower=0)  # make sure we keep factors
 
     model.logger.info(model.factor_lists)
+
+    model.fit(n_epoch=10)
 
     assert len(model.elbos) == 2
     assert "L0" in model.adata.obs.columns

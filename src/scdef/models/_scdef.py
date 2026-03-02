@@ -102,7 +102,7 @@ class scDEF(object):
         layer_concentration: Optional[float] = 1.0,
         shrinkage_shape: Optional[float] = 1.0,
         shrinkage_rate: Optional[float] = 1.0,
-        shrinkage_mean: Optional[float] = 20.0,
+        shrinkage_mean: Optional[float] = 1.0,
         top_alpha: Optional[float] = 1.0,
         factor_shape: Optional[float] = 0.1,
         brd_strength: Optional[float] = 1.0,
@@ -1277,7 +1277,8 @@ class scDEF(object):
             init_alpha = False
             l0_keep = np.array(self.factor_lists[0], dtype=int)
             init_w = np.array(self.pmeans["L0W"])[l0_keep]
-            init_brd = np.array(self.pmeans["brd"]).ravel()[l0_keep]
+            # Keep (k, 1) shape for BRD init to match init_var_params expectations.
+            init_brd = np.array(self.pmeans["brd"])[l0_keep]
             z_init_concentration = 100.0
         else:
             init_budgets = True
