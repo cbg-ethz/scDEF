@@ -21,7 +21,6 @@ def scales(
     alpha: float = 0.6,
     fontsize: int = 12,
     legend_fontsize: int = 10,
-    pretrain: bool = False,
     show: bool = True,
 ) -> Optional[Figure]:
     """Plot both cell and gene scales.
@@ -32,7 +31,6 @@ def scales(
         alpha: transparency level
         fontsize: font size for labels
         legend_fontsize: font size for legend
-        pretrain: whether to plot pretrain data
         show: whether to show the plot
 
     Returns:
@@ -48,7 +46,6 @@ def scales(
         legend_fontsize,
         axes[0],
         False,
-        pretrain=pretrain,
     )
     scale(
         model,
@@ -59,7 +56,6 @@ def scales(
         legend_fontsize,
         axes[1],
         False,
-        pretrain=pretrain,
     )
     if show:
         fig.tight_layout()
@@ -77,7 +73,6 @@ def scale(
     legend_fontsize: int = 10,
     ax: Optional[Axes] = None,
     show: bool = True,
-    pretrain: bool = False,
 ) -> Optional[Axes]:
     """Plot learned scale factors vs observed scales.
 
@@ -107,10 +102,7 @@ def scale(
             return model.batch_lib_sizes[np.where(b_cells)[0]]
 
         def get_y_data_batch(_, b_cells):
-            if pretrain:
-                return model.pretrain_cell_scales.ravel()[np.where(b_cells)[0]]
-            else:
-                return model.pmeans["cell_scale"].ravel()[np.where(b_cells)[0]]
+            return model.pmeans["cell_scale"].ravel()[np.where(b_cells)[0]]
 
     else:
         x_data = np.sum(model.X, axis=0)
@@ -120,10 +112,7 @@ def scale(
             return np.sum(model.X[b_cells], axis=0)
 
         def get_y_data_batch(b_id, _):
-            if pretrain:
-                return model.pretrain_gene_scales[b_id].ravel()
-            else:
-                return model.pmeans["gene_scale"][b_id].ravel()
+            return model.pmeans["gene_scale"][b_id].ravel()
 
     if len(model.batches) > 1:
         for b_id, b in enumerate(model.batches):
@@ -155,7 +144,6 @@ def scale(
 
 def relevance(
     model: "scDEF",
-    pretrain: bool = False,
     mode: Literal["brd", "ard"] = "brd",
     thres: Optional[float] = None,
     iqr_mult: Optional[float] = None,
@@ -175,7 +163,6 @@ def relevance(
 
     Args:
         model: scDEF model instance
-        pretrain: whether to plot pretrain data
         mode: mode to plot, either "brd" or "ard"
         thres: threshold value for relevance cutoff
         iqr_mult: multiplier for IQR-based threshold
@@ -203,14 +190,9 @@ def relevance(
     else:
         ard = iqr_mult
 
-    if pretrain:
-        scales = model.pretrain_brd.ravel()
-        if mode == "ard":
-            scales = model.pretrain_ard.ravel()
-    else:
-        scales = model.pmeans[f"brd"].ravel()
-        if mode == "ard":
-            scales = model.pmeans[f"ard"].ravel()
+    scales = model.pmeans[f"brd"].ravel()
+    if mode == "ard":
+        scales = model.pmeans[f"ard"].ravel()
     if normalize:
         scales = scales - np.min(scales)
         scales = scales / np.max(scales)
@@ -231,10 +213,7 @@ def relevance(
     below = []
     if thres is None and iqr_mult is None:
         l = np.arange(layer_size)
-        if pretrain:
-            above = model.pretrain_factors
-        else:
-            above = model.factor_lists[0]
+        above = model.factor_lists[0]
         below = np.array([f for f in l if f not in above])
     else:
         plt.axhline(cutoff, color="red", ls="--")
@@ -285,7 +264,6 @@ def relevance(
 
 def gini_brd(
     model: "scDEF",
-    pretrain: bool = False,
     normalize: bool = False,
     figsize: Tuple[float, float] = (4, 4),
     alpha: float = 0.6,
@@ -298,7 +276,6 @@ def gini_brd(
 
     Args:
         model: scDEF model instance
-        pretrain: whether to plot pretrain data
         normalize: whether to normalize BRD scores
         figsize: figure size
         alpha: transparency level
@@ -312,28 +289,18 @@ def gini_brd(
     """
     from ..utils import score_utils
 
-    if pretrain:
-        brds = model.pretrain_brd.ravel()
-    else:
-        brds = model.pmeans["brd"].ravel()
+    brds = model.pmeans["brd"].ravel()
     if normalize:
         brds = brds - np.min(brds)
         brds = brds / np.max(brds)
-    if pretrain:
-        ginis = np.array(
-            [score_utils.gini(model.pretrain_w[k]) for k in range(len(brds))]
-        )
-        is_kept = np.zeros((len(model.pretrain_brd)))
-        is_kept[model.pretrain_factors] = 1
-    else:
-        ginis = np.array(
-            [
-                score_utils.gini(model.pmeans[f"{model.layer_names[0]}W"][k])
-                for k in range(model.layer_sizes[0])
-            ]
-        )
-        is_kept = np.zeros((model.layer_sizes[0]))
-        is_kept[model.factor_lists[0]] = 1
+    ginis = np.array(
+        [
+            score_utils.gini(model.pmeans[f"{model.layer_names[0]}W"][k])
+            for k in range(model.layer_sizes[0])
+        ]
+    )
+    is_kept = np.zeros((model.layer_sizes[0]))
+    is_kept[model.factor_lists[0]] = 1
 
     if ax is None:
         fig, ax = plt.subplots(figsize=figsize)
@@ -362,7 +329,6 @@ def gini_brd(
 
 def loss(
     model: "scDEF",
-    pretrain: bool = False,
     figsize: Tuple[float, float] = (4, 4),
     fontsize: int = 12,
     ax: Optional[Axes] = None,
@@ -382,10 +348,7 @@ def loss(
     """
     if ax is None:
         fig, ax = plt.subplots(figsize=figsize)
-    if pretrain:
-        ax.plot(np.concatenate(model.pretrain_elbos)[:])
-    else:
-        ax.plot(np.concatenate(model.elbos)[:])
+    ax.plot(np.concatenate(model.elbos)[:])
     ax.set_xlabel("Epoch", fontsize=fontsize)
     ax.set_yscale("log")
     ax.set_ylabel("Loss [log]", fontsize=fontsize)
@@ -398,7 +361,6 @@ def loss(
 
 def ard_brd(
     model: "scDEF",
-    pretrain: bool = False,
     figsize: Tuple[float, float] = (4, 4),
     show: bool = True,
     ax: Optional[Axes] = None,
@@ -410,18 +372,10 @@ def ard_brd(
         fig, ax = plt.subplots(figsize=figsize)
     else:
         fig = ax.get_figure()
-    if pretrain:
-        x = model.pretrain_ard.ravel()
-        y = model.pretrain_brd.ravel()
-    else:
-        x = model.pmeans["factor_concentrations"].ravel()
-        y = model.pmeans["factor_means"].ravel()
-    if pretrain:
-        is_kept = np.zeros((len(model.pretrain_brd)))
-        is_kept[model.pretrain_factors] = 1
-    else:
-        is_kept = np.zeros((model.layer_sizes[0]))
-        is_kept[model.factor_lists[0]] = 1
+    x = model.pmeans["factor_concentrations"].ravel()
+    y = model.pmeans["factor_means"].ravel()
+    is_kept = np.zeros((model.layer_sizes[0]))
+    is_kept[model.factor_lists[0]] = 1
     ax.scatter(x[np.where(is_kept == 1)[0]], y[np.where(is_kept == 1)[0]], c="C0")
     ax.scatter(x[np.where(is_kept == 0)[0]], y[np.where(is_kept == 0)[0]], c="gray")
     ax.legend(["Kept", "Removed"], fontsize=legend_fontsize)
@@ -445,7 +399,6 @@ def qc(
     model: "scDEF",
     figsize: Tuple[float, float] = (8, 12),
     show: bool = True,
-    pretrain: bool = False,
 ) -> Optional[Figure]:
     """Plot QC metrics for scDEF run.
 
@@ -456,7 +409,6 @@ def qc(
         model: scDEF model instance
         figsize: figure size in inches
         show: whether to show the plot
-        pretrain: whether to plot pretrain data
     Returns:
         Figure object if show is False, None otherwise
     """
@@ -465,19 +417,14 @@ def qc(
         fig = plt.figure(figsize=figsize)
         gs = GridSpec(4, 2)
         # First row
-        loss(model, pretrain=pretrain, ax=fig.add_subplot(gs[0, 0]), show=False)
-        gini_brd(model, pretrain=pretrain, ax=fig.add_subplot(gs[0, 1]), show=False)
+        loss(model, ax=fig.add_subplot(gs[0, 0]), show=False)
+        gini_brd(model, ax=fig.add_subplot(gs[0, 1]), show=False)
         # Second row
-        scale(
-            model, "cell", pretrain=pretrain, ax=fig.add_subplot(gs[1, 0]), show=False
-        )
-        scale(
-            model, "gene", pretrain=pretrain, ax=fig.add_subplot(gs[1, 1]), show=False
-        )
+        scale(model, "cell", ax=fig.add_subplot(gs[1, 0]), show=False)
+        scale(model, "gene", ax=fig.add_subplot(gs[1, 1]), show=False)
         # Third row
         relevance(
             model,
-            pretrain=pretrain,
             mode="brd",
             ax=fig.add_subplot(gs[2, 0:2]),
             show=False,
@@ -485,7 +432,6 @@ def qc(
         # Fourth row
         relevance(
             model,
-            pretrain=pretrain,
             mode="ard",
             ax=fig.add_subplot(gs[3, 0:2]),
             show=False,
@@ -494,14 +440,10 @@ def qc(
         fig = plt.figure(figsize=(figsize[0], int(figsize[1] * 2 / 3)))
         gs = GridSpec(2, 2)
         # First row
-        loss(model, pretrain=pretrain, ax=fig.add_subplot(gs[0, 0:2]), show=False)
+        loss(model, ax=fig.add_subplot(gs[0, 0:2]), show=False)
         # Second row
-        scale(
-            model, "cell", pretrain=pretrain, ax=fig.add_subplot(gs[1, 0]), show=False
-        )
-        scale(
-            model, "gene", pretrain=pretrain, ax=fig.add_subplot(gs[1, 1]), show=False
-        )
+        scale(model, "cell", ax=fig.add_subplot(gs[1, 0]), show=False)
+        scale(model, "gene", ax=fig.add_subplot(gs[1, 1]), show=False)
 
     fig.tight_layout()
     if show:

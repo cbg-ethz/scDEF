@@ -165,6 +165,7 @@ class scDEF(object):
 
         self.init_var_params(nmf_init=False)  # just to get stub
         self.set_posterior_means()
+        self._has_fit = False
 
     def __repr__(self):
         out = f"scDEF object with {self.n_layers} layers"
@@ -1249,100 +1250,34 @@ class scDEF(object):
             global_grads,
         )
 
-    def pretrain(
-        self,
-        nmf_init: bool = True,
-        max_cells_init: int = 5000,
-        eff_min: float = 0.0,
-        save_pretrain_factors: bool = True,
-        tolerance: float = 1e-3,
-        **kwargs: Any,
-    ) -> None:
-        """Pretrain the model to find the initial set of factors."""
-        self.logger.info(f"Pretraining to find initial estimate of number of factors")
-        # self.update_model_size(self.n_factors, max_n_layers=5)
-        # self.update_model_priors()
-        self.init_var_params(
-            init_budgets=True,
-            nmf_init=nmf_init,
-            max_cells=max_cells_init,
-        )
-        self.elbos = []
-        self.step_sizes = []
-        self._learn(
-            filter=False, annotate=False, n_rounds=1, tolerance=tolerance, **kwargs
-        )
-        # Compute factor diagnostics
-        from scdef.tools.factor import factor_diagnostics
-
-        factor_diagnostics(self)
-        # Filter up
-        self.filter_factors(
-            brd_thres=0.0,
-            ard_thres=0.00,
-            clarity_thres=0.0,
-            min_cells_lower=eff_min,
-            filter_up=True,
-            annotate=False,
-        )
-        eff_factors = self.get_effective_factors(
-            brd_thres=1.0, ard_thres=0.001, clarity_thres=0.5, min_cells=eff_min
-        )
-        n_eff_factors = len(eff_factors)
-        if n_eff_factors == 0:
-            self.logger.info("No effective factors found. Using all factors.")
-            n_eff_factors = self.n_factors
-            eff_factors = np.arange(n_eff_factors)
-        self.logger.info(
-            f"scDEF pretraining finished. Found {n_eff_factors} effective factors."
-        )
-        if save_pretrain_factors:
-            self.pretrain_gene_scales = np.array(self.pmeans["gene_scale"])
-            self.pretrain_cell_scales = np.array(self.pmeans["cell_scale"])
-            self.pretrain_brd = np.array(self.pmeans["brd"]).ravel()
-            self.pretrain_ard = np.array(self.pmeans["ard"]).ravel()
-            self.pretrain_w = np.array(self.pmeans["L0W"])
-            self.pretrain_elbos = self.elbos
-            self.pretrain_factors = eff_factors
-        self.filter_factors(
-            min_cells_lower=eff_min, filter_up=True, annotate=False
-        )  # Actually filter the factors in the whole hierarchy
-        return eff_factors
-
     def fit(
         self,
-        pretrain: bool = True,
         nmf_init: bool = True,
         max_cells_init: int = 5000,
-        eff_min: float = 0.0,
-        save_pretrain_factors: bool = True,
         n_rounds: int = 2,
         **kwargs: Any,
     ) -> None:
-        """Learn a one-layer scDEF with 100 factors with BRD to obtain
-        cell and gene scale factors and an estimate of the effective number of factors.
-        Update the sizes based on that estimate and re-init everything except the scale factors.
-        The cell and gene scales take most of the gradient weights, so we run a first round of epochs to get them right, and then restart the optimization with the same learning rate.
+        """Fit scDEF, warm-starting from a previous fit when available.
+
+        On the first call, parameters are initialized from priors (or NMF if enabled).
+        On subsequent calls, the model is re-initialized from the current posterior
+        quantities and the current `factor_lists`, enabling a fit -> filter -> fit workflow.
         """
-        if pretrain:
-            eff_factors = self.pretrain(
-                eff_min=eff_min,
-                save_pretrain_factors=save_pretrain_factors,
-                nmf_init=nmf_init,
-                max_cells_init=max_cells_init,
-                **kwargs,
-            )
+        if getattr(self, "_has_fit", False):
             layer_sizes = [len(self.factor_lists[i]) for i in range(self.n_layers)]
             self.update_model_size(
                 max_n_factors=max(layer_sizes), layer_sizes=layer_sizes
             )
             self.update_model_priors()
-            self.logger.info(f"Learning scDEF with layer sizes {self.layer_sizes}.")
+            self.logger.info(
+                f"Continuing scDEF from previous fit with layer sizes {self.layer_sizes}."
+            )
             nmf_init = False
             init_budgets = False
             init_alpha = False
-            init_w = self.pmeans["L0W"][eff_factors]
-            init_brd = self.pmeans["brd"][eff_factors]
+            l0_keep = np.array(self.factor_lists[0], dtype=int)
+            init_w = np.array(self.pmeans["L0W"])[l0_keep]
+            init_brd = np.array(self.pmeans["brd"]).ravel()[l0_keep]
             z_init_concentration = 100.0
         else:
             init_budgets = True
@@ -1362,6 +1297,7 @@ class scDEF(object):
         self.elbos = []
         self.step_sizes = []
         self._learn(n_rounds=n_rounds, **kwargs)
+        self._has_fit = True
 
     def _learn(
         self,
@@ -1381,7 +1317,7 @@ class scDEF(object):
         stop_cell_budgets: Optional[int] = 0,
         stop_gene_budgets: Optional[int] = 0,
         opt_layer: Optional[int] = None,
-        filter: Optional[bool] = False,
+        filter: Optional[bool] = True,
         annotate: Optional[bool] = True,
         **kwargs,
     ):
@@ -1598,7 +1534,7 @@ class scDEF(object):
 
         self.set_posterior_means()
         if self.use_brd and filter:
-            self.filter_factors()
+            self.filter_factors(upper_only=True)
         else:
             if annotate:
                 self.make_layercolors(
@@ -1693,6 +1629,7 @@ class scDEF(object):
         min_cells_lower: Optional[float] = 0.0,
         filter_up: Optional[bool] = True,
         annotate: Optional[bool] = True,
+        upper_only: Optional[bool] = False,
     ):
         """Filter our irrelevant factors based on the BRD posterior or the cell attachments.
 
@@ -1702,6 +1639,7 @@ class scDEF(object):
             min_cells_upper: minimum number of cells that each factor in upper layers must have attached to it for it to be kept. If between 0 and 1, fraction. Otherwise, absolute value
             min_cells_lower: minimum number of cells that each factor in layer 0 must have attached to it for it to be kept. If between 0 and 1, fraction. Otherwise, absolute value
             filter_up: whether to remove factors in upper layers via inter-layer attachments
+            upper_only: whether to only filter factors in upper layers
         """
         if min_cells_upper != 0:
             if min_cells_upper < 1.0:
@@ -1713,12 +1651,15 @@ class scDEF(object):
         new_factor_lists = []
         for i, layer_name in enumerate(self.layer_names):
             if i == 0:
-                keep = self.get_effective_factors(
-                    brd_thres=brd_thres,
-                    ard_thres=ard_thres,
-                    clarity_thres=clarity_thres,
-                    min_cells=min_cells_lower,
-                )
+                if upper_only:
+                    keep = np.arange(self.layer_sizes[i])
+                else:
+                    keep = self.get_effective_factors(
+                        brd_thres=brd_thres,
+                        ard_thres=ard_thres,
+                        clarity_thres=clarity_thres,
+                        min_cells=min_cells_lower,
+                    )
             else:
                 assignments = np.argmax(self.pmeans[f"{layer_name}z"], axis=1)
                 counts = np.array(

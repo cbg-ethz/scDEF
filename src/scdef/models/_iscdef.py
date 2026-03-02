@@ -441,45 +441,37 @@ class iscDEF(scDEF):
 
     def fit(
         self,
-        pretrain=False,
         nmf_init=False,
         max_cells_init=1024,
         z_init_concentration=100.0,
         **kwargs,
     ):
-        """
-        TODO: find a pre-training approach that works when markers_layer > 0. I need to use a high decay factor, choose the relevant factors, and then adjust the hierarchy to make sure the top factors are still used.
-        Need to adjust the set_connectivity_prior in this case.
-        """
-        if pretrain:
-            self.logger.info(f"Pretraining to find initial set of factors")
-            max_n_layers = self.max_n_layers
-            # self.max_n_layers = 1
-            # self.set_layer_sizes()
-            # self.update_model_priors()
-            self.init_var_params(
-                z_init_concentration=z_init_concentration,
-                init_budgets=True,
-                nmf_init=nmf_init,
-                max_cells=max_cells_init,
-            )
-            self.elbos = []
-            self.step_sizes = []
-            self._learn(filter=False, annotate=False, **kwargs)
-            self.logger.info(f"scDEF pretraining finished.")
-            self.max_n_layers = max_n_layers
-            self.set_layer_sizes()
-            # self.update_model_size(self.n_factors)
+        """Fit iscDEF, warm-starting from previous fit when available."""
+        if getattr(self, "_has_fit", False):
+            self.layer_sizes = [len(factors) for factors in self.factor_lists]
+            self.n_layers = len(self.layer_sizes)
+            self.set_factor_names()
             self.update_model_priors()
+            self.logger.info(
+                f"Continuing iscDEF from previous fit with layer sizes {self.layer_sizes}."
+            )
+            nmf_init = False
             init_budgets = False
-            init_w = self.pmeans["markerW"]
-            init_brd = self.pmeans["brd"]
+            init_alpha = False
+            l0_keep = np.array(self.factor_lists[0], dtype=int)
+            init_w = np.array(self.pmeans[f"{self.layer_names[0]}W"])[l0_keep]
+            init_brd = (
+                np.array(self.pmeans["brd"]).ravel()[l0_keep] if self.use_brd else None
+            )
+            z_init_concentration = 100.0
         else:
             init_budgets = True
+            init_alpha = True
             init_w = None
             init_brd = None
         self.init_var_params(
             init_budgets=init_budgets,
+            init_alpha=init_alpha,
             init_w=init_w,
             init_brd=init_brd,
             nmf_init=nmf_init,
@@ -489,3 +481,4 @@ class iscDEF(scDEF):
         self.elbos = []
         self.step_sizes = []
         self._learn(**kwargs)
+        self._has_fit = True
