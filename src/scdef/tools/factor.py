@@ -8,57 +8,6 @@ if TYPE_CHECKING:
     from scdef.models._scdef import scDEF
 
 
-def _get_l0_unfiltered_names(model: "scDEF") -> List[str]:
-    """Build layer-0 names for all unfiltered factors in a model-aware way."""
-    n0 = int(model.layer_sizes[0])
-
-    # Best case: factor_names/factor_lists already cover all layer-0 factors.
-    if (
-        hasattr(model, "factor_names")
-        and hasattr(model, "factor_lists")
-        and len(model.factor_names) > 0
-        and len(model.factor_lists) > 0
-        and len(model.factor_names[0]) == n0
-        and len(model.factor_lists[0]) == n0
-        and set(np.asarray(model.factor_lists[0], dtype=int)) == set(range(n0))
-    ):
-        full_names = [None] * n0
-        for name, idx in zip(model.factor_names[0], model.factor_lists[0]):
-            full_names[int(idx)] = name
-        if all(name is not None for name in full_names):
-            return full_names  # type: ignore[return-value]
-
-    # iscDEF markers_layer == 0: layer-0 names are marker names.
-    if hasattr(model, "markers_layer") and getattr(model, "markers_layer") == 0:
-        if hasattr(model, "marker_names") and len(model.marker_names) == n0:
-            return list(model.marker_names)
-
-    # iscDEF markers_layer > 0: layer-0 names are marker_name + "_L0_<subfactor>".
-    if hasattr(model, "marker_names") and hasattr(model, "n_factors_per_marker"):
-        n_fpm = int(model.n_factors_per_marker)
-        if n_fpm > 0 and len(model.marker_names) * n_fpm == n0:
-            return [
-                f"{marker}_{model.layer_names[0]}_{sub}"
-                for marker in model.marker_names
-                for sub in range(n_fpm)
-            ]
-
-    # Fallback: canonical names, patched with currently available mapped names.
-    names = [f"{model.layer_names[0]}_{i}" for i in range(n0)]
-    if (
-        hasattr(model, "factor_names")
-        and hasattr(model, "factor_lists")
-        and len(model.factor_names) > 0
-        and len(model.factor_lists) > 0
-        and len(model.factor_names[0]) == len(model.factor_lists[0])
-    ):
-        for name, idx in zip(model.factor_names[0], model.factor_lists[0]):
-            idx = int(idx)
-            if 0 <= idx < n0:
-                names[idx] = name
-    return names
-
-
 def factor_diagnostics(model: "scDEF") -> None:
     # Keep layer 0 unfiltered, but use filtered factors on upper layers.
     res = compute_hierarchy_scores(
@@ -73,14 +22,26 @@ def factor_diagnostics(model: "scDEF") -> None:
     model.adata.uns["factor_obs"]["BRD"] = np.array(
         [np.nan] * len(model.adata.uns["factor_obs"])
     )
-    l0_idx = np.arange(model.layer_sizes[0], dtype=int)
-    l0_names = _get_l0_unfiltered_names(model)
-    model.adata.uns["factor_obs"].loc[l0_names, "ARD"] = np.asarray(
-        model.pmeans["factor_means"]
-    )[l0_idx].ravel()
-    model.adata.uns["factor_obs"].loc[l0_names, "BRD"] = np.asarray(
-        model.pmeans["factor_concentrations"]
-    )[l0_idx].ravel()
+    factor_obs = model.adata.uns["factor_obs"]
+    if "original_factor_idx" not in factor_obs.columns:
+        raise KeyError(
+            "factor_obs is missing 'original_factor_idx'. Recompute diagnostics with updated compute_hierarchy_scores."
+        )
+
+    if "child_layer" in factor_obs.columns:
+        l0_rows = factor_obs.index[factor_obs["child_layer"] == model.layer_names[0]]
+    else:
+        l0_rows = factor_obs.index
+
+    original_idx = factor_obs.loc[l0_rows, "original_factor_idx"].to_numpy(dtype=int)
+    valid = (original_idx >= 0) & (original_idx < int(model.layer_sizes[0]))
+    l0_rows = np.asarray(l0_rows)[valid]
+    original_idx = original_idx[valid]
+
+    ard_all = np.asarray(model.pmeans["factor_means"]).ravel()
+    brd_all = np.asarray(model.pmeans["factor_concentrations"]).ravel()
+    factor_obs.loc[l0_rows, "ARD"] = ard_all[original_idx]
+    factor_obs.loc[l0_rows, "BRD"] = brd_all[original_idx]
 
 
 def set_factor_signatures(
