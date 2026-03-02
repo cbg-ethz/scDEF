@@ -495,7 +495,10 @@ def factor_diagnostics(
         factor_obs_l0 = factor_obs.copy()
         l0_prefix = f"{l0_name}_"
         factor_obs_l0 = factor_obs_l0[
-            [isinstance(idx, str) and idx.startswith(l0_prefix) for idx in factor_obs_l0.index]
+            [
+                isinstance(idx, str) and idx.startswith(l0_prefix)
+                for idx in factor_obs_l0.index
+            ]
         ]
 
     if "original_factor_idx" in factor_obs_l0.columns:

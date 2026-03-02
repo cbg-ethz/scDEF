@@ -402,9 +402,9 @@ class scDEF(object):
 
     def get_effective_factors(
         self,
-        brd_thres: Optional[float] = 1.0,
-        ard_thres: Optional[float] = 0.001,
-        clarity_thres: Optional[float] = 0.5,
+        brd_min: Optional[float] = 1.0,
+        ard_min: Optional[float] = 0.001,
+        clarity_min: Optional[float] = 0.5,
         min_cells: Optional[float] = 0.001,
         min_cells_upper_for_clarity: Optional[float] = 0.001,
     ):
@@ -507,9 +507,9 @@ class scDEF(object):
             ard_sum = np.nansum(ard)
             brd_keep = np.where(
                 valid
-                & (brd >= brd_thres)
-                & (clarity >= clarity_thres)
-                & (ard >= ard_thres * ard_sum)
+                & (brd >= brd_min)
+                & (clarity >= clarity_min)
+                & (ard >= ard_min * ard_sum)
             )[0]
             keep = np.unique(list(set(brd_keep).intersection(keep)))
 
@@ -1317,7 +1317,6 @@ class scDEF(object):
             init_alpha = False
             l0_keep = np.array(self.factor_lists[0], dtype=int)
             init_w = np.array(self.pmeans["L0W"])[l0_keep]
-            # Keep (k, 1) shape for BRD init to match init_var_params expectations.
             init_brd = np.array(self.pmeans["brd"])[l0_keep]
             init_ard = np.array(self.pmeans["factor_means"])[l0_keep]
             z_init_concentration = 100.0
@@ -1666,9 +1665,9 @@ class scDEF(object):
 
     def filter_factors(
         self,
-        brd_thres: Optional[float] = 1.0,
-        ard_thres: Optional[float] = 0.001,
-        clarity_thres: Optional[float] = 0.5,
+        brd_min: Optional[float] = 1.0,
+        ard_min: Optional[float] = 0.001,
+        clarity_min: Optional[float] = 0.5,
         min_cells_upper: Optional[float] = 0.001,
         min_cells_lower: Optional[float] = 0.0,
         filter_up: Optional[bool] = True,
@@ -1699,11 +1698,11 @@ class scDEF(object):
                     keep = np.arange(self.layer_sizes[i])
                 else:
                     keep = self.get_effective_factors(
-                        brd_thres=brd_thres,
-                        ard_thres=ard_thres,
-                        clarity_thres=clarity_thres,
+                        brd_min=brd_min,
+                        ard_min=ard_min,
+                        clarity_min=clarity_min,
                         min_cells=min_cells_lower,
-                    min_cells_upper_for_clarity=min_cells_upper,
+                        min_cells_upper_for_clarity=min_cells_upper,
                     )
             else:
                 assignments = np.argmax(self.pmeans[f"{layer_name}z"], axis=1)

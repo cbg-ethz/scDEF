@@ -97,7 +97,7 @@ def test_scdef():
 
     model.fit(n_epoch=10)
 
-    model.filter_factors(brd_thres=1.0, min_cells_lower=0)  # make sure we keep factors
+    model.filter_factors(brd_min=1.0, min_cells_lower=0)  # make sure we keep factors
 
     model.logger.info(model.factor_lists)
 
