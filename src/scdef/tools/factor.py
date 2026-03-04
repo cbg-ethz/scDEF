@@ -9,12 +9,55 @@ if TYPE_CHECKING:
 
 
 def factor_diagnostics(model: "scDEF") -> None:
-    # Keep layer 0 unfiltered, but use filtered factors on upper layers.
-    res = compute_hierarchy_scores(
-        model,
-        use_filtered=False,
-        filter_upper_layers=True,
+    # Keep layer 0 unfiltered, but use a fixed filtered subset on upper layers.
+    # Cache and reuse upper-layer factor lists so diagnostics remain stable across
+    # later calls to filter/annotate routines.
+    cache_key = "_factor_obs_upper_lists_fixed"
+    cache_rev_key = "_factor_obs_fit_revision"
+    current_fit_rev = int(getattr(model, "_fit_revision", 0))
+    reset_cache = (
+        cache_key not in model.adata.uns
+        or len(model.adata.uns[cache_key]) != max(model.n_layers - 1, 0)
+        or int(model.adata.uns.get(cache_rev_key, -1)) != current_fit_rev
     )
+    if not reset_cache:
+        # Validate cached indices against current layer sizes.
+        for i, idxs in enumerate(model.adata.uns[cache_key], start=1):
+            arr = np.asarray(idxs, dtype=int)
+            if np.any(arr < 0) or np.any(arr >= model.layer_sizes[i]):
+                reset_cache = True
+                break
+    if reset_cache:
+        model.adata.uns[cache_key] = [
+            np.asarray(model.factor_lists[i], dtype=int).tolist()
+            for i in range(1, model.n_layers)
+        ]
+        model.adata.uns[cache_rev_key] = current_fit_rev
+
+    fixed_upper_lists = [
+        np.asarray(idxs, dtype=int) for idxs in model.adata.uns[cache_key]
+    ]
+    old_factor_lists = [np.asarray(f, dtype=int).copy() for f in model.factor_lists]
+    old_factor_names = (
+        [list(names) for names in model.factor_names]
+        if hasattr(model, "factor_names")
+        else None
+    )
+    try:
+        model.factor_lists = [
+            np.arange(model.layer_sizes[0], dtype=int)
+        ] + fixed_upper_lists
+        if hasattr(model, "set_factor_names"):
+            model.set_factor_names()
+        res = compute_hierarchy_scores(
+            model,
+            use_filtered=False,
+            filter_upper_layers=True,
+        )
+    finally:
+        model.factor_lists = old_factor_lists
+        if old_factor_names is not None:
+            model.factor_names = old_factor_names
     model.adata.uns["factor_obs"] = res["per_factor"].set_index("child_factor")
     model.adata.uns["factor_obs"]["ARD"] = np.array(
         [np.nan] * len(model.adata.uns["factor_obs"])

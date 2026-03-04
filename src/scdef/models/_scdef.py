@@ -166,6 +166,7 @@ class scDEF(object):
         self.init_var_params(nmf_init=False)  # just to get stub
         self.set_posterior_means()
         self._has_fit = False
+        self._fit_revision = 0
 
     def __repr__(self):
         out = f"scDEF object with {self.n_layers} layers"
@@ -1346,6 +1347,7 @@ class scDEF(object):
         self.step_sizes = []
         self._learn(n_rounds=n_rounds, **kwargs)
         self._has_fit = True
+        self._fit_revision += 1
 
     def _learn(
         self,
@@ -1883,11 +1885,6 @@ class scDEF(object):
             )
 
         self.normalize_cellscores()
-
-        # Compute factor diagnostics
-        from scdef.tools.factor import factor_diagnostics
-
-        factor_diagnostics(self)
 
     def normalize_cellscores(self):
         for idx in range(self.n_layers):

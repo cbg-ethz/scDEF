@@ -486,3 +486,4 @@ class iscDEF(scDEF):
         self.step_sizes = []
         self._learn(**kwargs)
         self._has_fit = True
+        self._fit_revision = getattr(self, "_fit_revision", 0) + 1
