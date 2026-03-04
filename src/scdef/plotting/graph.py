@@ -358,7 +358,6 @@ def _add_node_to_graph(
 ):
     """Add a node to the graph."""
     node_kwargs = {
-        "label": label,
         "fillcolor": fillcolor,
         "color": color,
         "ordering": ordering,
@@ -367,12 +366,28 @@ def _add_node_to_graph(
         "height": str(size),
         "fixedsize": fixedsize,
     }
+    if label != "":
+        node_kwargs["label"] = label
 
     if shell:
         node_kwargs["pos"] = pos
         node_kwargs["pin"] = "true"
 
     g.node(factor_name, **node_kwargs)
+
+
+def _finalize_node_label(label: str, show_label: bool) -> str:
+    """Return a graphviz-safe label string.
+
+    Only wrap labels as HTML-like labels when they actually contain HTML markup.
+    """
+    if not show_label:
+        return ""
+    label = str(label)
+    html_markers = ("<br", "<FONT", "<TABLE", "<B>", "<I>", "<U>", "<SUB>", "<SUP>")
+    if any(marker in label for marker in html_markers):
+        return f"<{label}>"
+    return label
 
 
 def _add_edges_from_hierarchy(g, model, factor_name, hierarchy, color):
@@ -673,9 +688,7 @@ def make_graph(
                 fillcolor = "gray"
 
             # Finalize label
-            if not show_label:
-                label = ""
-            label = "<" + label + ">"
+            label = _finalize_node_label(label, show_label)
 
             # Compute position for shell layout
             pos = None
@@ -821,8 +834,13 @@ def make_technical_hierarchy_graph(
             layer_name = model.layer_names[layer_idx]
 
         # Get factors and colors for this layer
-        factors = model.factor_lists[layer_idx]
-        layer_colors = _get_layer_colors(model, layer_idx, False, factors)
+        if layer_idx == model.n_layers - 1:
+            # Technical hierarchy uses a synthetic root node.
+            factors = np.array([0], dtype=int)
+            layer_colors = ["#000000"]
+        else:
+            factors = model.factor_lists[layer_idx]
+            layer_colors = _get_layer_colors(model, layer_idx, False, factors)
 
         # Get gene rankings if showing signatures
         gene_rankings_layer = None
@@ -842,7 +860,10 @@ def make_technical_hierarchy_graph(
                 )
 
         # Process each factor in the layer
-        factor_order = layer_factor_orders[layer_idx]
+        if layer_idx == model.n_layers - 1:
+            factor_order = np.array([0], dtype=int)
+        else:
+            factor_order = layer_factor_orders[layer_idx]
         for ii, factor_idx in enumerate(factor_order):
             factor_idx = int(factor_idx)
 
@@ -915,7 +936,6 @@ def make_technical_hierarchy_graph(
                     label, enrichments, factor_idx, top_genes[layer_idx]
                 )
             elif show_signatures:
-                print(layer_idx, factor_idx, gene_rankings_layer, gene_scores_layer)
                 label = _add_signature_to_label(
                     label,
                     model,
@@ -947,9 +967,7 @@ def make_technical_hierarchy_graph(
             )
 
             # Finalize label
-            if not show_label:
-                label = ""
-            label = "<" + label + ">"
+            label = _finalize_node_label(label, show_label)
 
             # Compute position for shell layout
             pos = None

@@ -94,6 +94,8 @@ def factor_diagnostics(model: "scDEF", recompute: bool = False) -> None:
     brd_all = np.asarray(model.pmeans["factor_concentrations"]).ravel()
     factor_obs.loc[l0_rows, "ARD"] = ard_all[original_idx]
     factor_obs.loc[l0_rows, "BRD"] = brd_all[original_idx]
+    # Initialize technical annotation for all factors.
+    factor_obs["technical"] = False
 
 
 def set_factor_signatures(
@@ -121,9 +123,10 @@ def set_technical_factors(
     # in model.adata.uns["factor_obs"], annotate as technical or not.
     if "factor_obs" not in model.adata.uns:
         factor_diagnostics(model)
-    model.adata.uns["factor_obs"]["technical"] = np.array(
-        [False] * len(model.adata.uns["factor_obs"])
-    )
+    if "technical" not in model.adata.uns["factor_obs"].columns:
+        model.adata.uns["factor_obs"]["technical"] = False
+    if factors is None:
+        factors = []
     model.adata.uns["factor_obs"].loc[factors, "technical"] = True
 
     # Get complete hierarchy
