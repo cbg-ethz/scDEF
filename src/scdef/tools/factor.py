@@ -8,7 +8,15 @@ if TYPE_CHECKING:
     from scdef.models._scdef import scDEF
 
 
-def factor_diagnostics(model: "scDEF") -> None:
+def factor_diagnostics(model: "scDEF", recompute: bool = False) -> None:
+    """Compute/store factor diagnostics in ``model.adata.uns['factor_obs']``.
+
+    Args:
+        model: scDEF model instance
+        recompute: if True, force recomputation of the cached fixed upper-layer
+            factor subset used for clarity scores, even if the fit revision
+            did not change.
+    """
     # Keep layer 0 unfiltered, but use a fixed filtered subset on upper layers.
     # Cache and reuse upper-layer factor lists so diagnostics remain stable across
     # later calls to filter/annotate routines.
@@ -16,7 +24,8 @@ def factor_diagnostics(model: "scDEF") -> None:
     cache_rev_key = "_factor_obs_fit_revision"
     current_fit_rev = int(getattr(model, "_fit_revision", 0))
     reset_cache = (
-        cache_key not in model.adata.uns
+        recompute
+        or cache_key not in model.adata.uns
         or len(model.adata.uns[cache_key]) != max(model.n_layers - 1, 0)
         or int(model.adata.uns.get(cache_rev_key, -1)) != current_fit_rev
     )
