@@ -125,6 +125,12 @@ def test_scdef():
             show=False,
         )
 
+    scd.tl.factor_diagnostics(model, recompute=True)
+    scd.tl.set_technical_factors(model, factors=[model.factor_names[0][0]])
+    scd.tl.make_hierarchies(model)
+    scd.pl.biological_hierarchy(model, show_label=False)
+    scd.pl.technical_hierarchy(model, show_label=False)
+
     simplified = scd.tl.get_hierarchy(model, simplified=True)
     g = scd.pl.make_graph(model, hierarchy=simplified)
 
