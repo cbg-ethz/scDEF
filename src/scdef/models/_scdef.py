@@ -1304,6 +1304,8 @@ class scDEF(object):
         quantities and the current `factor_lists`, enabling a fit -> filter -> fit workflow.
         """
         if getattr(self, "_has_fit", False):
+            # Keep original kept indices before resizing; update_model_size resets factor_lists.
+            old_factor_lists = [np.array(f).copy() for f in self.factor_lists]
             layer_sizes = [len(self.factor_lists[i]) for i in range(self.n_layers)]
             self.update_model_size(
                 max_n_factors=max(layer_sizes), layer_sizes=layer_sizes
@@ -1315,14 +1317,16 @@ class scDEF(object):
             nmf_init = False
             init_budgets = False
             init_alpha = False
-            l0_keep = np.array(self.factor_lists[0], dtype=int)
+            l0_keep = np.array(old_factor_lists[0], dtype=int)
+            init_z = np.array(self.pmeans[f"{self.layer_names[0]}z"])[:, l0_keep]
             init_w = np.array(self.pmeans["L0W"])[l0_keep]
             init_brd = np.array(self.pmeans["brd"])[l0_keep]
             init_ard = np.array(self.pmeans["factor_means"])[l0_keep]
-            z_init_concentration = 100.0
+            z_init_concentration = 1.0
         else:
             init_budgets = True
             init_alpha = True
+            init_z = None
             init_w = None
             init_brd = None
             init_ard = None
@@ -1330,6 +1334,7 @@ class scDEF(object):
         self.init_var_params(
             init_budgets=init_budgets,
             init_alpha=init_alpha,
+            init_z=init_z,
             init_w=init_w,
             init_brd=init_brd,
             init_ard=init_ard,

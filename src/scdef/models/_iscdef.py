@@ -459,6 +459,7 @@ class iscDEF(scDEF):
             init_budgets = False
             init_alpha = False
             l0_keep = np.array(self.factor_lists[0], dtype=int)
+            init_z = np.array(self.pmeans[f"{self.layer_names[0]}z"])[:, l0_keep]
             init_w = np.array(self.pmeans[f"{self.layer_names[0]}W"])[l0_keep]
             init_brd = np.array(self.pmeans["brd"])[l0_keep] if self.use_brd else None
             init_ard = np.array(self.pmeans["factor_means"])[l0_keep]
@@ -466,12 +467,14 @@ class iscDEF(scDEF):
         else:
             init_budgets = True
             init_alpha = True
+            init_z = None
             init_w = None
             init_brd = None
             init_ard = None
         self.init_var_params(
             init_budgets=init_budgets,
             init_alpha=init_alpha,
+            init_z=init_z,
             init_w=init_w,
             init_brd=init_brd,
             init_ard=init_ard,
