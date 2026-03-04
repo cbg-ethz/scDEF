@@ -407,7 +407,6 @@ class scDEF(object):
         ard_min: Optional[float] = 0.001,
         clarity_min: Optional[float] = 0.5,
         min_cells: Optional[float] = 0.001,
-        min_cells_upper_for_clarity: Optional[float] = 0.001,
     ):
         layer_name = self.layer_names[0]
         if min_cells != 0:
@@ -428,81 +427,40 @@ class scDEF(object):
 
         keep = np.array(range(self.layer_sizes[0]))[np.where(counts >= min_cells)[0]]
         if self.use_brd:
-            # Use unfiltered BRD/ARD on L0.
-            brd = np.asarray(self.pmeans["factor_concentrations"], dtype=float).ravel()[
-                : self.layer_sizes[0]
-            ]
-            ard = np.asarray(self.pmeans["factor_means"], dtype=float).ravel()[
-                : self.layer_sizes[0]
-            ]
+            required_cols = {"BRD", "ARD", "clarity_score_01", "original_factor_idx"}
+            if "factor_obs" not in self.adata.uns or not required_cols.issubset(
+                set(self.adata.uns["factor_obs"].columns)
+            ):
+                from scdef.tools.factor import factor_diagnostics
+
+                factor_diagnostics(self)
+
+            factor_obs = self.adata.uns["factor_obs"]
+            if "child_layer" in factor_obs.columns:
+                factor_obs_l0 = factor_obs[
+                    factor_obs["child_layer"] == self.layer_names[0]
+                ]
+            else:
+                factor_obs_l0 = factor_obs
+
+            brd = np.full(self.layer_sizes[0], np.nan, dtype=float)
+            ard = np.full(self.layer_sizes[0], np.nan, dtype=float)
             clarity = np.full(self.layer_sizes[0], np.nan, dtype=float)
 
-            # Compute a fixed clarity score using:
-            # - unfiltered layer 0
-            # - upper layers filtered ONLY by min_cells_upper_for_clarity
-            min_cells_upper = min_cells_upper_for_clarity
-            if min_cells_upper is None:
-                min_cells_upper = 0.0
-            if min_cells_upper != 0 and min_cells_upper < 1.0:
-                min_cells_upper = max(min_cells_upper * self.adata.shape[0], 10)
+            original_idx = factor_obs_l0["original_factor_idx"].to_numpy(dtype=int)
+            brd_vals = factor_obs_l0["BRD"].to_numpy(dtype=float)
+            ard_vals = factor_obs_l0["ARD"].to_numpy(dtype=float)
+            clarity_vals = factor_obs_l0["clarity_score_01"].to_numpy(dtype=float)
 
-            temp_factor_lists = [np.arange(self.layer_sizes[0], dtype=int)]
-            for i in range(1, self.n_layers):
-                layer_i_name = self.layer_names[i]
-                assignments_i = np.argmax(self.pmeans[f"{layer_i_name}z"], axis=1)
-                counts_i = np.array(
-                    [
-                        np.count_nonzero(assignments_i == a)
-                        for a in range(self.layer_sizes[i])
-                    ]
-                )
-                keep_i = np.array(range(self.layer_sizes[i]))[
-                    np.where(counts_i >= min_cells_upper)[0]
-                ]
-                if len(keep_i) == 0:
-                    keep_i = np.arange(self.layer_sizes[i])
-                temp_factor_lists.append(keep_i)
+            valid_idx = (original_idx >= 0) & (original_idx < self.layer_sizes[0])
+            original_idx = original_idx[valid_idx]
+            brd_vals = brd_vals[valid_idx]
+            ard_vals = ard_vals[valid_idx]
+            clarity_vals = clarity_vals[valid_idx]
 
-            from scdef.tools.hierarchy import compute_hierarchy_scores
-
-            old_factor_lists = [np.array(f).copy() for f in self.factor_lists]
-            old_factor_names = (
-                [list(names) for names in self.factor_names]
-                if hasattr(self, "factor_names")
-                else None
-            )
-            try:
-                self.factor_lists = temp_factor_lists
-                self.set_factor_names()
-                scores_fixed = compute_hierarchy_scores(
-                    self,
-                    use_filtered=False,
-                    filter_upper_layers=True,
-                )
-            finally:
-                self.factor_lists = old_factor_lists
-                if old_factor_names is not None:
-                    self.factor_names = old_factor_names
-
-            per_factor_fixed = scores_fixed["per_factor"]
-            l0_rows = per_factor_fixed[
-                per_factor_fixed["child_layer"] == self.layer_names[0]
-            ]
-            if "original_factor_idx" in l0_rows.columns:
-                for _, row in l0_rows.iterrows():
-                    idx = int(row["original_factor_idx"])
-                    if 0 <= idx < self.layer_sizes[0]:
-                        clarity[idx] = float(row["clarity_score_01"])
-            else:
-                for _, row in l0_rows.iterrows():
-                    fac = str(row["child_factor"])
-                    prefix = f"{self.layer_names[0]}_"
-                    if fac.startswith(prefix):
-                        suffix = fac[len(prefix) :]
-                        if suffix.isdigit():
-                            idx = int(suffix)
-                            if 0 <= idx < self.layer_sizes[0]:
-                                clarity[idx] = float(row["clarity_score_01"])
+            brd[original_idx] = brd_vals
+            ard[original_idx] = ard_vals
+            clarity[original_idx] = clarity_vals
 
             valid = np.isfinite(brd) & np.isfinite(ard) & np.isfinite(clarity)
             ard_sum = np.nansum(ard)
@@ -1709,7 +1667,6 @@ class scDEF(object):
                         ard_min=ard_min,
                         clarity_min=clarity_min,
                         min_cells=min_cells_lower,
-                        min_cells_upper_for_clarity=min_cells_upper,
                     )
             else:
                 assignments = np.argmax(self.pmeans[f"{layer_name}z"], axis=1)
