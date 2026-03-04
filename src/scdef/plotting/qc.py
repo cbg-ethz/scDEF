@@ -210,36 +210,13 @@ def relevance(
         fig = ax.get_figure()
 
     layer_size = len(scales)
-    below = []
-    if thres is None and iqr_mult is None:
-        l = np.arange(layer_size)
-        above = model.factor_lists[0]
-        below = np.array([f for f in l if f not in above])
-    else:
+    if thres is not None or iqr_mult is not None:
         plt.axhline(cutoff, color="red", ls="--")
-        above = np.where(scales >= cutoff)[0]
-        below = np.where(scales < cutoff)[0]
 
     if color:
-        colors = []
-        f_idx = 0
-        for i in range(layer_size):
-            if i in above:
-                colors.append(model.layer_colorpalettes[0][f_idx])
-                f_idx += 1
-            else:
-                colors.append("grey")
-        ax.bar(np.arange(layer_size), scales, color=colors)
+        ax.bar(np.arange(layer_size), scales, color=model.layer_colorpalettes[0][0])
     else:
-        ax.bar(np.arange(layer_size)[above], scales[above], label="Kept")
-        if len(below) > 0:
-            ax.bar(
-                np.arange(layer_size)[below],
-                scales[below],
-                alpha=0.6,
-                color="gray",
-                label="Removed",
-            )
+        ax.bar(np.arange(layer_size), scales)
     if len(scales) > 15:
         ax.set_xticks(np.arange(0, layer_size, 2))
     else:
@@ -253,8 +230,7 @@ def relevance(
     ax.set_xlabel(xlabel, fontsize=fontsize)
     ax.set_yscale(scale)
     ax.set_ylabel(ylabel, fontsize=fontsize)
-    if not color:
-        ax.legend(fontsize=legend_fontsize)
+    # Intentionally do not distinguish kept vs removed factors in QC plots.
 
     if show:
         plt.show()
@@ -299,26 +275,12 @@ def gini_brd(
             for k in range(model.layer_sizes[0])
         ]
     )
-    is_kept = np.zeros((model.layer_sizes[0]))
-    is_kept[model.factor_lists[0]] = 1
-
     if ax is None:
         fig, ax = plt.subplots(figsize=figsize)
 
-    for c in [1, 0]:
-        label = "Kept" if c == 1 else "Removed"
-        color = "C0" if c == 1 else "gray"
-        _alpha = 1 if c == 1 else alpha
-        ax.scatter(
-            ginis[np.where(is_kept == c)[0]],
-            brds[np.where(is_kept == c)[0]],
-            label=label,
-            color=color,
-            alpha=_alpha,
-        )
+    ax.scatter(ginis, brds, alpha=alpha)
     ax.set_xlabel("Gini index", fontsize=fontsize)
     ax.set_ylabel("BRD posterior mean", fontsize=fontsize)
-    ax.legend(fontsize=legend_fontsize)
     ax.set_xlim(0, 1)
 
     if show:
@@ -374,11 +336,7 @@ def ard_brd(
         fig = ax.get_figure()
     x = model.pmeans["factor_concentrations"].ravel()
     y = model.pmeans["factor_means"].ravel()
-    is_kept = np.zeros((model.layer_sizes[0]))
-    is_kept[model.factor_lists[0]] = 1
-    ax.scatter(x[np.where(is_kept == 1)[0]], y[np.where(is_kept == 1)[0]], c="C0")
-    ax.scatter(x[np.where(is_kept == 0)[0]], y[np.where(is_kept == 0)[0]], c="gray")
-    ax.legend(["Kept", "Removed"], fontsize=legend_fontsize)
+    ax.scatter(x, y, c="C0")
     ax.set_xlabel("BRD", fontsize=fontsize)
     ax.set_ylabel("ARD", fontsize=fontsize)
     if annotate_threshold is not None:
