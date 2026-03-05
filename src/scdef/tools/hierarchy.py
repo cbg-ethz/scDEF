@@ -281,7 +281,9 @@ def make_technical_hierarchy(model: "scDEF") -> Dict[str, Sequence[str]]:
     """
     factor_obs = model.adata.uns["factor_obs"]
     technical_mask = factor_obs["technical"] & (factor_obs["child_layer"] == "L0")
-    technical_factors = factor_obs[technical_mask].index.tolist()  # only layer 0 factors
+    technical_factors = factor_obs[
+        technical_mask
+    ].index.tolist()  # only layer 0 factors
     # technical hierarchy is a root with all technical factors as direct children.
     # connection weights are proportional to the usage of each factor
     technical_hierarchy = dict()
