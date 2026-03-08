@@ -22,7 +22,7 @@ from tqdm import tqdm
 from anndata import AnnData
 
 # Local imports
-from scdef.utils import score_utils, hierarchy_utils, color_utils
+from scdef.utils import score_utils, color_utils
 from scdef.utils.jax_utils import lognormal_sample, lognormal_entropy, gamma_logpdf
 
 # Configure logging
@@ -188,7 +188,7 @@ class scDEF(object):
         #     + "Layer factor shape parameters: "
         #     + ", ".join([str(shape) for shape in self.factor_shapes])
         # )
-        if self.use_brd == True:
+        if self.use_brd:
             out += "\n\t" + "Using BRD"
         out += "\n\t" + "Number of batches: " + str(self.n_batches)
         out += "\n" + "Contains " + self.adata.__str__()
@@ -372,13 +372,13 @@ class scDEF(object):
     def update_model_priors(self):
         if self.use_brd:
             self.factor_shapes = [1.0] + [
-                self.factor_shape * self.layer_sizes[l] / self.layer_sizes[0]
-                for l in range(1, self.n_layers)
+                self.factor_shape * self.layer_sizes[layer_idx] / self.layer_sizes[0]
+                for layer_idx in range(1, self.n_layers)
             ]
         else:
             self.factor_shapes = [
-                self.factor_shape * self.layer_sizes[l] / self.layer_sizes[0]
-                for l in range(self.n_layers)
+                self.factor_shape * self.layer_sizes[layer_idx] / self.layer_sizes[0]
+                for layer_idx in range(self.n_layers)
             ]
 
         self.w_priors = []
@@ -525,18 +525,14 @@ class scDEF(object):
             self.local_params = [self.local_params[0]]
             self.global_params = [self.global_params[0]]
         # BRD
-        if not nmf_init:
-            m_brd = self.brd_mean
-        else:
-            m_brd = self.brd_mean  # to counteract potentially noisy init
-        m_brd = tfd.Gamma(100.0, 100.0 / m_brd).sample(
+        m_brd = tfd.Gamma(100.0, 100.0 / self.brd_mean).sample(
             seed=rngs[0],
             sample_shape=[self.layer_sizes[0], 1],
         )  # self.brd_mean
         v_brd = m_brd / 100.0
         if init_brd is not None:
             m_brd = init_brd
-            v_brd = m_brd / 1.0
+            v_brd = m_brd / 10.0
         self.global_params.append(
             jnp.array(
                 (
@@ -549,7 +545,7 @@ class scDEF(object):
         )
 
         if nmf_init and init_w is None:
-            self.logger.info(f"Initializing the factor weights with NMF.")
+            self.logger.info("Initializing the factor weights with NMF.")
             init_z, init_w = self.get_nmf_init(**kwargs)
 
         z_shapes = []
@@ -652,7 +648,7 @@ class scDEF(object):
         v = m / 10.0
         if init_ard is not None:
             m = init_ard
-            v = m / 1.0
+            v = m / 10.0
 
         self.global_params.append(
             jnp.array(
@@ -1210,7 +1206,7 @@ class scDEF(object):
                 if stop_early:
                     break
 
-                epoch_time = time.time() - start_time
+                epoch_time = time.time() - start_time  # noqa: F841
                 pbar.set_postfix({"Loss": losses[-1]})
                 if epoch >= min_epochs:
                     pbar.set_postfix(
@@ -1253,7 +1249,7 @@ class scDEF(object):
         self,
         nmf_init: bool = True,
         max_cells_init: int = 5000,
-        n_rounds: int = 2,
+        n_rounds: int = 1,
         **kwargs: Any,
     ) -> None:
         """Fit scDEF, warm-starting from a previous fit when available.
@@ -2208,7 +2204,7 @@ class scDEF(object):
                 np.argmax(self.pmeans[f"{self.layer_names[1]}W"][:, factor])
             )
         assignments = np.array(assignments)
-        factor_order = np.argsort(np.array(assignments))
+        factor_order = np.argsort(np.array(assignments))  # noqa: F841
 
         for group in np.unique(assignments):
             factors = tokeep[np.where(assignments == group)[0]]
@@ -2398,7 +2394,7 @@ class scDEF(object):
             np.where(self.adata.obs[obs_key] == obs_val)[0]
         ]
 
-        cells_from_obs = float(adata_cells_from_obs.shape[0])
+        cells_from_obs = float(adata_cells_from_obs.shape[0])  # noqa: F841
 
         # Number of cells from obs_val that are not in factor
         cells_not_in_factor_from_obs = float(
@@ -2470,7 +2466,7 @@ class scDEF(object):
         Returns:
             weight score value
         """
-        layer_name = self.layer_names[layer_idx]
+        layer_name = self.layer_names[layer_idx]  # noqa: F841
 
         # Cells from obs_val
         adata_cells_from_obs = self.adata[

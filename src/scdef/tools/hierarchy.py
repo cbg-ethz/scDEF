@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import scdef.utils.hierarchy_utils as hierarchy_utils
-from typing import Optional, Sequence, Mapping, Dict, Any, Union, TYPE_CHECKING
+from typing import Optional, Sequence, Dict, Any, Union, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from scdef.models._scdef import scDEF

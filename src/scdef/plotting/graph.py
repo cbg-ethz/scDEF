@@ -259,7 +259,7 @@ def _add_signature_to_label(
 
     def print_signature(i):
         factor_gene_rankings = gene_rankings[i][:top_genes_layer]
-        factor_gene_scores = gene_scores_layer[i][:top_genes_layer]
+        factor_gene_scores = gene_scores_layer[i][:top_genes_layer]  # noqa: F841
         fontsizes = _map_scores_to_fontsizes(gene_scores_layer[i], **fontsize_kwargs)[
             :top_genes_layer
         ]
@@ -739,7 +739,7 @@ def make_graph(
                     )
 
     model.graph = g
-    model.logger.info(f"Updated scDEF graph")
+    model.logger.info("Updated scDEF graph")
     return g
 
 
@@ -1006,7 +1006,7 @@ def make_technical_hierarchy_graph(
                 _add_technical_edges(g, model, hierarchy, color, factor_name=root_name)
 
     model.graph = g
-    model.logger.info(f"Updated scDEF graph")
+    model.logger.info("Updated scDEF graph")
     return g
 
 
@@ -1022,7 +1022,7 @@ def biological_hierarchy(model: "scDEF", **kwargs: Any) -> Graph:
     """
     # Get the top signature
     technical_factors = model.adata.uns["factor_obs"][
-        model.adata.uns["factor_obs"]["technical"] == True
+        model.adata.uns["factor_obs"]["technical"]
     ].index.tolist()
     g = make_graph(
         model,

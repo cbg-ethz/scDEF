@@ -1,8 +1,7 @@
 import numpy as np
-import pandas as pd
 import scanpy as sc
 from .hierarchy import get_hierarchy, compute_hierarchy_scores
-from typing import Optional, Sequence, Dict, List, Tuple, Any, Union, TYPE_CHECKING
+from typing import Optional, Sequence, Dict, List, Tuple, Union, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from scdef.models._scdef import scDEF
@@ -60,7 +59,7 @@ def factor_diagnostics(model: "scDEF", recompute: bool = False) -> None:
             model.set_factor_names()
         res = compute_hierarchy_scores(
             model,
-            use_filtered=False,
+            use_filtered=True,
             filter_upper_layers=True,
         )
     finally:
@@ -169,8 +168,12 @@ def get_technical_signature(
         ranking = np.array(gene_rankings[i])
         scores = np.array(gene_scores[i])
         # Map gene ranking to index in model.adata.var_names
-        gene_order = np.argsort([np.where(var_names == gene)[0][0] for gene in ranking])
-        reordered_idx = np.argsort([np.where(ranking == g)[0][0] for g in var_names])
+        gene_order = np.argsort(
+            [np.where(var_names == gene)[0][0] for gene in ranking]
+        )  # noqa: F841
+        reordered_idx = np.argsort(
+            [np.where(ranking == g)[0][0] for g in var_names]
+        )  # noqa: F841
         # Pad/truncate scores to fit var_names if necessary
         scores_full = np.full(len(var_names), np.nan)
         mask = np.in1d(var_names, ranking)
@@ -205,7 +208,7 @@ def get_technical_signature(
 def get_biological_signature(model: "scDEF", top_genes: int = 10) -> List[str]:
     # Get the top signature
     technical_factors = model.adata.uns["factor_obs"][
-        model.adata.uns["factor_obs"]["technical"] == True
+        model.adata.uns["factor_obs"]["technical"]
     ].index.tolist()
     signatures_dict = model.get_signatures_dict(
         top_genes=top_genes, drop_factors=technical_factors

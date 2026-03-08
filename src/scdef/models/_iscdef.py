@@ -89,7 +89,7 @@ class iscDEF(scDEF):
             if "use_brd" not in kwargs:
                 kwargs["use_brd"] = False
                 self.use_brd = False
-            elif kwargs["use_brd"] == True:
+            elif kwargs["use_brd"]:
                 raise ValueError("`use_brd` must be False if markers_layer is 0")
         else:
             if "use_brd" not in kwargs:
@@ -211,7 +211,7 @@ class iscDEF(scDEF):
             )
         else:
             out += "\n\t" + "Connectivity mean: " + str(self.cn_big_mean)
-        if self.use_brd == True:
+        if self.use_brd:
             out += "\n\t" + "Using BRD"
         out += "\n\t" + "Number of batches: " + str(self.n_batches)
         out += "\n" + "Contains " + self.adata.__str__()
@@ -247,7 +247,7 @@ class iscDEF(scDEF):
                 upper_start = i * upper_factors_per_marker
                 upper_end = (i + 1) * upper_factors_per_marker
                 lower_start = i * lower_factors_per_marker
-                lower_end = (i + 1) * lower_factors_per_marker
+                lower_end = (i + 1) * lower_factors_per_marker  # noqa: F841
 
                 # For each upper factor for marker i, connect to its children in the lower layer
                 for upper_factor in range(upper_start, upper_end):
@@ -271,8 +271,8 @@ class iscDEF(scDEF):
             if self.add_other > 0 and layer_idx > 0:
                 # "Other" factors are always appended last in each layer
                 # Compute for lower/upper layer sizes
-                n_other_upper = 0
-                n_other_lower = 0
+                n_other_upper = 0  # noqa: F841
+                n_other_lower = 0  # noqa: F841
                 # Only the lowest layer gets extra "other" factors, but we allow for safety at all
                 if layer_idx == 1:
                     # "other" at layer 0 (lowest)
@@ -321,11 +321,11 @@ class iscDEF(scDEF):
         if self.markers_layer == 0:
             marker_names = self.marker_names
             marker_dict = self.markers_dict
-            n_marker_factors = len(marker_names)
+            n_marker_factors = len(marker_names)  # noqa: F841
         else:
             marker_names = self.marker_names
             marker_dict = self.markers_dict
-            n_marker_factors = self.n_markers
+            n_marker_factors = self.n_markers  # noqa: F841
 
         # Assign marker gene priors for marker factors
         for i, cellgroup in enumerate(marker_names):
