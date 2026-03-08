@@ -340,12 +340,18 @@ class iscDEF(scDEF):
             n_marker_factors = self.n_markers  # noqa: F841
 
         # Assign marker gene priors for marker factors
+        kept_l0 = np.asarray(self.factor_lists[0], dtype=int)
         for i, cellgroup in enumerate(marker_names):
-            factors_start = i
-            factors_end = i + 1
-            if self.markers_layer != 0:
+            if self.markers_layer == 0:
+                factors_rows = np.where(kept_l0 == i)[0]
+            else:
                 factors_start = i * self.n_factors_per_marker
                 factors_end = (i + 1) * self.n_factors_per_marker
+                factors_rows = np.where(
+                    (kept_l0 >= factors_start) & (kept_l0 < factors_end)
+                )[0]
+            if len(factors_rows) == 0:
+                continue
 
             if "other" not in cellgroup:
                 for gene in marker_dict[cellgroup]:
@@ -355,8 +361,8 @@ class iscDEF(scDEF):
                             f"Did not find gene {gene} for set {cellgroup} in AnnData object."
                         )
                     self.marker_gene_locs.append(loc)
-                    self.gene_sets[factors_start:factors_end, loc] = self.gs_big_scale
-                    self.strengths[factors_start:factors_end, loc] = marker_strength
+                    self.gene_sets[factors_rows, loc] = self.gs_big_scale
+                    self.strengths[factors_rows, loc] = marker_strength
 
             # Make it hard for the factors in this group to give weight to genes in another group
             for group in marker_dict:
@@ -365,16 +371,12 @@ class iscDEF(scDEF):
                         if "other" not in cellgroup:
                             if gene not in marker_dict[cellgroup]:
                                 loc = np.where(self.adata.var.index == gene)[0]
-                                self.gene_sets[factors_start:factors_end, loc] = 1e-3
-                                self.strengths[
-                                    factors_start:factors_end, loc
-                                ] = other_strength
+                                self.gene_sets[factors_rows, loc] = 1e-3
+                                self.strengths[factors_rows, loc] = other_strength
                         else:
                             loc = np.where(self.adata.var.index == gene)[0]
-                            self.gene_sets[factors_start:factors_end, loc] = 1e-3
-                            self.strengths[
-                                factors_start:factors_end, loc
-                            ] = other_strength
+                            self.gene_sets[factors_rows, loc] = 1e-3
+                            self.strengths[factors_rows, loc] = other_strength
 
         if self.n_layers == 1:
             self.w_priors = [
