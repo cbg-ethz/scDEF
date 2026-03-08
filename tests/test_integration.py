@@ -160,3 +160,54 @@ def test_scdef():
     )
 
     scd.pl.factors_bars(model, ["celltypes", "celltypes_coarse"], show=False)
+
+
+def test_iscdef_refit_after_filtering():
+    markers = {
+        "Naive CD4 T": ["IL7R"],
+        "Memory CD4 T": ["IL7R"],
+        "CD14+ Mono": ["CD14", "LYZ"],
+        "B": ["MS4A1"],
+        "CD8 T": ["CD8A", "CD2"],
+        "NK": ["GNLY", "NKG7"],
+        "FCGR3A+ Mono": ["FCGR3A", "MS4A7"],
+        "DC": ["FCER1A", "CST3"],
+        "Platelet": ["PPBP"],
+    }
+
+    adata = sc.datasets.pbmc3k()
+    np.random.seed(7)
+    sc.pp.filter_cells(adata, min_genes=200)
+    sc.pp.filter_genes(adata, min_cells=3)
+    adata = adata[np.random.randint(adata.shape[0], size=200)]
+    adata.var["mt"] = adata.var_names.str.startswith("MT-")
+    sc.pp.calculate_qc_metrics(
+        adata, qc_vars=["mt"], percent_top=None, log1p=False, inplace=True
+    )
+    adata = adata[adata.obs.n_genes_by_counts < 2500, :]
+    adata = adata[adata.obs.pct_counts_mt < 5, :]
+    adata.raw = adata
+    raw_adata = adata.raw.to_adata()
+    raw_adata.X = raw_adata.X.toarray()
+    adata.X = adata.X.toarray()
+    sc.pp.normalize_total(adata, target_sum=1e4)
+    sc.pp.log1p(adata)
+    sc.pp.highly_variable_genes(
+        adata, min_mean=0.0125, max_mean=3, min_disp=0.5, n_top_genes=300
+    )
+    raw_adata = raw_adata[:, adata.var.highly_variable]
+
+    model = scd.iscDEF(
+        raw_adata,
+        markers_dict=markers,
+        markers_layer=3,
+        add_other=1,
+        seed=1,
+    )
+
+    model.fit(n_epoch=3, n_rounds=1)
+    model.filter_factors(brd_min=1.0, min_cells_lower=0)
+    model.fit(n_epoch=3, n_rounds=1)
+
+    assert len(model.factor_lists) == model.n_layers
+    assert all(len(factors) > 0 for factors in model.factor_lists)

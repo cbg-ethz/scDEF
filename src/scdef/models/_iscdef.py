@@ -231,10 +231,14 @@ class iscDEF(scDEF):
 
         # Ensure connectivity follows an exponential hierarchy: Each factor at layer L is connected to decay_factor child factors for the same marker at layer (L-1)
         for layer_idx in range(1, self.n_layers):
-            n_upper = self.layer_sizes[layer_idx]
-            n_lower = self.layer_sizes[layer_idx - 1]
+            upper_kept = np.asarray(self.factor_lists[layer_idx], dtype=int)
+            lower_kept = np.asarray(self.factor_lists[layer_idx - 1], dtype=int)
+            n_upper = len(upper_kept)
+            n_lower = len(lower_kept)
             connectivity_matrix = cn_small_mean * np.ones((n_upper, n_lower))
             strength_matrix = cn_small_strength * np.ones((n_upper, n_lower))
+            upper_pos = {factor_idx: pos for pos, factor_idx in enumerate(upper_kept)}
+            lower_pos = {factor_idx: pos for pos, factor_idx in enumerate(lower_kept)}
 
             layer_rev_idx = self.n_layers - 1 - layer_idx  # How far from the bottom
 
@@ -251,6 +255,8 @@ class iscDEF(scDEF):
 
                 # For each upper factor for marker i, connect to its children in the lower layer
                 for upper_factor in range(upper_start, upper_end):
+                    if upper_factor not in upper_pos:
+                        continue
                     # Each upper_factor is responsible for a group of decay_factor lower factors
                     child_block_size = (
                         lower_factors_per_marker // upper_factors_per_marker
@@ -259,10 +265,16 @@ class iscDEF(scDEF):
                         lower_start + (upper_factor - upper_start) * child_block_size
                     )
                     child_end = child_start + child_block_size
-                    connectivity_matrix[
-                        upper_factor, child_start:child_end
-                    ] = cn_big_mean
-                    strength_matrix[upper_factor, child_start:child_end] = (
+                    child_positions = [
+                        lower_pos[child_factor]
+                        for child_factor in range(child_start, child_end)
+                        if child_factor in lower_pos
+                    ]
+                    if len(child_positions) == 0:
+                        continue
+                    upper_row = upper_pos[upper_factor]
+                    connectivity_matrix[upper_row, child_positions] = cn_big_mean
+                    strength_matrix[upper_row, child_positions] = (
                         cn_big_strength * n_upper / self.layer_sizes[0]
                     )
 
