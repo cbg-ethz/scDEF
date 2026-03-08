@@ -6,7 +6,6 @@ This module provides factor-related plotting functions for scDEF models.
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
-import seaborn as sns
 import scanpy as sc
 from scipy.cluster.hierarchy import ward, leaves_list
 from scipy.spatial.distance import pdist
@@ -82,7 +81,7 @@ def obs_factor_dotplot(
     n_obs = len(obs)
     n_factors = len(model.factor_lists[layer_idx])
 
-    df_rows = []
+    df_rows = []  # noqa: F841
     c = np.zeros((n_obs, n_factors))
     s = np.zeros((n_obs, n_factors))
     for i, obs_val in enumerate(obs):
@@ -175,7 +174,7 @@ def obs_factor_dotplot(
         )
         for f in map_f_to_s.keys()
     ]
-    lg = plt.legend(
+    lg = plt.legend(  # noqa: F841
         circles[::-1],
         list(map_f_to_s.keys())[::-1],
         numpoints=1,
@@ -241,6 +240,7 @@ def multilevel_paga(
     fig, axes = plt.subplots(1, n_layers, figsize=figsize)
     sc.pp.neighbors(model.adata, use_rep=neighbors_rep)
     pos = None
+    old_layer_name = None
     for i, layer_idx in enumerate(layers):
         ax = axes[i]
         new_layer_name = f"{model.layer_names[layer_idx]}"

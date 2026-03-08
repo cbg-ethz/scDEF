@@ -190,9 +190,9 @@ def relevance(
     else:
         ard = iqr_mult
 
-    scales = model.pmeans[f"brd"].ravel()
+    scales = model.pmeans["brd"].ravel()
     if mode == "ard":
-        scales = model.pmeans[f"ard"].ravel()
+        scales = model.pmeans["ard"].ravel()
     if normalize:
         scales = scales - np.min(scales)
         scales = scales / np.max(scales)
@@ -207,7 +207,7 @@ def relevance(
     if ax is None:
         fig, ax = plt.subplots(**kwargs)
     else:
-        fig = ax.get_figure()
+        fig = ax.get_figure()  # noqa: F841
 
     layer_size = len(scales)
     if thres is not None or iqr_mult is not None:
@@ -333,7 +333,7 @@ def ard_brd(
     if ax is None:
         fig, ax = plt.subplots(figsize=figsize)
     else:
-        fig = ax.get_figure()
+        fig = ax.get_figure()  # noqa: F841
     x = model.pmeans["factor_concentrations"].ravel()
     y = model.pmeans["factor_means"].ravel()
     ax.scatter(x, y, c="C0")
@@ -463,6 +463,20 @@ def factor_diagnostics(
         factor_obs_l0 = factor_obs_l0.sort_values("original_factor_idx")
 
     labels = factor_obs_l0.index.to_numpy()
+    # Backward compatibility: older cached diagnostics may store layer-0 factors
+    # as generic names (e.g., "L0_3"). Prefer current model factor names when
+    # original indices are available.
+    if (
+        "original_factor_idx" in factor_obs_l0.columns
+        and hasattr(model, "factor_names")
+        and len(model.factor_names) > 0
+    ):
+        original_idx = factor_obs_l0["original_factor_idx"].to_numpy(dtype=int)
+        named_l0 = np.asarray(model.factor_names[0], dtype=object)
+        valid_named = (original_idx >= 0) & (original_idx < len(named_l0))
+        if np.any(valid_named):
+            labels = labels.astype(object, copy=True)
+            labels[valid_named] = named_l0[original_idx[valid_named]]
     x = factor_obs_l0["BRD"].to_numpy(dtype=float)
     y = factor_obs_l0["n_eff_parents"].to_numpy(dtype=float)
     z = factor_obs_l0["ARD"].to_numpy(dtype=float)
