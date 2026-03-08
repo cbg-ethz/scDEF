@@ -14,7 +14,7 @@ from . import score_utils
 
 def get_assignment_fracs(model, obs_key, obs_vals, total=False):
     """Get assignment fractions for observations and factors."""
-    signatures_dict = model.get_signatures_dict()
+    signatures_dict = model.get_signatures_dict()  # noqa: F841
     n_obs = len(obs_vals)
     mats = [
         np.zeros((n_obs, len(model.factor_names[idx]))) for idx in range(model.n_layers)
@@ -33,7 +33,7 @@ def get_assignment_fracs(model, obs_key, obs_vals, total=False):
 
 def get_assignment_scores(model, obs_key, obs_vals):
     """Get assignment scores for observations and factors."""
-    signatures_dict = model.get_signatures_dict()
+    signatures_dict = model.get_signatures_dict()  # noqa: F841
     n_obs = len(obs_vals)
     mats = [
         np.zeros((n_obs, len(model.factor_names[idx]))) for idx in range(model.n_layers)
@@ -50,7 +50,7 @@ def get_assignment_scores(model, obs_key, obs_vals):
 
 def get_weight_scores(model, obs_key, obs_vals, top_layer=None):
     """Get weight scores for observations and factors."""
-    signatures_dict = model.get_signatures_dict()
+    signatures_dict = model.get_signatures_dict()  # noqa: F841
     if top_layer is None:
         top_layer = model.max_n_layers - 1
     n_obs = len(obs_vals)
@@ -111,7 +111,7 @@ def prepare_obs_factor_scores(
 
     factors = [model.factor_names[idx] for idx in range(model.n_layers)]
     flat_list = [item for sublist in factors for item in sublist]
-    n_factors = len(flat_list)
+    n_factors = len(flat_list)  # noqa: F841
 
     obs_mats = dict()
     obs_joined_mats = dict()
@@ -125,7 +125,7 @@ def prepare_obs_factor_scores(
             obs_vals = [val for val in obs_vals if len(hierarchy[val]) > 0]
 
         obs_vals_dict[obs_key] = obs_vals
-        n_obs = len(obs_vals)
+        n_obs = len(obs_vals)  # noqa: F841
 
         mats = get_scores_func(model, obs_key, obs_vals, **kwargs)
 
@@ -173,7 +173,7 @@ def prepare_pathway_factor_scores(
     """Prepare pathway-factor scores for plotting."""
     factors = [model.factor_names[idx] for idx in range(model.n_layers)]
     flat_list = [item for sublist in factors for item in sublist]
-    n_factors = len(flat_list)
+    n_factors = len(flat_list)  # noqa: F841
 
     obs_mats = dict()
     obs_joined_mats = dict()

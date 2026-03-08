@@ -23,7 +23,7 @@ def compute_factor_obs_association_score(
     # Cells from obs_val
     adata_cells_from_obs = model.adata[np.where(model.adata.obs[obs_key] == obs_val)[0]]
 
-    cells_from_obs = float(adata_cells_from_obs.shape[0])
+    cells_from_obs = float(adata_cells_from_obs.shape[0])  # noqa: F841
 
     # Number of cells from obs_val that are not in factor
     cells_not_in_factor_from_obs = float(
@@ -114,7 +114,7 @@ def get_factor_obs_assignment_fracs(model, obs_key, obs_val, total=False):
 
 def _compute_factor_obs_weight_score(model, layer_idx, factor_name, obs_key, obs_val):
     """Compute weight score for a factor and observation value."""
-    layer_name = model.layer_names[layer_idx]
+    layer_name = model.layer_names[layer_idx]  # noqa: F841
 
     # Cells from obs_val
     adata_cells_from_obs = model.adata[np.where(model.adata.obs[obs_key] == obs_val)[0]]

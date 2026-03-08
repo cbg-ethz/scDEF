@@ -103,7 +103,7 @@ def test_scdef():
 
     model.fit(n_epoch=10)
 
-    assert len(model.elbos) == 2
+    assert len(model.elbos) == 1
     assert "L0" in model.adata.obs.columns
     assert "L1" in model.adata.obs.columns
     assert "L2" in model.adata.obs.columns

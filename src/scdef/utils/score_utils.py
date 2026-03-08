@@ -121,7 +121,7 @@ def compute_cluster_obs_association_score(
     # Cells from obs_val
     adata_cells_from_obs = adata[np.where(adata.obs[obs_key] == obs_val)[0]]
 
-    cells_from_obs = float(adata_cells_from_obs.shape[0])
+    cells_from_obs = float(adata_cells_from_obs.shape[0])  # noqa: F841
 
     # Number of cells from obs_val that are not in factor
     cells_not_in_factor_from_obs = float(
