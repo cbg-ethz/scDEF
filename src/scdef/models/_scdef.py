@@ -338,11 +338,14 @@ class scDEF(object):
             for i in range(len(layer_sizes) - 1):
                 if layer_sizes[i + 1] > layer_sizes[i]:
                     layer_sizes[i + 1] = layer_sizes[i]
-            # If two consecutive layers have the same size, keep only one of them
-            for i in range(len(layer_sizes) - 1):
-                if layer_sizes[i] == layer_sizes[i + 1]:
-                    layer_sizes[i + 1] = None
-            layer_sizes = [size for size in layer_sizes if size is not None]
+            # If consecutive layers have the same size, keep only one.
+            # Build a deduplicated list directly so chains like [...,1,1,1]
+            # collapse to a single 1.
+            dedup_layer_sizes = []
+            for size in layer_sizes:
+                if len(dedup_layer_sizes) == 0 or size != dedup_layer_sizes[-1]:
+                    dedup_layer_sizes.append(size)
+            layer_sizes = dedup_layer_sizes
             self.layer_sizes = layer_sizes
             self.n_layers = len(self.layer_sizes)
             self.layer_names = [f"L{i}" for i in range(self.n_layers)]
@@ -1278,7 +1281,9 @@ class scDEF(object):
             # Enforce geometric decay on refit so upper layers cannot exceed the
             # expected size implied by decay_factor.
             for i in range(1, len(layer_sizes)):
-                max_allowed = max(1, int(np.floor(layer_sizes[i - 1] / self.decay_factor)))
+                max_allowed = max(
+                    1, int(np.floor(layer_sizes[i - 1] / self.decay_factor))
+                )
                 if layer_sizes[i] > max_allowed:
                     layer_sizes[i] = max_allowed
             self.update_model_size(
