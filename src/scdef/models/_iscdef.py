@@ -458,6 +458,48 @@ class iscDEF(scDEF):
                     # For layer 0, add "other" factors at the end
                 self.factor_names.append(factor_names)
 
+    def filter_factors(
+        self,
+        brd_min: Optional[float] = 1.0,
+        ard_min: Optional[float] = 0.001,
+        clarity_min: Optional[float] = 0.5,
+        min_cells_upper: Optional[float] = 0.001,
+        min_cells_lower: Optional[float] = 0.0,
+        filter_up: Optional[bool] = True,
+        annotate: Optional[bool] = True,
+        upper_only: Optional[bool] = False,
+    ):
+        """Filter factors while preserving existing iscDEF marker-based names."""
+        prev_factor_names = (
+            [list(names) for names in self.factor_names]
+            if hasattr(self, "factor_names")
+            else None
+        )
+        super().filter_factors(
+            brd_min=brd_min,
+            ard_min=ard_min,
+            clarity_min=clarity_min,
+            min_cells_upper=min_cells_upper,
+            min_cells_lower=min_cells_lower,
+            filter_up=filter_up,
+            annotate=False,
+            upper_only=upper_only,
+        )
+
+        if prev_factor_names is not None and len(prev_factor_names) == len(self.factor_lists):
+            corrected_names = []
+            for idx, keep in enumerate(self.factor_lists):
+                keep = np.asarray(keep, dtype=int)
+                prev_names = prev_factor_names[idx]
+                if len(prev_names) > 0 and np.all((keep >= 0) & (keep < len(prev_names))):
+                    corrected_names.append([prev_names[int(k)] for k in keep])
+                else:
+                    corrected_names.append(self.factor_names[idx])
+            self.factor_names = corrected_names
+
+        if annotate:
+            self.annotate_adata()
+
     def fit(
         self,
         nmf_init=False,
