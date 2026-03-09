@@ -433,10 +433,9 @@ class iscDEF(scDEF):
                             )
                         factor_names += marker_factor_names
                 elif idx == self.n_layers - 1:
-                    if (
-                        hasattr(self, "_top_factor_names")
-                        and len(self._top_factor_names) == len(self.factor_lists[idx])
-                    ):
+                    if hasattr(self, "_top_factor_names") and len(
+                        self._top_factor_names
+                    ) == len(self.factor_lists[idx]):
                         factor_names = list(self._top_factor_names)
                     else:
                         factor_names = [
@@ -497,12 +496,16 @@ class iscDEF(scDEF):
             upper_only=upper_only,
         )
 
-        if prev_factor_names is not None and len(prev_factor_names) == len(self.factor_lists):
+        if prev_factor_names is not None and len(prev_factor_names) == len(
+            self.factor_lists
+        ):
             corrected_names = []
             for idx, keep in enumerate(self.factor_lists):
                 keep = np.asarray(keep, dtype=int)
                 prev_names = prev_factor_names[idx]
-                if len(prev_names) > 0 and np.all((keep >= 0) & (keep < len(prev_names))):
+                if len(prev_names) > 0 and np.all(
+                    (keep >= 0) & (keep < len(prev_names))
+                ):
                     corrected_names.append([prev_names[int(k)] for k in keep])
                 else:
                     corrected_names.append(self.factor_names[idx])
@@ -522,7 +525,9 @@ class iscDEF(scDEF):
     ):
         """Fit iscDEF, warm-starting from previous fit when available."""
         if getattr(self, "_has_fit", False):
-            old_factor_lists = [np.array(factors, dtype=int).copy() for factors in self.factor_lists]
+            old_factor_lists = [
+                np.array(factors, dtype=int).copy() for factors in self.factor_lists
+            ]
             old_factor_names = [list(names) for names in self.factor_names]
 
             self.layer_sizes = [len(factors) for factors in old_factor_lists]
