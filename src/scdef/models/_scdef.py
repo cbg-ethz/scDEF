@@ -488,6 +488,17 @@ class scDEF(object):
     ):
         rngs = random.split(random.PRNGKey(self.seed), self.n_layers)
 
+        def _get_layer_init(init_value, layer_idx):
+            if init_value is None:
+                return None
+            if isinstance(init_value, (list, tuple)):
+                if layer_idx >= len(init_value) or init_value[layer_idx] is None:
+                    return None
+                return np.asarray(init_value[layer_idx], dtype=np.float32)
+            if layer_idx == 0:
+                return np.asarray(init_value, dtype=np.float32)
+            return None
+
         if init_budgets:
             m = np.array(self.batch_lib_sizes / np.mean(self.batch_lib_sizes))[
                 :, None
@@ -568,8 +579,9 @@ class scDEF(object):
             if layer_idx == self.n_layers - 1:
                 clip = 1e-3
 
-            if init_z is not None and layer_idx == 0 and not nmf_init:
-                m = init_z.astype(jnp.float32)
+            z_init_layer = _get_layer_init(init_z, layer_idx)
+            if z_init_layer is not None and not nmf_init:
+                m = z_init_layer.astype(jnp.float32)
             else:
                 m = jnp.clip(
                     tfd.Gamma(a, a / 1.0).sample(
@@ -607,8 +619,9 @@ class scDEF(object):
 
             a = 100.0
 
-            if init_w is not None and layer_idx == 0 and not nmf_init:
-                m = init_w.astype(jnp.float32)
+            w_init_layer = _get_layer_init(init_w, layer_idx)
+            if w_init_layer is not None and not nmf_init:
+                m = w_init_layer.astype(jnp.float32)
                 v = m
             else:
                 m = 1.0 / self.layer_sizes[layer_idx] * jnp.ones((in_layer, out_layer))
@@ -1653,8 +1666,6 @@ class scDEF(object):
                 min_cells_lower = max(min_cells_lower * self.adata.shape[0], 10)
 
         new_factor_lists = []
-        has_factor_origins = hasattr(self, "factor_origins")
-        new_factor_origins = [] if has_factor_origins else None
         for i, layer_name in enumerate(self.layer_names):
             if i == 0:
                 if upper_only:
@@ -1693,27 +1704,9 @@ class scDEF(object):
                     f"Keeping all factors for layer {i} for now."
                 )
                 keep = np.arange(self.layer_sizes[i])
-            keep = np.asarray(keep, dtype=int)
-            if has_factor_origins:
-                layer_origins = np.asarray(self.factor_origins[i], dtype=int)
-                out_of_bounds = (keep < 0) | (keep >= len(layer_origins))
-                if np.any(out_of_bounds):
-                    # Some call paths may return origin-space ids (e.g. from cached
-                    # diagnostics); convert them to current local positions.
-                    origin_to_pos = {orig: pos for pos, orig in enumerate(layer_origins)}
-                    keep = np.array(
-                        [origin_to_pos[idx] for idx in keep if idx in origin_to_pos],
-                        dtype=int,
-                    )
-                    if len(keep) == 0:
-                        keep = np.arange(len(layer_origins), dtype=int)
             new_factor_lists.append(keep)
-            if has_factor_origins:
-                new_factor_origins.append(layer_origins[keep])
 
         self.factor_lists = new_factor_lists
-        if has_factor_origins:
-            self.factor_origins = new_factor_origins
         self.set_factor_names()
 
         self.make_layercolors(

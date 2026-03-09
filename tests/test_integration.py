@@ -207,7 +207,20 @@ def test_iscdef_refit_after_filtering():
 
     model.fit(n_epoch=3, n_rounds=1)
     model.filter_factors(brd_min=1.0, min_cells_lower=0)
+    upper_assignments_before = {}
+    for layer_idx in range(1, model.n_layers):
+        layer_name = model.layer_names[layer_idx]
+        upper_assignments_before[layer_name] = np.argmax(
+            model.adata.obsm[f"X_{layer_name}"], axis=1
+        )
     model.fit(n_epoch=3, n_rounds=1)
 
     assert len(model.factor_lists) == model.n_layers
     assert all(len(factors) > 0 for factors in model.factor_lists)
+    for layer_name, assignments_before in upper_assignments_before.items():
+        assignments_after = np.argmax(model.adata.obsm[f"X_{layer_name}"], axis=1)
+        agreement = np.mean(assignments_before == assignments_after)
+        assert agreement >= 0.7, (
+            f"Upper-layer assignments for {layer_name} changed too much "
+            f"after refit (agreement={agreement:.3f})."
+        )
