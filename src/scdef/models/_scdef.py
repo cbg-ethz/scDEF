@@ -1371,6 +1371,7 @@ class scDEF(object):
             n_steps = self.n_layers
 
         n_epoch_schedule = [n_epoch] * n_steps
+        did_optimize = np.any(np.asarray(n_epoch_schedule, dtype=int) > 0)
 
         if layerwise:
             lr_schedule = [lr] * n_steps
@@ -1556,7 +1557,7 @@ class scDEF(object):
             self.step_sizes.append(lr_schedule[i])
 
         self.set_posterior_means()
-        if self.use_brd and filter:
+        if self.use_brd and filter and did_optimize:
             self.filter_factors(upper_only=True)
         else:
             if annotate:
@@ -1741,7 +1742,8 @@ class scDEF(object):
                 self.adata.var[name] = self.pmeans["gene_scale"][batch_idx]
                 self.logger.info(f"Updated adata.var: `{name}` for batch {batch_idx}.")
 
-        self.set_factor_names()
+        if not getattr(self, "_preserve_factor_names_on_annotate", False):
+            self.set_factor_names()
         ranked_genes, ranked_scores = self.get_signatures_dict(
             scores=True, sorted_scores=True
         )

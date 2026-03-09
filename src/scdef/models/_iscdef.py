@@ -111,6 +111,8 @@ class iscDEF(scDEF):
         logginglevel = self.logger.level
         self.logger = logging.getLogger("iscDEF")
         self.logger.setLevel(logginglevel)
+        # Keep marker-aware names stable during annotation calls.
+        self._preserve_factor_names_on_annotate = True
 
         self.set_geneset_prior(
             gs_big_scale=self.gs_big_scale,
@@ -123,6 +125,7 @@ class iscDEF(scDEF):
         self.init_var_params()
         self.set_posterior_means()
         self.set_factor_names()
+        self._top_factor_names = list(self.factor_names[-1])
 
     def set_layer_sizes(self):
         layer_sizes = []
@@ -430,11 +433,17 @@ class iscDEF(scDEF):
                             )
                         factor_names += marker_factor_names
                 elif idx == self.n_layers - 1:
-                    factor_names = [
-                        marker
-                        for i, marker in enumerate(self.marker_names)
-                        if i in self.factor_lists[idx]
-                    ]
+                    if (
+                        hasattr(self, "_top_factor_names")
+                        and len(self._top_factor_names) == len(self.factor_lists[idx])
+                    ):
+                        factor_names = list(self._top_factor_names)
+                    else:
+                        factor_names = [
+                            marker
+                            for i, marker in enumerate(self.marker_names)
+                            if i in self.factor_lists[idx]
+                        ]
                 else:
                     rev_idx = self.n_layers - 1 - idx
                     factor_names = []
@@ -457,6 +466,8 @@ class iscDEF(scDEF):
                         factor_names += marker_factor_names
                     # For layer 0, add "other" factors at the end
                 self.factor_names.append(factor_names)
+        if len(self.factor_names) > 0:
+            self._top_factor_names = list(self.factor_names[-1])
 
     def filter_factors(
         self,
@@ -496,6 +507,8 @@ class iscDEF(scDEF):
                 else:
                     corrected_names.append(self.factor_names[idx])
             self.factor_names = corrected_names
+            if len(self.factor_names) > 0:
+                self._top_factor_names = list(self.factor_names[-1])
 
         if annotate:
             self.annotate_adata()
@@ -509,9 +522,13 @@ class iscDEF(scDEF):
     ):
         """Fit iscDEF, warm-starting from previous fit when available."""
         if getattr(self, "_has_fit", False):
-            self.layer_sizes = [len(factors) for factors in self.factor_lists]
+            old_factor_lists = [np.array(factors, dtype=int).copy() for factors in self.factor_lists]
+            old_factor_names = [list(names) for names in self.factor_names]
+
+            self.layer_sizes = [len(factors) for factors in old_factor_lists]
             self.n_layers = len(self.layer_sizes)
-            self.set_factor_names()
+            # Keep current factor names stable across refits. Recomputing names
+            # from index patterns here can relabel factors even when n_epoch=0.
             self.update_model_priors()
             self.logger.info(
                 f"Continuing iscDEF from previous fit with layer sizes {self.layer_sizes}."
@@ -522,23 +539,28 @@ class iscDEF(scDEF):
             init_z = []
             init_w = []
             for layer_idx, layer_name in enumerate(self.layer_names):
-                keep_idx = np.array(self.factor_lists[layer_idx], dtype=int)
+                keep_idx = old_factor_lists[layer_idx]
                 init_z.append(np.array(self.pmeans[f"{layer_name}z"])[:, keep_idx])
                 if layer_idx == 0:
                     init_w.append(np.array(self.pmeans[f"{layer_name}W"])[keep_idx])
                 else:
-                    parent_keep_idx = np.array(
-                        self.factor_lists[layer_idx - 1], dtype=int
-                    )
+                    parent_keep_idx = old_factor_lists[layer_idx - 1]
                     init_w.append(
                         np.array(self.pmeans[f"{layer_name}W"])[
                             np.ix_(keep_idx, parent_keep_idx)
                         ]
                     )
-            l0_keep = np.array(self.factor_lists[0], dtype=int)
+            l0_keep = old_factor_lists[0]
             init_brd = np.array(self.pmeans["brd"])[l0_keep] if self.use_brd else None
             init_ard = np.array(self.pmeans["factor_means"])[l0_keep]
             z_init_concentration = 100.0
+
+            # After extracting priors/inits in original index space, switch to
+            # compact local indexing for learning/annotation consistency.
+            self.factor_lists = [
+                np.arange(size, dtype=int) for size in self.layer_sizes
+            ]
+            self.factor_names = old_factor_names
         else:
             init_budgets = True
             init_alpha = True
