@@ -1693,9 +1693,22 @@ class scDEF(object):
                     f"Keeping all factors for layer {i} for now."
                 )
                 keep = np.arange(self.layer_sizes[i])
-            new_factor_lists.append(keep)
+            keep = np.asarray(keep, dtype=int)
             if has_factor_origins:
                 layer_origins = np.asarray(self.factor_origins[i], dtype=int)
+                out_of_bounds = (keep < 0) | (keep >= len(layer_origins))
+                if np.any(out_of_bounds):
+                    # Some call paths may return origin-space ids (e.g. from cached
+                    # diagnostics); convert them to current local positions.
+                    origin_to_pos = {orig: pos for pos, orig in enumerate(layer_origins)}
+                    keep = np.array(
+                        [origin_to_pos[idx] for idx in keep if idx in origin_to_pos],
+                        dtype=int,
+                    )
+                    if len(keep) == 0:
+                        keep = np.arange(len(layer_origins), dtype=int)
+            new_factor_lists.append(keep)
+            if has_factor_origins:
                 new_factor_origins.append(layer_origins[keep])
 
         self.factor_lists = new_factor_lists
