@@ -1275,6 +1275,12 @@ class scDEF(object):
             # Keep original kept indices before resizing; update_model_size resets factor_lists.
             old_factor_lists = [np.array(f).copy() for f in self.factor_lists]
             layer_sizes = [len(self.factor_lists[i]) for i in range(self.n_layers)]
+            # Enforce geometric decay on refit so upper layers cannot exceed the
+            # expected size implied by decay_factor.
+            for i in range(1, len(layer_sizes)):
+                max_allowed = max(1, int(np.floor(layer_sizes[i - 1] / self.decay_factor)))
+                if layer_sizes[i] > max_allowed:
+                    layer_sizes[i] = max_allowed
             self.update_model_size(
                 max_n_factors=max(layer_sizes), layer_sizes=layer_sizes
             )
