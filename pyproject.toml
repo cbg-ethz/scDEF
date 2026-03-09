@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "scdef"
-version = "version = "0.3.9""
+version = "0.4.0"
 description = "Extract hierarchical signatures of cell state from single-cell data."
 license = "MIT"
 authors = ["pedrofale <pedro.miguel.ferreira.pf@gmail.com>"]
