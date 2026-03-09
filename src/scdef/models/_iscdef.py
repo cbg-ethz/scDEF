@@ -122,6 +122,7 @@ class iscDEF(scDEF):
 
         self.init_var_params()
         self.set_posterior_means()
+        self.factor_origins = [np.asarray(factors, dtype=int).copy() for factors in self.factor_lists]
         self.set_factor_names()
 
     def set_layer_sizes(self):
@@ -167,7 +168,7 @@ class iscDEF(scDEF):
         self.layer_sizes = layer_sizes
         self.layer_names = layer_names
 
-    def update_model_priors(self):
+    def update_model_priors(self, factor_origin_lists: Optional[Sequence[np.ndarray]] = None):
         super(iscDEF, self).update_model_priors()
         if self.markers_layer != 0 and self.n_layers > 1:
             self.set_connectivity_prior(
@@ -175,6 +176,7 @@ class iscDEF(scDEF):
                 cn_big_strength=self.cn_big_strength,
                 cn_small_mean=self.cn_small_mean,
                 cn_big_mean=self.cn_big_mean,
+                factor_origin_lists=factor_origin_lists,
             )
         self.set_geneset_prior(
             gs_big_scale=self.gs_big_scale,
@@ -182,6 +184,7 @@ class iscDEF(scDEF):
             marker_strength=self.marker_strength,
             nonmarker_strength=self.nonmarker_strength,
             other_strength=self.other_strength,
+            factor_origin_lists=factor_origin_lists,
         )
 
     def __repr__(self):
@@ -223,6 +226,7 @@ class iscDEF(scDEF):
         cn_big_mean: Optional[float] = 1.0,
         cn_small_strength: Optional[float] = 1.0,
         cn_big_strength: Optional[float] = 0.1,
+        factor_origin_lists: Optional[Sequence[np.ndarray]] = None,
     ):
         self.cn_small_strength = cn_small_strength
         self.cn_big_strength = cn_big_strength
@@ -230,9 +234,11 @@ class iscDEF(scDEF):
         self.cn_big_mean = cn_big_mean
 
         # Ensure connectivity follows an exponential hierarchy: Each factor at layer L is connected to decay_factor child factors for the same marker at layer (L-1)
+        if factor_origin_lists is None:
+            factor_origin_lists = self.factor_lists
         for layer_idx in range(1, self.n_layers):
-            upper_kept = np.asarray(self.factor_lists[layer_idx], dtype=int)
-            lower_kept = np.asarray(self.factor_lists[layer_idx - 1], dtype=int)
+            upper_kept = np.asarray(factor_origin_lists[layer_idx], dtype=int)
+            lower_kept = np.asarray(factor_origin_lists[layer_idx - 1], dtype=int)
             n_upper = len(upper_kept)
             n_lower = len(lower_kept)
             connectivity_matrix = cn_small_mean * np.ones((n_upper, n_lower))
@@ -317,6 +323,7 @@ class iscDEF(scDEF):
         marker_strength: Optional[float] = 10.0,
         nonmarker_strength: Optional[float] = 0.1,
         other_strength: Optional[float] = 0.1,
+        factor_origin_lists: Optional[Sequence[np.ndarray]] = None,
     ):
         self.gs_big_scale = gs_big_scale
         self.gs_small_scale = gs_small_scale
@@ -340,7 +347,9 @@ class iscDEF(scDEF):
             n_marker_factors = self.n_markers  # noqa: F841
 
         # Assign marker gene priors for marker factors
-        kept_l0 = np.asarray(self.factor_lists[0], dtype=int)
+        if factor_origin_lists is None:
+            factor_origin_lists = self.factor_lists
+        kept_l0 = np.asarray(factor_origin_lists[0], dtype=int)
         for i, cellgroup in enumerate(marker_names):
             if self.markers_layer == 0:
                 factors_rows = np.where(kept_l0 == i)[0]
@@ -390,12 +399,18 @@ class iscDEF(scDEF):
 
     def set_factor_names(self):
         self.factor_names = []
+        factor_source = (
+            self.factor_origins
+            if hasattr(self, "factor_origins")
+            and len(self.factor_origins) == len(self.factor_lists)
+            else self.factor_lists
+        )
 
         for idx in range(self.n_layers):
             if self.markers_layer == 0:
                 if idx == 0:
                     self.factor_names.append(
-                        [f"{self.marker_names[i]}" for i in self.factor_lists[idx]]
+                        [f"{self.marker_names[i]}" for i in factor_source[idx]]
                     )
                 else:
                     self.factor_names.append(
@@ -417,7 +432,7 @@ class iscDEF(scDEF):
                         filtered_sub_factors = [
                             factor
                             for factor in sub_factors
-                            if factor in self.factor_lists[idx]
+                            if factor in factor_source[idx]
                         ]
                         for sub_factor in range(len(filtered_sub_factors)):
                             marker_factor_names.append(
@@ -428,7 +443,7 @@ class iscDEF(scDEF):
                     factor_names = [
                         marker
                         for i, marker in enumerate(self.marker_names)
-                        if i in self.factor_lists[idx]
+                        if i in factor_source[idx]
                     ]
                 else:
                     rev_idx = self.n_layers - 1 - idx
@@ -443,7 +458,7 @@ class iscDEF(scDEF):
                         filtered_sub_factors = [
                             factor
                             for factor in sub_factors
-                            if factor in self.factor_lists[idx]
+                            if factor in factor_source[idx]
                         ]
                         for sub_factor in range(len(filtered_sub_factors)):
                             marker_factor_names.append(
@@ -462,17 +477,25 @@ class iscDEF(scDEF):
     ):
         """Fit iscDEF, warm-starting from previous fit when available."""
         if getattr(self, "_has_fit", False):
-            self.layer_sizes = [len(factors) for factors in self.factor_lists]
+            old_factor_lists = [np.array(f).copy() for f in self.factor_lists]
+            old_factor_origins = (
+                [np.array(f).copy() for f in self.factor_origins]
+                if hasattr(self, "factor_origins")
+                else old_factor_lists
+            )
+            self.layer_sizes = [len(factors) for factors in old_factor_lists]
             self.n_layers = len(self.layer_sizes)
+            self.factor_lists = [np.arange(size, dtype=int) for size in self.layer_sizes]
+            self.factor_origins = old_factor_origins
             self.set_factor_names()
-            self.update_model_priors()
+            self.update_model_priors(factor_origin_lists=old_factor_origins)
             self.logger.info(
                 f"Continuing iscDEF from previous fit with layer sizes {self.layer_sizes}."
             )
             nmf_init = False
             init_budgets = False
             init_alpha = False
-            l0_keep = np.array(self.factor_lists[0], dtype=int)
+            l0_keep = np.array(old_factor_lists[0], dtype=int)
             init_z = np.array(self.pmeans[f"{self.layer_names[0]}z"])[:, l0_keep]
             init_w = np.array(self.pmeans[f"{self.layer_names[0]}W"])[l0_keep]
             init_brd = np.array(self.pmeans["brd"])[l0_keep] if self.use_brd else None
@@ -485,6 +508,9 @@ class iscDEF(scDEF):
             init_w = None
             init_brd = None
             init_ard = None
+            self.factor_origins = [
+                np.asarray(factors, dtype=int).copy() for factors in self.factor_lists
+            ]
         self.init_var_params(
             init_budgets=init_budgets,
             init_alpha=init_alpha,

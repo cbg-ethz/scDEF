@@ -1653,6 +1653,8 @@ class scDEF(object):
                 min_cells_lower = max(min_cells_lower * self.adata.shape[0], 10)
 
         new_factor_lists = []
+        has_factor_origins = hasattr(self, "factor_origins")
+        new_factor_origins = [] if has_factor_origins else None
         for i, layer_name in enumerate(self.layer_names):
             if i == 0:
                 if upper_only:
@@ -1692,8 +1694,13 @@ class scDEF(object):
                 )
                 keep = np.arange(self.layer_sizes[i])
             new_factor_lists.append(keep)
+            if has_factor_origins:
+                layer_origins = np.asarray(self.factor_origins[i], dtype=int)
+                new_factor_origins.append(layer_origins[keep])
 
         self.factor_lists = new_factor_lists
+        if has_factor_origins:
+            self.factor_origins = new_factor_origins
         self.set_factor_names()
 
         self.make_layercolors(
