@@ -333,6 +333,17 @@ class scDEF(object):
         max_n_layers=None,
         layer_sizes=None,
     ):
+        """Update latent hierarchy dimensions.
+
+        Args:
+            max_n_factors: maximum number of factors when ``layer_sizes`` is not
+                provided.
+            max_n_layers: maximum number of layers when ``layer_sizes`` is not
+                provided.
+            layer_sizes: explicit per-layer sizes. If provided, sizes are
+                sanitized to be non-increasing and consecutive duplicates are
+                collapsed.
+        """
         if layer_sizes is not None:
             # If two consecutive layers have increasing sizes, clip
             for i in range(len(layer_sizes) - 1):
@@ -1272,7 +1283,9 @@ class scDEF(object):
 
         On the first call, parameters are initialized from priors (or NMF if enabled).
         On subsequent calls, the model is re-initialized from the current posterior
-        quantities and the current `factor_lists`, enabling a fit -> filter -> fit workflow.
+        quantities and the current `factor_lists`, enabling a fit -> filter -> fit
+        workflow. During refit, upper-layer sizes are clipped to respect
+        ``decay_factor`` before rebuilding the hierarchy.
         """
         if getattr(self, "_has_fit", False):
             # Keep original kept indices before resizing; update_model_size resets factor_lists.
@@ -1353,7 +1366,8 @@ class scDEF(object):
 
         Args:
             n_epoch: number of epochs (full passes of the data).
-                Can be a list of ints for multi-step learning.
+                Can be a list of ints for multi-step learning. ``n_epochs`` is
+                also accepted as a backward-compatible alias.
             lr: learning rate.
                 Can be a list of floats for multi-step learning.
             annealing: scale factor for the entropy term.
@@ -1370,7 +1384,14 @@ class scDEF(object):
             patience: number of epochs for which tolerated loss changes must hold for early stopping
             update_locals: whether to optimize the local parameters
             update_globals: whether to optimize the global parameters
+
+        Notes:
+            If all optimization steps run with zero epochs (e.g. ``n_epoch=0``),
+            no BRD-based auto-filtering is applied at the end of learning.
         """
+        if "n_epochs" in kwargs:
+            n_epoch = kwargs.pop("n_epochs")
+
         n_steps = n_rounds
         if layerwise:
             n_steps = self.n_layers

@@ -479,7 +479,12 @@ class iscDEF(scDEF):
         annotate: Optional[bool] = True,
         upper_only: Optional[bool] = False,
     ):
-        """Filter factors while preserving existing iscDEF marker-based names."""
+        """Filter factors while preserving existing marker-based factor names.
+
+        This override keeps the base filtering behavior but restores names by
+        subsetting the previous ``factor_names``. This avoids marker-prefix
+        relabeling across filter/refit workflows.
+        """
         prev_factor_names = (
             [list(names) for names in self.factor_names]
             if hasattr(self, "factor_names")
@@ -523,7 +528,12 @@ class iscDEF(scDEF):
         z_init_concentration=100.0,
         **kwargs,
     ):
-        """Fit iscDEF, warm-starting from previous fit when available."""
+        """Fit iscDEF, warm-starting from previous fit when available.
+
+        On refit, all layers are initialized from the previous posterior means
+        (``z`` and ``W``), while BRD/ARD are initialized from layer 0. Existing
+        marker-aware names are preserved through the refit path.
+        """
         if getattr(self, "_has_fit", False):
             old_factor_lists = [
                 np.array(factors, dtype=int).copy() for factors in self.factor_lists
