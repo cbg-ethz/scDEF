@@ -365,9 +365,8 @@ def _add_node_to_graph(
         "width": str(size),
         "height": str(size),
         "fixedsize": fixedsize,
+        "label": label,
     }
-    if label != "":
-        node_kwargs["label"] = label
 
     if shell:
         node_kwargs["pos"] = pos
