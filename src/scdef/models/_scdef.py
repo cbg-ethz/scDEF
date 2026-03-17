@@ -1741,6 +1741,8 @@ class scDEF(object):
 
         self.factor_lists = new_factor_lists
         self.set_factor_names()
+        if "factor_obs" in self.adata.uns:
+            self.adata.uns["factor_obs"]["technical"] = False
 
         self.make_layercolors(
             layer_cpal=self.layer_cpal, lightness_mult=self.lightness_mult
@@ -2060,7 +2062,10 @@ class scDEF(object):
 
         term_scores_shape = self.global_params[2 + 0][0][self.factor_lists[0]]
         term_scores_rate = np.exp(self.global_params[2 + 0][1][self.factor_lists[0]])
-        term_scores_sample = lognormal_sample(rng, term_scores_shape, term_scores_rate)
+        rng, sample_rng = random.split(rng)
+        term_scores_sample = lognormal_sample(
+            sample_rng, term_scores_shape, term_scores_rate
+        )
 
         if layer_idx > 0:
             term_scores_shape = self.global_params[2 + layer_idx][0][
@@ -2072,8 +2077,9 @@ class scDEF(object):
                     :, self.factor_lists[layer_idx - 1]
                 ]
             )
+            rng, sample_rng = random.split(rng)
             term_scores_sample = lognormal_sample(
-                rng, term_scores_shape, term_scores_rate
+                sample_rng, term_scores_shape, term_scores_rate
             )
 
             for layer in range(layer_idx - 1, 0, -1):
@@ -2086,8 +2092,9 @@ class scDEF(object):
                         :, self.factor_lists[layer - 1]
                     ]
                 )
+                rng, sample_rng = random.split(rng)
                 lower_mat_sample = lognormal_sample(
-                    rng, lower_mat_shape, lower_mat_rate
+                    sample_rng, lower_mat_shape, lower_mat_rate
                 )
                 term_scores_sample = term_scores_sample.dot(lower_mat_sample)
 
@@ -2096,8 +2103,9 @@ class scDEF(object):
             lower_term_scores_rate = np.exp(
                 self.global_params[2 + 0][1][self.factor_lists[0]]
             )
+            rng, sample_rng = random.split(rng)
             lower_term_scores_sample = lognormal_sample(
-                rng, lower_term_scores_shape, lower_term_scores_rate
+                sample_rng, lower_term_scores_shape, lower_term_scores_rate
             )
 
             term_scores_sample = term_scores_sample.dot(lower_term_scores_sample)
@@ -2131,8 +2139,9 @@ class scDEF(object):
             confidence score as Jaccard similarity
         """
         signatures = []
+        base_rng = random.PRNGKey(0)
         for i in range(mc_samples):
-            rng = random.PRNGKey(i)
+            rng = random.fold_in(base_rng, i)
             signature_sample = self.get_signature_sample(
                 rng,
                 factor_idx=factor_idx,
