@@ -43,3 +43,7 @@ mkdocstrings-python = "^2.0.1"
 mkdocs-autorefs = "^1.4.3"
 notebook = ">=6.5.7,<7"
 jupyter_contrib_nbextensions = "^0.7.0"
+
+[build-system]
+requires = ["poetry-core>=1.8.0"]
+build-backend = "poetry.core.masonry.api"
