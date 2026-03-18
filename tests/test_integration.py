@@ -3,8 +3,10 @@ import scdef as scd
 import scanpy as sc
 import numpy as np
 import pandas as pd
+import scdef.plotting.graph as graph_plot
 from pathlib import Path
 import pytest
+from unittest.mock import patch
 
 
 def test_scdef():
@@ -117,6 +119,19 @@ def test_scdef():
     )
 
     scd.pl.signatures_scores(model, "celltypes", markers, top_genes=10, show=False)
+    # Confidence-based signatures are used (and capped by top_genes) in tools/plots.
+    top_k = 5
+    confident_all = {}
+    for layer_idx in range(model.n_layers):
+        layer_sigs = scd.tl.get_confident_signatures(
+            model, layer_idx=layer_idx, max_genes=top_k
+        )
+        confident_all.update(layer_sigs)
+        for factor_name in model.factor_names[layer_idx]:
+            assert len(layer_sigs.get(factor_name, [])) <= top_k
+    cached_sigs = scd.tl.set_factor_signatures(model, top_genes=top_k)
+    for factor_name, sig in confident_all.items():
+        assert cached_sigs[factor_name] == sig
 
     for mode in ["f1", "fracs", "weights"]:
         scd.pl.obs_scores(
@@ -130,7 +145,12 @@ def test_scdef():
     scd.tl.factor_diagnostics(model, recompute=True)
     scd.tl.set_technical_factors(model, factors=[model.factor_names[0][0]])
     scd.tl.make_hierarchies(model)
-    scd.pl.biological_hierarchy(model, show_label=False)
+    with patch(
+        "scdef.plotting.graph._get_confident_signature_rankings_layer",
+        wraps=graph_plot._get_confident_signature_rankings_layer,
+    ) as mocked_conf_sig:
+        scd.pl.biological_hierarchy(model, show_label=False)
+        assert mocked_conf_sig.called
     scd.pl.technical_hierarchy(model, show_label=False)
 
     simplified = scd.tl.get_hierarchy(model, simplified=True)
@@ -267,8 +287,6 @@ def test_scdef_load_and_plotting_pipeline():
             factor_path=factor_path,
             layer_idx=0,
             genes_per_factor=2,
-            confidence_threshold=0.8,
-            confidence_tau_quantile=0.5,
             annotation_obs_key=None,
             show=False,
         )

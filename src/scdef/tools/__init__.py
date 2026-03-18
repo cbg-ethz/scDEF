@@ -16,9 +16,8 @@ from .factor import (
     get_technical_signature,
     get_biological_signature,
     umap,
-    multilevel_paga,
-    plot_trajectory_heatmap,
 )
+from .trajectory import multilevel_paga, plot_trajectory_heatmap
 
 __all__ = [
     "get_hierarchy",

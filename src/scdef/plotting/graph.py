@@ -3,7 +3,7 @@ import pandas as pd
 import matplotlib
 from graphviz import Graph
 from typing import Optional, Dict, List, Sequence, Union, Any, TYPE_CHECKING
-from ..tools import get_technical_signature
+from ..tools import get_technical_signature, get_confident_signatures
 from ..utils import hierarchy_utils
 
 if TYPE_CHECKING:
@@ -103,6 +103,30 @@ def _compute_layer_factor_orders(model, show_all):
             layer_factor_orders.append(np.arange(n_factors))
 
     return layer_factor_orders[::-1]
+
+
+def _get_confident_signature_rankings_layer(model, layer_idx, top_genes_layer):
+    """Get confidence-filtered signatures and confidence scores for one layer."""
+    if top_genes_layer is None or int(top_genes_layer) <= 0:
+        n = len(model.factor_names[layer_idx])
+        return [[] for _ in range(n)], [np.array([]) for _ in range(n)]
+
+    sigs, confs = get_confident_signatures(
+        model,
+        layer_idx=layer_idx,
+        max_genes=int(top_genes_layer),
+        return_confidences=True,
+    )
+    rankings = []
+    scores = []
+    for factor_name in model.factor_names[layer_idx]:
+        genes = list(sigs.get(factor_name, []))[: int(top_genes_layer)]
+        confidences = np.asarray(confs.get(factor_name, np.array([])), dtype=float)[
+            : int(top_genes_layer)
+        ]
+        rankings.append(genes)
+        scores.append(confidences)
+    return rankings, scores
 
 
 def _get_layer_colors(model, layer_idx, show_all, factors):
@@ -259,10 +283,17 @@ def _add_signature_to_label(
 
     def print_signature(i):
         factor_gene_rankings = gene_rankings[i][:top_genes_layer]
-        factor_gene_scores = gene_scores_layer[i][:top_genes_layer]  # noqa: F841
-        fontsizes = _map_scores_to_fontsizes(gene_scores_layer[i], **fontsize_kwargs)[
-            :top_genes_layer
-        ]
+        factor_gene_scores = np.asarray(
+            gene_scores_layer[i][:top_genes_layer], dtype=float
+        )
+        if len(factor_gene_rankings) == 0:
+            return "<br/><br/>(no confident genes)"
+        if len(factor_gene_scores) == 0:
+            fontsizes = np.full(
+                len(factor_gene_rankings), fontsize_kwargs.get("min_fontsize", 5)
+            )
+        else:
+            fontsizes = _map_scores_to_fontsizes(factor_gene_scores, **fontsize_kwargs)
         gene_labels = [
             f'<FONT POINT-SIZE="{fontsizes[j]}">{gene}</FONT>'
             for j, gene in enumerate(factor_gene_rankings)
@@ -571,11 +602,13 @@ def make_graph(
         gene_rankings_layer = None
         gene_scores_layer = None
         if show_signatures:
-            gene_rankings_layer, gene_scores_layer = model.get_rankings(
+            (
+                gene_rankings_layer,
+                gene_scores_layer,
+            ) = _get_confident_signature_rankings_layer(
+                model,
                 layer_idx=layer_idx,
-                genes=True,
-                return_scores=True,
-                drop_factors=drop_factors,
+                top_genes_layer=top_genes[layer_idx],
             )
 
         # Process each factor in the layer
@@ -851,11 +884,13 @@ def make_technical_hierarchy_graph(
                     root_gene_scores,
                 )
             else:
-                gene_rankings_layer, gene_scores_layer = model.get_rankings(
+                (
+                    gene_rankings_layer,
+                    gene_scores_layer,
+                ) = _get_confident_signature_rankings_layer(
+                    model,
                     layer_idx=layer_idx,
-                    genes=True,
-                    return_scores=True,
-                    drop_factors=drop_factors,
+                    top_genes_layer=top_genes[layer_idx],
                 )
 
         # Process each factor in the layer

@@ -69,7 +69,14 @@ def get_weight_scores(model, obs_key, obs_vals, top_layer=None):
 
 def get_signature_scores(model, obs_key, obs_vals, markers, top_genes=10):
     """Get signature scores for observations and factors."""
-    signatures_dict = model.get_signatures_dict()
+    from ..tools.factor import get_confident_signatures
+
+    signatures_by_layer = {
+        layer_idx: get_confident_signatures(
+            model, layer_idx=layer_idx, max_genes=top_genes
+        )
+        for layer_idx in range(model.n_layers)
+    }
     n_obs = len(obs_vals)
     mats = [
         np.zeros((n_obs, len(model.factor_names[idx]))) for idx in range(model.n_layers)
@@ -79,7 +86,9 @@ def get_signature_scores(model, obs_key, obs_vals, markers, top_genes=10):
         nonmarkers_type = [m for m in markers if m not in markers_type]
         for layer_idx in range(model.n_layers):
             for j, factor_name in enumerate(model.factor_names[layer_idx]):
-                signature = signatures_dict[factor_name][:top_genes]
+                signature = signatures_by_layer[layer_idx].get(factor_name, [])[
+                    :top_genes
+                ]
                 mats[layer_idx][i, j] = score_utils.score_signature(
                     signature, markers_type, nonmarkers_type
                 )
