@@ -124,6 +124,7 @@ class iscDEF(scDEF):
 
         self.init_var_params()
         self.set_posterior_means()
+        self.set_posterior_variances()
         self.set_factor_names()
         self._top_factor_names = list(self.factor_names[-1])
 

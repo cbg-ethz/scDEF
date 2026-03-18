@@ -165,6 +165,7 @@ class scDEF(object):
 
         self.init_var_params(nmf_init=False)  # just to get stub
         self.set_posterior_means()
+        self.set_posterior_variances()
         self._has_fit = False
         self._fit_revision = 0
 
@@ -1583,6 +1584,7 @@ class scDEF(object):
             self.step_sizes.append(lr_schedule[i])
 
         self.set_posterior_means()
+        self.set_posterior_variances()
         if self.use_brd and filter and did_optimize:
             self.filter_factors(upper_only=True)
         else:
@@ -1641,33 +1643,36 @@ class scDEF(object):
         cell_budget_params = self.local_params[0]
         gene_budget_params = self.global_params[0]
         fscale_params = self.global_params[1]
-        wm_params = self.global_params[-1]
+        wm_params = self.global_params[-2]
         z_params = self.local_params[1]
+
+        def _lognormal_var(mu, log_sigma):
+            sigma2 = np.exp(log_sigma) ** 2
+            return (np.exp(sigma2) - 1.0) * np.exp(2.0 * mu + sigma2)
 
         self.pvars = {
             "cell_scale": np.array(
-                np.exp(cell_budget_params[0]) / np.exp(cell_budget_params[1]) ** 2
+                _lognormal_var(cell_budget_params[0], cell_budget_params[1])
             ),
             "gene_scale": np.array(
-                np.exp(gene_budget_params[0]) / np.exp(gene_budget_params[1]) ** 2
+                _lognormal_var(gene_budget_params[0], gene_budget_params[1])
             ),
             "factor_concentrations": np.array(
-                np.exp(fscale_params[0]) / np.exp(fscale_params[1]) ** 2
+                _lognormal_var(fscale_params[0], fscale_params[1])
             ),
-            "factor_means": jnp.exp(wm_params[0] + 0.5 * jnp.exp(wm_params[1]) ** 2),
+            "factor_means": np.array(_lognormal_var(wm_params[0], wm_params[1])),
         }
 
         for idx in range(self.n_layers):
             start = sum(self.layer_sizes[:idx])
             end = start + self.layer_sizes[idx]
             self.pvars[f"{self.layer_names[idx]}z"] = np.array(
-                np.exp(z_params[0][:, start:end])
-                / np.exp(z_params[1][:, start:end]) ** 2
+                _lognormal_var(z_params[0][:, start:end], z_params[1][:, start:end])
             )
             _w_shape = self.global_params[2 + idx][0]
             _w_rate = self.global_params[2 + idx][1]
             self.pvars[f"{self.layer_names[idx]}W"] = np.array(
-                np.exp(_w_shape) / np.exp(_w_rate) ** 2
+                _lognormal_var(_w_shape, _w_rate)
             )
 
     def filter_factors(
