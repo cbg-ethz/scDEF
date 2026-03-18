@@ -1049,13 +1049,21 @@ def factor_gene_uncertainty_boxplot(
     factor: Union[int, str],
     layer_idx: int = 0,
     max_genes: Optional[int] = 50,
+    mc_samples_upper: int = 100,
+    random_seed: int = 0,
     whisker_quantiles: Tuple[float, float] = (0.05, 0.95),
+    sort_by: Literal["mean", "confidence"] = "mean",
     color_by_confidence: bool = False,
-    confidence_tau_quantile: float = 0.8,
+    confidence_tau_quantile: float = 0.99,
     confidence_cmap: str = "viridis",
     confidence_vmin: float = 0.0,
     confidence_vmax: float = 1.0,
     add_confidence_colorbar: bool = True,
+    show_confidence_cutoff_line: bool = False,
+    confidence_include_threshold: float = 0.9,
+    confidence_cutoff_line_kwargs: Optional[Dict[str, Any]] = None,
+    show_tau_quantile_line: bool = False,
+    tau_quantile_line_kwargs: Optional[Dict[str, Any]] = None,
     xtick_rotation: float = 90.0,
     figsize: Tuple[float, float] = (12, 4),
     ax: Optional[Axes] = None,
@@ -1063,7 +1071,7 @@ def factor_gene_uncertainty_boxplot(
 ) -> Optional[Axes]:
     """Plot per-gene uncertainty boxes for a factor using posterior mean/variance.
 
-    Genes are sorted by decreasing posterior mean loading for the selected factor.
+    Genes are sorted by posterior mean loading or confidence for the selected factor.
     For each gene, a box is drawn from an approximated posterior distribution of
     ``W`` using the stored posterior mean and variance:
       - box: 25th to 75th percentile
@@ -1073,9 +1081,14 @@ def factor_gene_uncertainty_boxplot(
     Args:
         model: scDEF model instance
         factor: factor index (within kept factors of the layer) or factor name
-        layer_idx: layer index (currently supports only layer 0 for gene loadings)
+        layer_idx: layer index to visualize
         max_genes: maximum number of genes to plot; if None, plot all genes
+        mc_samples_upper: number of posterior samples for ``layer_idx > 0``
+        random_seed: random seed for upper-layer posterior sampling
         whisker_quantiles: lower/upper quantiles for whiskers
+        sort_by: sorting criterion for genes; ``"mean"`` (default) sorts by
+            posterior mean loading, ``"confidence"`` sorts by posterior
+            confidence ``P(score > tau)``
         color_by_confidence: whether to color each box by posterior confidence
             ``P(W > tau)``
         confidence_tau_quantile: factor-wise quantile used to define ``tau`` for
@@ -1085,6 +1098,17 @@ def factor_gene_uncertainty_boxplot(
         confidence_vmax: upper bound of confidence colormap normalization
         add_confidence_colorbar: whether to add a confidence colorbar when
             ``color_by_confidence`` is True
+        show_confidence_cutoff_line: whether to draw a vertical line marking the
+            last plotted gene with confidence >= ``confidence_include_threshold``
+        confidence_include_threshold: confidence threshold used for the cutoff
+            line (default 0.9)
+        confidence_cutoff_line_kwargs: optional kwargs passed to ``ax.axvline``
+            for styling the cutoff line
+        show_tau_quantile_line: whether to draw a horizontal line at ``tau``,
+            where ``tau`` is the quantile threshold set by
+            ``confidence_tau_quantile``
+        tau_quantile_line_kwargs: optional kwargs passed to ``ax.axhline`` for
+            styling the tau quantile line
         xtick_rotation: x tick label rotation in degrees
         figsize: figure size if ax is None
         ax: matplotlib axis to draw on
@@ -1093,15 +1117,21 @@ def factor_gene_uncertainty_boxplot(
     Returns:
         Axes object if show is False, None otherwise.
     """
-    if layer_idx != 0:
-        raise NotImplementedError(
-            "factor_gene_uncertainty_boxplot currently supports layer_idx=0 only."
-        )
+    if layer_idx < 0 or layer_idx >= model.n_layers:
+        raise ValueError(f"layer_idx must be in [0, {model.n_layers - 1}].")
+    if mc_samples_upper <= 0:
+        raise ValueError("mc_samples_upper must be > 0.")
     q_lo, q_hi = whisker_quantiles
     if not (0.0 < q_lo < 0.5 and 0.5 < q_hi < 1.0):
         raise ValueError("whisker_quantiles must satisfy 0 < q_lo < 0.5 < q_hi < 1.")
     if not (0.0 < confidence_tau_quantile < 1.0):
         raise ValueError("confidence_tau_quantile must be in (0, 1).")
+    if sort_by not in {"mean", "confidence"}:
+        raise ValueError("sort_by must be one of {'mean', 'confidence'}.")
+    if not (0.0 < confidence_include_threshold < 1.0):
+        raise ValueError("confidence_include_threshold must be in (0, 1).")
+    if show_confidence_cutoff_line and sort_by != "confidence":
+        raise ValueError("show_confidence_cutoff_line requires sort_by='confidence'.")
 
     if isinstance(factor, str):
         if factor not in model.factor_names[layer_idx]:
@@ -1116,33 +1146,95 @@ def factor_gene_uncertainty_boxplot(
 
     abs_factor_idx = int(model.factor_lists[layer_idx][factor_idx])
     layer_name = model.layer_names[layer_idx]
-    all_means = np.asarray(model.pmeans[f"{layer_name}W"], dtype=float)[abs_factor_idx]
-    means = all_means.copy()
-    variances = np.asarray(model.pvars[f"{layer_name}W"], dtype=float)[abs_factor_idx]
-    variances = np.maximum(variances, 0.0)
     genes = np.asarray(model.adata.var_names)
-
-    order = np.argsort(means)[::-1]
-    if max_genes is not None:
-        order = order[: int(max_genes)]
-    means = means[order]
-    variances = variances[order]
-    genes = genes[order]
-
     eps = 1e-12
-    mean_safe = np.maximum(means, eps)
-    sigma2 = np.log1p(variances / np.maximum(mean_safe**2, eps))
-    sigma = np.sqrt(np.maximum(sigma2, 0.0))
-    mu_log = np.log(mean_safe) - 0.5 * sigma2
 
-    def _q(p):
-        return np.exp(mu_log + sigma * norm.ppf(p))
+    if layer_idx == 0:
+        all_means = np.asarray(model.pmeans[f"{layer_name}W"], dtype=float)[
+            abs_factor_idx
+        ]
+        all_variances = np.asarray(model.pvars[f"{layer_name}W"], dtype=float)[
+            abs_factor_idx
+        ]
+        all_variances = np.maximum(all_variances, 0.0)
+        tau = float(np.quantile(all_means, confidence_tau_quantile))
+        all_confidences = norm.cdf((all_means - tau) / np.sqrt(all_variances + eps))
+        if sort_by == "confidence":
+            order = np.lexsort((-all_means, -all_confidences))
+        else:
+            order = np.argsort(all_means)[::-1]
+        if max_genes is not None:
+            order = order[: int(max_genes)]
+        means = all_means[order]
+        variances = all_variances[order]
+        genes = genes[order]
+        confidences = all_confidences[order]
 
-    q1 = _q(0.25)
-    med = _q(0.50)
-    q3 = _q(0.75)
-    whislo = _q(q_lo)
-    whishi = _q(q_hi)
+        mean_safe = np.maximum(means, eps)
+        sigma2 = np.log1p(variances / np.maximum(mean_safe**2, eps))
+        sigma = np.sqrt(np.maximum(sigma2, 0.0))
+        mu_log = np.log(mean_safe) - 0.5 * sigma2
+
+        def _q(p):
+            return np.exp(mu_log + sigma * norm.ppf(p))
+
+        q1 = _q(0.25)
+        med = _q(0.50)
+        q3 = _q(0.75)
+        whislo = _q(q_lo)
+        whishi = _q(q_hi)
+    else:
+        from jax import random
+
+        if hasattr(model, "logger"):
+            model.logger.info(
+                "Computing upper-layer uncertainty boxplot with Monte Carlo "
+                "(layer=%s, samples=%s).",
+                layer_idx,
+                mc_samples_upper,
+            )
+
+        _, mean_scores = model.get_rankings(
+            layer_idx=layer_idx,
+            top_genes=len(genes),
+            genes=True,
+            return_scores=True,
+            sorted_scores=False,
+        )
+        all_means = np.asarray(mean_scores[factor_idx], dtype=float)
+
+        base_rng = random.PRNGKey(int(random_seed))
+        sample_scores_all = np.empty((int(mc_samples_upper), len(genes)), dtype=float)
+        for s_idx in range(int(mc_samples_upper)):
+            rng = random.fold_in(base_rng, factor_idx * int(mc_samples_upper) + s_idx)
+            _, sampled = model.get_signature_sample(
+                rng,
+                factor_idx=factor_idx,
+                layer_idx=layer_idx,
+                top_genes=len(model.adata.var_names),
+                return_scores=True,
+            )
+            sample_scores_all[s_idx, :] = np.asarray(sampled, dtype=float)
+
+        tau = float(np.quantile(all_means, confidence_tau_quantile))
+        all_confidences = np.mean(sample_scores_all > tau, axis=0)
+        if sort_by == "confidence":
+            order = np.lexsort((-all_means, -all_confidences))
+        else:
+            order = np.argsort(all_means)[::-1]
+        if max_genes is not None:
+            order = order[: int(max_genes)]
+
+        means = all_means[order]
+        genes = genes[order]
+        confidences = all_confidences[order]
+        sample_scores = sample_scores_all[:, order]
+
+        q1 = np.quantile(sample_scores, 0.25, axis=0)
+        med = np.quantile(sample_scores, 0.50, axis=0)
+        q3 = np.quantile(sample_scores, 0.75, axis=0)
+        whislo = np.quantile(sample_scores, q_lo, axis=0)
+        whishi = np.quantile(sample_scores, q_hi, axis=0)
 
     box_stats = [
         {
@@ -1163,8 +1255,6 @@ def factor_gene_uncertainty_boxplot(
     artists = ax.bxp(box_stats, showfliers=False, patch_artist=color_by_confidence)
 
     if color_by_confidence:
-        tau = float(np.quantile(all_means, confidence_tau_quantile))
-        confidences = norm.cdf((means - tau) / np.sqrt(variances + eps))
         cmap = plt.get_cmap(confidence_cmap)
         conf_norm = mcolors.Normalize(
             vmin=confidence_vmin, vmax=confidence_vmax, clip=True
@@ -1177,6 +1267,36 @@ def factor_gene_uncertainty_boxplot(
             sm.set_array([])
             cbar = ax.figure.colorbar(sm, ax=ax, pad=0.01)
             cbar.set_label(f"P(W > tau), tau=q{confidence_tau_quantile:.2f}")
+
+    if show_confidence_cutoff_line:
+        included = np.where(confidences >= confidence_include_threshold)[0]
+        if len(included) > 0:
+            line_kwargs: Dict[str, Any] = {
+                "color": "black",
+                "linestyle": "--",
+                "linewidth": 1.0,
+                "alpha": 0.9,
+            }
+            if confidence_cutoff_line_kwargs is not None:
+                line_kwargs.update(confidence_cutoff_line_kwargs)
+            # Draw after the last included gene position.
+            ax.axvline(float(included[-1]) + 0.5, **line_kwargs)
+
+    if show_tau_quantile_line:
+        q_label = np.format_float_positional(
+            confidence_tau_quantile, precision=6, fractional=True, trim="-"
+        )
+        tau_line_kwargs_final: Dict[str, Any] = {
+            "color": "gray",
+            "linestyle": ":",
+            "linewidth": 1.0,
+            "alpha": 0.9,
+            "label": f"tau (q={q_label})",
+        }
+        if tau_quantile_line_kwargs is not None:
+            tau_line_kwargs_final.update(tau_quantile_line_kwargs)
+        ax.axhline(float(tau), **tau_line_kwargs_final)
+        ax.legend(frameon=False, fontsize=8, loc="upper right")
 
     factor_name = model.factor_names[layer_idx][factor_idx]
     ax.set_title(f"{factor_name}: posterior loading uncertainty")

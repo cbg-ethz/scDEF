@@ -245,8 +245,10 @@ def test_scdef_load_and_plotting_pipeline():
             "Include adata.h5ad in the artifact or adapt test to pass adata explicitly."
         )
 
+    loaded.set_posterior_variances()
+
     # Cached PAGA compute + plotting from loaded model.
-    layers = [i for i in range(loaded.n_layers - 1, -1, -1) if len(loaded.factor_lists[i]) > 1]
+    layers = [i for i in range(loaded.n_layers - 1) if len(loaded.factor_lists[i]) > 1]
     if len(layers) > 0:
         scd.tl.multilevel_paga(
             loaded,
@@ -267,6 +269,38 @@ def test_scdef_load_and_plotting_pipeline():
             genes_per_factor=2,
             confidence_threshold=0.8,
             confidence_tau_quantile=0.5,
-            show_celltype=False,
+            annotation_obs_key=None,
+            show=False,
+        )
+
+    # Factor-gene uncertainty boxplots (L0 and upper layer when available).
+    if len(loaded.factor_names[0]) > 0:
+        scd.pl.factor_gene_uncertainty_boxplot(
+            loaded,
+            factor=loaded.factor_names[0][0],
+            layer_idx=0,
+            max_genes=20,
+            sort_by="confidence",
+            color_by_confidence=True,
+            show_confidence_cutoff_line=True,
+            confidence_include_threshold=0.9,
+            show_tau_quantile_line=True,
+            show=False,
+        )
+    upper_layers = [i for i in range(1, loaded.n_layers) if len(loaded.factor_names[i]) > 0]
+    if len(upper_layers) > 0:
+        upper_idx = upper_layers[0]
+        scd.pl.factor_gene_uncertainty_boxplot(
+            loaded,
+            factor=loaded.factor_names[upper_idx][0],
+            layer_idx=upper_idx,
+            max_genes=20,
+            sort_by="confidence",
+            color_by_confidence=True,
+            show_confidence_cutoff_line=True,
+            confidence_include_threshold=0.9,
+            show_tau_quantile_line=True,
+            mc_samples_upper=20,
+            random_seed=0,
             show=False,
         )
