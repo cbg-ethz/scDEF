@@ -287,7 +287,9 @@ def test_scdef_load_and_plotting_pipeline():
             show_tau_quantile_line=True,
             show=False,
         )
-    upper_layers = [i for i in range(1, loaded.n_layers) if len(loaded.factor_names[i]) > 0]
+    upper_layers = [
+        i for i in range(1, loaded.n_layers) if len(loaded.factor_names[i]) > 0
+    ]
     if len(upper_layers) > 0:
         upper_idx = upper_layers[0]
         scd.pl.factor_gene_uncertainty_boxplot(
