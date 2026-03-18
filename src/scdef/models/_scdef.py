@@ -232,7 +232,9 @@ class scDEF(object):
         if "graph" in state:
             state["graph"] = None
         logger_level = (
-            self.logger.level if hasattr(self, "logger") and self.logger is not None else None
+            self.logger.level
+            if hasattr(self, "logger") and self.logger is not None
+            else None
         )
         state["logger"] = None
 
