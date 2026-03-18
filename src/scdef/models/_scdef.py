@@ -1,6 +1,9 @@
 # Standard library imports
 import logging
 import time
+import json
+import pickle
+from pathlib import Path
 from typing import Optional, Union, Sequence, Mapping, Dict, List, Tuple, Any
 
 # Third-party imports
@@ -20,6 +23,7 @@ import seaborn as sns
 from tqdm import tqdm
 
 from anndata import AnnData
+import anndata as ad
 
 # Local imports
 from scdef.utils import score_utils, color_utils
@@ -194,6 +198,134 @@ class scDEF(object):
         out += "\n\t" + "Number of batches: " + str(self.n_batches)
         out += "\n" + "Contains " + self.adata.__str__()
         return out
+
+    def save(
+        self,
+        dir_path: Union[str, Path],
+        overwrite: bool = False,
+        save_anndata: bool = False,
+    ) -> None:
+        """Save model state to disk, similarly to scvi-tools.
+
+        This writes a model state pickle plus metadata to ``dir_path``. AnnData
+        is saved separately as ``adata.h5ad`` only when ``save_anndata=True``.
+
+        Args:
+            dir_path: output directory path
+            overwrite: whether to overwrite an existing non-empty directory
+            save_anndata: whether to save ``model.adata`` as ``adata.h5ad``
+        """
+        out_dir = Path(dir_path).expanduser().resolve()
+        if out_dir.exists() and any(out_dir.iterdir()) and not overwrite:
+            raise FileExistsError(
+                f"Directory '{out_dir}' already exists and is not empty. "
+                "Set overwrite=True to overwrite."
+            )
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        if save_anndata:
+            self.adata.write(out_dir / "adata.h5ad")
+
+        state = dict(self.__dict__)
+        # Graphviz graph objects are environment-dependent and not required for
+        # restoring model state.
+        if "graph" in state:
+            state["graph"] = None
+        logger_level = (
+            self.logger.level if hasattr(self, "logger") and self.logger is not None else None
+        )
+        state["logger"] = None
+
+        payload = {
+            "state": state,
+            "class_name": self.__class__.__name__,
+            "module": self.__class__.__module__,
+            "save_anndata": bool(save_anndata),
+            "logger_level": logger_level,
+        }
+        with open(out_dir / "model_state.pkl", "wb") as f:
+            pickle.dump(payload, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+        metadata = {
+            "class_name": payload["class_name"],
+            "module": payload["module"],
+            "save_anndata": payload["save_anndata"],
+            "files": ["model_state.pkl"] + (["adata.h5ad"] if save_anndata else []),
+        }
+        with open(out_dir / "metadata.json", "w", encoding="utf-8") as f:
+            json.dump(metadata, f, indent=2)
+
+    @classmethod
+    def load(
+        cls,
+        dir_path: Union[str, Path],
+        adata: Optional[AnnData] = None,
+    ) -> "scDEF":
+        """Load model from disk.
+
+        Args:
+            dir_path: directory created by :meth:`save`
+            adata: optional AnnData to attach when ``adata.h5ad`` was not saved.
+
+        Returns:
+            Loaded model instance.
+        """
+        in_dir = Path(dir_path).expanduser().resolve()
+        state_path = in_dir / "model_state.pkl"
+        if not state_path.exists():
+            raise FileNotFoundError(f"Model state file not found: '{state_path}'.")
+
+        with open(state_path, "rb") as f:
+            try:
+                payload = pickle.load(f)
+            except ModuleNotFoundError as e:
+                # Compatibility path for artifacts pickled under a different
+                # NumPy internal module layout (e.g. numpy._core vs numpy.core).
+                if "numpy._core" not in str(e):
+                    raise
+                f.seek(0)
+
+                class _GraphPlaceholder:
+                    """Fallback placeholder for optional Graphviz graph classes."""
+
+                    def __init__(self, *args, **kwargs):
+                        self.args = args
+                        self.kwargs = kwargs
+
+                class _CompatUnpickler(pickle.Unpickler):
+                    def find_class(self, module, name):
+                        if module.startswith("numpy._core"):
+                            module = module.replace("numpy._core", "numpy.core", 1)
+                        if module == "numpy.rec":
+                            module = "numpy.core.records"
+                        if module == "graphviz.graphs" and name in {"Graph", "Digraph"}:
+                            return _GraphPlaceholder
+                        return super().find_class(module, name)
+
+                payload = _CompatUnpickler(f).load()
+
+        obj = cls.__new__(cls)
+        obj.__dict__.update(payload["state"])
+        obj.logger = logging.getLogger(payload.get("class_name", cls.__name__))
+        if payload.get("logger_level") is not None:
+            obj.logger.setLevel(payload["logger_level"])
+
+        adata_path = in_dir / "adata.h5ad"
+        if adata is not None:
+            obj.adata = adata
+        elif getattr(obj, "adata", None) is not None:
+            # Prefer embedded AnnData saved in the model state.
+            pass
+        elif payload.get("save_anndata", False) and adata_path.exists():
+            obj.adata = ad.read_h5ad(adata_path)
+        else:
+            raise ValueError(
+                "No AnnData available. Provide `adata` to load(...), or save with "
+                "`save_anndata=True` so `adata.h5ad` is available."
+            )
+
+        obj.n_cells, obj.n_genes = obj.adata.shape
+        return obj
 
     def make_layercolors(
         self,
