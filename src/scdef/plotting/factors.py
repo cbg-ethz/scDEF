@@ -5,10 +5,13 @@ This module provides factor-related plotting functions for scDEF models.
 
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 from matplotlib.lines import Line2D
 import scanpy as sc
+import copy
 from scipy.cluster.hierarchy import ward, leaves_list
 from scipy.spatial.distance import pdist
+from scipy.stats import norm
 from typing import (
     Optional,
     Sequence,
@@ -207,22 +210,25 @@ def multilevel_paga(
     layers: Optional[List[int]] = None,
     figsize: Optional[Tuple[float, float]] = (16, 4),
     reuse_pos: Optional[bool] = True,
+    recompute: bool = False,
     fontsize: Optional[int] = 12,
     show: Optional[bool] = True,
     **paga_kwargs: Any,
 ) -> None:
-    """Plot a PAGA graph from each scDEF layer.
+    """Plot cached multilevel PAGA graphs across scDEF layers.
 
     Args:
         model: scDEF model instance
-        neighbors_rep: the model.obsm key to use to compute the PAGA graphs
+        neighbors_rep: ``adata.obsm`` key used to compute the cached PAGA graphs
         layers: which layers to plot
         figsize: figure size
-        reuse_pos: whether to initialize each PAGA graph with the graph from the layer above
+        reuse_pos: whether to reuse coarse-layer positions during computation
+        recompute: whether to force recomputation of cached PAGA results
         fontsize: font size for labels
         show: whether to show the plot
-        **paga_kwargs: keyword arguments to adjust the PAGA layouts
+        **paga_kwargs: keyword arguments passed to PAGA computation and plotting
     """
+    from ..tools.factor import multilevel_paga as compute_multilevel_paga
 
     if layers is None:
         layers = [
@@ -235,48 +241,58 @@ def multilevel_paga(
         print("Cannot run PAGA on 0 layers.")
         return
 
-    n_layers = len(layers)
+    cache = model.adata.uns.get("multilevel_paga", None)
+    cache_layers = [] if cache is None else cache.get("layers", [])
+    need_recompute = (
+        recompute
+        or cache is None
+        or cache.get("neighbors_rep") != neighbors_rep
+        or cache.get("reuse_pos") != bool(reuse_pos)
+        or any(int(layer) not in cache_layers for layer in layers)
+    )
+    if need_recompute:
+        compute_multilevel_paga(
+            model,
+            neighbors_rep=neighbors_rep,
+            layers=layers,
+            reuse_pos=reuse_pos,
+            **paga_kwargs,
+        )
+        cache = model.adata.uns.get("multilevel_paga", None)
 
+    if cache is None or "results" not in cache:
+        raise RuntimeError(
+            "Multilevel PAGA cache not found. Run scdef.tl.multilevel_paga(model) first."
+        )
+
+    n_layers = len(layers)
     fig, axes = plt.subplots(1, n_layers, figsize=figsize)
-    sc.pp.neighbors(model.adata, use_rep=neighbors_rep)
-    pos = None
-    old_layer_name = None
+    if n_layers == 1:
+        axes = [axes]
+    old_paga = copy.deepcopy(model.adata.uns.get("paga", None))
+    layout = cache.get("layout", "fa")
     for i, layer_idx in enumerate(layers):
         ax = axes[i]
-        new_layer_name = f"{model.layer_names[layer_idx]}"
-
-        print(f"Computing PAGA graph of layer {layer_idx}")
-
-        # Use previous PAGA as initial positions for new PAGA
-        if layer_idx != layers[0] and reuse_pos:
-            print(
-                f"Re-using PAGA positions from layer {layer_idx+1} to init {layer_idx}"
+        layer_name = model.layer_names[layer_idx]
+        if layer_name not in cache["results"]:
+            raise KeyError(
+                f"Cached PAGA for layer '{layer_name}' not found. Recompute with scdef.tl.multilevel_paga."
             )
-            matches = sc._utils.identify_groups(
-                model.adata.obs[new_layer_name], model.adata.obs[old_layer_name]
-            )
-            pos = []
-            np.random.seed(0)
-            for c in model.adata.obs[new_layer_name].cat.categories:
-                pos_coarse = model.adata.uns["paga"]["pos"]  # previous PAGA
-                coarse_categories = model.adata.obs[old_layer_name].cat.categories
-                idx = coarse_categories.get_loc(matches[c][0])
-                pos_i = pos_coarse[idx] + np.random.random(2)
-                pos.append(pos_i)
-            pos = np.array(pos)
-
-        sc.tl.paga(model.adata, groups=new_layer_name)
+        entry = cache["results"][layer_name]
+        model.adata.uns["paga"] = copy.deepcopy(entry["paga"])
         sc.pl.paga(
             model.adata,
-            init_pos=pos,
-            layout="fa",
+            init_pos=np.array(entry["pos"]),
+            layout=layout,
             ax=ax,
             show=False,
             **paga_kwargs,
         )
         ax.set_title(f"Layer {layer_idx} PAGA", fontsize=fontsize)
-
-        old_layer_name = new_layer_name
+    if old_paga is None:
+        model.adata.uns.pop("paga", None)
+    else:
+        model.adata.uns["paga"] = old_paga
     if show:
         plt.show()
 
@@ -1026,3 +1042,148 @@ def factor_gini(
         plt.show()
     else:
         return plt.gca()
+
+
+def factor_gene_uncertainty_boxplot(
+    model: "scDEF",
+    factor: Union[int, str],
+    layer_idx: int = 0,
+    max_genes: Optional[int] = 50,
+    whisker_quantiles: Tuple[float, float] = (0.05, 0.95),
+    color_by_confidence: bool = False,
+    confidence_tau_quantile: float = 0.8,
+    confidence_cmap: str = "viridis",
+    confidence_vmin: float = 0.0,
+    confidence_vmax: float = 1.0,
+    add_confidence_colorbar: bool = True,
+    xtick_rotation: float = 90.0,
+    figsize: Tuple[float, float] = (12, 4),
+    ax: Optional[Axes] = None,
+    show: bool = True,
+) -> Optional[Axes]:
+    """Plot per-gene uncertainty boxes for a factor using posterior mean/variance.
+
+    Genes are sorted by decreasing posterior mean loading for the selected factor.
+    For each gene, a box is drawn from an approximated posterior distribution of
+    ``W`` using the stored posterior mean and variance:
+      - box: 25th to 75th percentile
+      - median: 50th percentile
+      - whiskers: configurable quantiles (default 5th/95th)
+
+    Args:
+        model: scDEF model instance
+        factor: factor index (within kept factors of the layer) or factor name
+        layer_idx: layer index (currently supports only layer 0 for gene loadings)
+        max_genes: maximum number of genes to plot; if None, plot all genes
+        whisker_quantiles: lower/upper quantiles for whiskers
+        color_by_confidence: whether to color each box by posterior confidence
+            ``P(W > tau)``
+        confidence_tau_quantile: factor-wise quantile used to define ``tau`` for
+            confidence coloring
+        confidence_cmap: matplotlib colormap name for confidence coloring
+        confidence_vmin: lower bound of confidence colormap normalization
+        confidence_vmax: upper bound of confidence colormap normalization
+        add_confidence_colorbar: whether to add a confidence colorbar when
+            ``color_by_confidence`` is True
+        xtick_rotation: x tick label rotation in degrees
+        figsize: figure size if ax is None
+        ax: matplotlib axis to draw on
+        show: whether to show the plot
+
+    Returns:
+        Axes object if show is False, None otherwise.
+    """
+    if layer_idx != 0:
+        raise NotImplementedError(
+            "factor_gene_uncertainty_boxplot currently supports layer_idx=0 only."
+        )
+    q_lo, q_hi = whisker_quantiles
+    if not (0.0 < q_lo < 0.5 and 0.5 < q_hi < 1.0):
+        raise ValueError("whisker_quantiles must satisfy 0 < q_lo < 0.5 < q_hi < 1.")
+    if not (0.0 < confidence_tau_quantile < 1.0):
+        raise ValueError("confidence_tau_quantile must be in (0, 1).")
+
+    if isinstance(factor, str):
+        if factor not in model.factor_names[layer_idx]:
+            raise ValueError(
+                f"Factor '{factor}' not found in layer {layer_idx} factor names."
+            )
+        factor_idx = model.factor_names[layer_idx].index(factor)
+    else:
+        factor_idx = int(factor)
+    if factor_idx < 0 or factor_idx >= len(model.factor_lists[layer_idx]):
+        raise IndexError("factor index out of bounds for kept factors in this layer.")
+
+    abs_factor_idx = int(model.factor_lists[layer_idx][factor_idx])
+    layer_name = model.layer_names[layer_idx]
+    all_means = np.asarray(model.pmeans[f"{layer_name}W"], dtype=float)[abs_factor_idx]
+    means = all_means.copy()
+    variances = np.asarray(model.pvars[f"{layer_name}W"], dtype=float)[abs_factor_idx]
+    variances = np.maximum(variances, 0.0)
+    genes = np.asarray(model.adata.var_names)
+
+    order = np.argsort(means)[::-1]
+    if max_genes is not None:
+        order = order[: int(max_genes)]
+    means = means[order]
+    variances = variances[order]
+    genes = genes[order]
+
+    eps = 1e-12
+    mean_safe = np.maximum(means, eps)
+    sigma2 = np.log1p(variances / np.maximum(mean_safe**2, eps))
+    sigma = np.sqrt(np.maximum(sigma2, 0.0))
+    mu_log = np.log(mean_safe) - 0.5 * sigma2
+
+    def _q(p):
+        return np.exp(mu_log + sigma * norm.ppf(p))
+
+    q1 = _q(0.25)
+    med = _q(0.50)
+    q3 = _q(0.75)
+    whislo = _q(q_lo)
+    whishi = _q(q_hi)
+
+    box_stats = [
+        {
+            "label": str(gene),
+            "med": float(med[i]),
+            "q1": float(q1[i]),
+            "q3": float(q3[i]),
+            "whislo": float(whislo[i]),
+            "whishi": float(whishi[i]),
+            "fliers": [],
+        }
+        for i, gene in enumerate(genes)
+    ]
+
+    if ax is None:
+        fig_w = max(figsize[0], 0.2 * len(box_stats))
+        _, ax = plt.subplots(1, 1, figsize=(fig_w, figsize[1]))
+    artists = ax.bxp(box_stats, showfliers=False, patch_artist=color_by_confidence)
+
+    if color_by_confidence:
+        tau = float(np.quantile(all_means, confidence_tau_quantile))
+        confidences = norm.cdf((means - tau) / np.sqrt(variances + eps))
+        cmap = plt.get_cmap(confidence_cmap)
+        conf_norm = mcolors.Normalize(
+            vmin=confidence_vmin, vmax=confidence_vmax, clip=True
+        )
+        for i, box in enumerate(artists["boxes"]):
+            box.set_facecolor(cmap(conf_norm(confidences[i])))
+            box.set_alpha(0.85)
+        if add_confidence_colorbar:
+            sm = plt.cm.ScalarMappable(norm=conf_norm, cmap=cmap)
+            sm.set_array([])
+            cbar = ax.figure.colorbar(sm, ax=ax, pad=0.01)
+            cbar.set_label(f"P(W > tau), tau=q{confidence_tau_quantile:.2f}")
+
+    factor_name = model.factor_names[layer_idx][factor_idx]
+    ax.set_title(f"{factor_name}: posterior loading uncertainty")
+    ax.set_ylabel("W loading")
+    ax.tick_params(axis="x", labelrotation=xtick_rotation)
+    ax.grid(axis="y", alpha=0.2)
+    if show:
+        plt.show()
+        return None
+    return ax

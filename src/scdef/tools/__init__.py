@@ -11,10 +11,13 @@ from .hierarchy import (
 from .factor import (
     factor_diagnostics,
     set_factor_signatures,
+    get_confident_signatures,
     set_technical_factors,
     get_technical_signature,
     get_biological_signature,
     umap,
+    multilevel_paga,
+    plot_trajectory_heatmap,
 )
 
 __all__ = [
@@ -24,9 +27,12 @@ __all__ = [
     "make_technical_hierarchy",
     "factor_diagnostics",
     "set_factor_signatures",
+    "get_confident_signatures",
     "set_technical_factors",
     "get_technical_signature",
     "get_biological_signature",
     "compute_hierarchy_scores",
     "umap",
+    "multilevel_paga",
+    "plot_trajectory_heatmap",
 ]

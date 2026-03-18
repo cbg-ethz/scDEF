@@ -3,6 +3,9 @@ import scdef as scd
 import scanpy as sc
 import numpy as np
 import pandas as pd
+from pathlib import Path
+import os
+import pytest
 
 
 def test_scdef():
@@ -223,4 +226,48 @@ def test_iscdef_refit_after_filtering():
         assert agreement >= 0.7, (
             f"Upper-layer assignments for {layer_name} changed too much "
             f"after refit (agreement={agreement:.3f})."
+        )
+
+
+def test_scdef_load_and_plotting_pipeline():
+    model_dir = Path(__file__).resolve().parent / "pretrained_scdef_model"
+    state_file = model_dir / "model_state.pkl"
+    if not state_file.exists():
+        pytest.skip(
+            "Pretrained model artifact not found. "
+            "Place it under tests/pretrained_scdef_model/ (with model_state.pkl)."
+        )
+
+    try:
+        loaded = scd.scDEF.load(model_dir)
+    except ValueError as e:
+        pytest.skip(
+            f"Pretrained artifact found but missing AnnData for loading: {e}. "
+            "Include adata.h5ad in the artifact or adapt test to pass adata explicitly."
+        )
+
+    # Cached PAGA compute + plotting from loaded model.
+    layers = [i for i in range(loaded.n_layers - 1, -1, -1) if len(loaded.factor_lists[i]) > 1]
+    if len(layers) > 0:
+        scd.tl.multilevel_paga(
+            loaded,
+            neighbors_rep=f"X_{loaded.layer_names[0]}",
+            layers=layers,
+            reuse_pos=True,
+        )
+        assert "multilevel_paga" in loaded.adata.uns
+        scd.pl.multilevel_paga(loaded, layers=layers, show=False)
+
+    # Trajectory heatmap from loaded model along an L0 path.
+    if len(loaded.factor_names[0]) >= 2:
+        factor_path = loaded.factor_names[0][: min(3, len(loaded.factor_names[0]))]
+        scd.tl.plot_trajectory_heatmap(
+            loaded,
+            factor_path=factor_path,
+            layer_idx=0,
+            genes_per_factor=2,
+            confidence_threshold=0.8,
+            confidence_tau_quantile=0.5,
+            show_celltype=False,
+            show=False,
         )

@@ -15,6 +15,7 @@ from .factors import (
     cell_entropies,
     factor_genes,
     factor_gini,
+    factor_gene_uncertainty_boxplot,
 )
 from .qc import (
     qc,
@@ -42,6 +43,7 @@ __all__ = [
     "cell_entropies",
     "factor_genes",
     "factor_gini",
+    "factor_gene_uncertainty_boxplot",
     "qc",
     "scales",
     "scale",
