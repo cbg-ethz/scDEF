@@ -14,6 +14,24 @@ if TYPE_CHECKING:
     from scdef.models._scdef import scDEF
 
 
+def _confidence_mean_score(
+    confidences: np.ndarray,
+    means: np.ndarray,
+    eps: float = 1e-12,
+) -> np.ndarray:
+    """Combine confidence and mean loading into a DE-style ranking score.
+
+    Interprets confidence as ``1 - pvalue`` and mean loading as an effect-size
+    proxy. The final score is:
+
+    ``score = mean * -log10(1 - confidence)``.
+    """
+    confidences = np.asarray(confidences, dtype=float)
+    means = np.asarray(means, dtype=float)
+    significance = -np.log10(np.clip(1.0 - confidences, eps, 1.0))
+    return means * significance
+
+
 def factor_diagnostics(model: "scDEF", recompute: bool = False) -> None:
     """Compute/store factor diagnostics in ``model.adata.uns['factor_obs']``.
 
@@ -155,6 +173,10 @@ def get_confident_signatures(
         random_seed: random seed for Monte Carlo sampling in upper layers
         return_confidences: whether to also return per-gene confidence arrays
 
+    Genes are ranked by a combined DE-style score that uses both confidence and
+    posterior mean loading:
+    ``score = E[W_k,g] * -log10(1 - confidence_k,g)``.
+
     Returns:
         Dictionary mapping factor names to confident gene lists. If
         ``return_confidences`` is True, also returns a dictionary mapping
@@ -193,9 +215,12 @@ def get_confident_signatures(
                 keep_mask = keep_mask & (mu >= min_effect)
             keep_idx = np.where(keep_mask)[0]
 
-            # Rank by confidence, then mean loading.
+            # Rank by a DE-style combined score of confidence and mean loading.
             if len(keep_idx) > 0:
-                order = np.lexsort((-mu[keep_idx], -confidences[keep_idx]))
+                combined_scores = _confidence_mean_score(
+                    confidences[keep_idx], mu[keep_idx]
+                )
+                order = np.argsort(combined_scores)[::-1]
                 keep_idx = keep_idx[order]
             if max_genes is not None:
                 keep_idx = keep_idx[: int(max_genes)]
@@ -248,9 +273,12 @@ def get_confident_signatures(
                 keep_mask = keep_mask & (mu >= min_effect)
             keep_idx = np.where(keep_mask)[0]
 
-            # Rank by confidence, then mean loading.
+            # Rank by a DE-style combined score of confidence and mean loading.
             if len(keep_idx) > 0:
-                order = np.lexsort((-mu[keep_idx], -confidences[keep_idx]))
+                combined_scores = _confidence_mean_score(
+                    confidences[keep_idx], mu[keep_idx]
+                )
+                order = np.argsort(combined_scores)[::-1]
                 keep_idx = keep_idx[order]
             if max_genes is not None:
                 keep_idx = keep_idx[: int(max_genes)]
@@ -423,4 +451,4 @@ def umap(
         model.adata.obsm[f"X_umap_{layer_name}"] = model.adata.obsm["X_umap"].copy()
 
 
-from .trajectory import multilevel_paga, plot_trajectory_heatmap  # noqa: E402,F401
+from .trajectory import multilevel_paga  # noqa: E402,F401

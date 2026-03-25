@@ -282,7 +282,7 @@ def test_scdef_load_and_plotting_pipeline():
     # Trajectory heatmap from loaded model along an L0 path.
     if len(loaded.factor_names[0]) >= 2:
         factor_path = loaded.factor_names[0][: min(3, len(loaded.factor_names[0]))]
-        scd.tl.plot_trajectory_heatmap(
+        scd.pl.plot_trajectory_heatmap(
             loaded,
             factor_path=factor_path,
             layer_idx=0,
