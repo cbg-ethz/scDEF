@@ -1411,16 +1411,23 @@ class scDEF(object):
         self,
         nmf_init: bool = True,
         max_cells_init: int = 5000,
+        z_init_concentration: float = 1.0,
         n_rounds: int = 1,
         **kwargs: Any,
     ) -> None:
         """Fit scDEF, warm-starting from a previous fit when available.
+        Args:
+            nmf_init: whether to initialize the model with NMF.
+            max_cells_init: maximum number of cells to use for initialization.
+            z_init_concentration: concentration parameter of a Gamma distribution to sample the initial z values from. If high coverage, prefer higher values to avoid overfitting early.
+            n_rounds: number of rounds to run the optimization.
+            **kwargs: additional keyword arguments.
 
-        On the first call, parameters are initialized from priors (or NMF if enabled).
-        On subsequent calls, the model is re-initialized from the current posterior
-        quantities and the current `factor_lists`, enabling a fit -> filter -> fit
-        workflow. During refit, upper-layer sizes are clipped to respect
-        ``decay_factor`` before rebuilding the hierarchy.
+            On the first call, parameters are initialized from priors (or NMF if enabled).
+            On subsequent calls, the model is re-initialized from the current posterior
+            quantities and the current `factor_lists`, enabling a fit -> filter -> fit
+            workflow. During refit, upper-layer sizes are clipped to respect
+            ``decay_factor`` before rebuilding the hierarchy.
         """
         if getattr(self, "_has_fit", False):
             # Keep original kept indices before resizing; update_model_size resets factor_lists.
@@ -1449,7 +1456,6 @@ class scDEF(object):
             init_w = np.array(self.pmeans["L0W"])[l0_keep]
             init_brd = np.array(self.pmeans["brd"])[l0_keep]
             init_ard = np.array(self.pmeans["factor_means"])[l0_keep]
-            z_init_concentration = 1.0
         else:
             init_budgets = True
             init_alpha = True
@@ -1457,7 +1463,6 @@ class scDEF(object):
             init_w = None
             init_brd = None
             init_ard = None
-            z_init_concentration = 1.0
         self.init_var_params(
             init_budgets=init_budgets,
             init_alpha=init_alpha,
