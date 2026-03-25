@@ -34,7 +34,7 @@ scikit-learn = '*'
 [tool.poetry.group.dev.dependencies]
 bump2version = "^1.0.1"
 black = "^23.3.0"
-pytest = "^6.2.4"
+pytest = "^8.3.0"
 mkdocs = "^1.6.1"
 mkdocs-material = "^9.7.1"
 mkdocs-jupyter = "^0.25.1"
