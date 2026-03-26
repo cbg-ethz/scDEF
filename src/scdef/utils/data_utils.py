@@ -69,10 +69,10 @@ def get_weight_scores(model, obs_key, obs_vals, top_layer=None):
 
 def get_signature_scores(model, obs_key, obs_vals, markers, top_genes=10):
     """Get signature scores for observations and factors."""
-    from ..tools.factor import get_confident_signatures
+    from ..tools.factor import get_stored_confident_signatures
 
     signatures_by_layer = {
-        layer_idx: get_confident_signatures(
+        layer_idx: get_stored_confident_signatures(
             model, layer_idx=layer_idx, max_genes=top_genes
         )
         for layer_idx in range(model.n_layers)

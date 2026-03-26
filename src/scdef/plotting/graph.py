@@ -3,7 +3,7 @@ import pandas as pd
 import matplotlib
 from graphviz import Graph
 from typing import Optional, Dict, List, Sequence, Union, Any, TYPE_CHECKING
-from ..tools import get_technical_signature, get_confident_signatures
+from ..tools import get_technical_signature, get_stored_confident_signatures
 from ..utils import hierarchy_utils
 
 if TYPE_CHECKING:
@@ -111,44 +111,23 @@ def _get_confident_signature_rankings_layer(model, layer_idx, top_genes_layer):
         n = len(model.factor_names[layer_idx])
         return [[] for _ in range(n)], [np.array([]) for _ in range(n)]
 
-    sigs, confs = get_confident_signatures(
+    sigs, _, combined = get_stored_confident_signatures(
         model,
         layer_idx=layer_idx,
         max_genes=int(top_genes_layer),
         return_confidences=True,
+        return_combined_scores=True,
     )
-
-    term_names = np.asarray(model.adata.var_names)
-    gene_to_idx = {g: i for i, g in enumerate(term_names)}
-    layer_name = model.layer_names[layer_idx]
-    if layer_idx == 0:
-        kept = np.asarray(model.factor_lists[layer_idx], dtype=int)
-        term_means = np.asarray(model.pmeans[f"{layer_name}W"], dtype=float)[kept]
-    else:
-        _, mean_scores = model.get_rankings(
-            layer_idx=layer_idx,
-            top_genes=len(term_names),
-            genes=True,
-            return_scores=True,
-            sorted_scores=False,
-        )
-        term_means = np.asarray(mean_scores, dtype=float)
-
     rankings = []
     scores = []
-    eps = 1e-12
-    for factor_idx, factor_name in enumerate(model.factor_names[layer_idx]):
+    for factor_name in model.factor_names[layer_idx]:
         genes = list(sigs.get(factor_name, []))[: int(top_genes_layer)]
-        confidences = np.asarray(confs.get(factor_name, np.array([])), dtype=float)[
+        combined_scores = np.asarray(combined.get(factor_name, np.array([])), dtype=float)[
             : int(top_genes_layer)
         ]
-        gene_idx = np.asarray([gene_to_idx[g] for g in genes], dtype=int)
-        means = term_means[factor_idx, gene_idx] if len(gene_idx) > 0 else np.array([])
-        n = min(len(genes), len(confidences), len(means))
+        n = min(len(genes), len(combined_scores))
         genes = genes[:n]
-        confidences = confidences[:n]
-        means = means[:n]
-        combined_scores = means * (-np.log10(np.clip(1.0 - confidences, eps, 1.0)))
+        combined_scores = combined_scores[:n]
         rankings.append(genes)
         scores.append(combined_scores)
     return rankings, scores

@@ -32,6 +32,146 @@ def _confidence_mean_score(
     return means * significance
 
 
+def _get_layer_term_means(model: "scDEF", layer_idx: int) -> np.ndarray:
+    """Return per-factor mean loadings aligned with ``adata.var_names``."""
+    layer_name = model.layer_names[layer_idx]
+    if layer_idx == 0:
+        kept = np.asarray(model.factor_lists[layer_idx], dtype=int)
+        return np.asarray(model.pmeans[f"{layer_name}W"], dtype=float)[kept]
+    _, mean_scores = model.get_rankings(
+        layer_idx=layer_idx,
+        top_genes=len(model.adata.var_names),
+        genes=True,
+        return_scores=True,
+        sorted_scores=False,
+    )
+    return np.asarray(mean_scores, dtype=float)
+
+
+def _get_confident_signatures_cache(model: "scDEF") -> Dict[str, object]:
+    cache = model.adata.uns.get("confident_signatures", None)
+    if cache is None:
+        raise KeyError(
+            "Confident signatures were not precomputed. "
+            "Run `scd.tl.set_confident_signatures(model)` first."
+        )
+    return cache
+
+
+def get_stored_confident_signatures(
+    model: "scDEF",
+    layer_idx: int = 0,
+    max_genes: Optional[int] = None,
+    return_confidences: bool = False,
+    return_combined_scores: bool = False,
+) -> Union[
+    Dict[str, List[str]],
+    Tuple[Dict[str, List[str]], Dict[str, np.ndarray]],
+    Tuple[Dict[str, List[str]], Dict[str, np.ndarray], Dict[str, np.ndarray]],
+]:
+    """Load precomputed confident signatures (and optional scores) from cache."""
+    if layer_idx < 0 or layer_idx >= model.n_layers:
+        raise ValueError(f"layer_idx must be in [0, {model.n_layers - 1}].")
+    cache = _get_confident_signatures_cache(model)
+    layer_data = cache["by_layer"][str(int(layer_idx))]
+    signatures: Dict[str, List[str]] = {
+        k: list(v) for k, v in layer_data["signatures"].items()
+    }
+    confidences: Dict[str, np.ndarray] = {
+        k: np.asarray(v, dtype=float) for k, v in layer_data["confidences"].items()
+    }
+    combined_scores: Dict[str, np.ndarray] = {
+        k: np.asarray(v, dtype=float)
+        for k, v in layer_data["combined_scores"].items()
+    }
+    if max_genes is not None:
+        kmax = int(max_genes)
+        signatures = {k: v[:kmax] for k, v in signatures.items()}
+        confidences = {k: v[:kmax] for k, v in confidences.items()}
+        combined_scores = {k: v[:kmax] for k, v in combined_scores.items()}
+
+    if return_confidences and return_combined_scores:
+        return signatures, confidences, combined_scores
+    if return_confidences:
+        return signatures, confidences
+    if return_combined_scores:
+        return signatures, combined_scores
+    return signatures
+
+
+def set_confident_signatures(
+    model: "scDEF",
+    confidence_threshold: float = 0.9,
+    tau_quantile: float = 0.99,
+    min_effect: Optional[float] = None,
+    mc_samples_upper: int = 100,
+    random_seed: int = 0,
+) -> Dict[str, List[str]]:
+    """Precompute and cache confident signatures/scores for all layers.
+
+    Stores signatures, confidence values and combined scores in
+    ``model.adata.uns['confident_signatures']`` for reuse by plotting/utilities.
+    """
+    cache: Dict[str, object] = {
+        "fit_revision": int(getattr(model, "_fit_revision", 0)),
+        "params": {
+            "confidence_threshold": float(confidence_threshold),
+            "tau_quantile": float(tau_quantile),
+            "min_effect": None if min_effect is None else float(min_effect),
+            "mc_samples_upper": int(mc_samples_upper),
+            "random_seed": int(random_seed),
+        },
+        "by_layer": {},
+    }
+    term_names = np.asarray(model.adata.var_names)
+    gene_to_idx = {g: i for i, g in enumerate(term_names)}
+    signatures_flat: Dict[str, List[str]] = {}
+
+    for layer_idx in range(model.n_layers):
+        sigs, confs = get_confident_signatures(
+            model,
+            layer_idx=layer_idx,
+            confidence_threshold=confidence_threshold,
+            tau_quantile=tau_quantile,
+            min_effect=min_effect,
+            max_genes=None,
+            mc_samples_upper=mc_samples_upper,
+            random_seed=random_seed,
+            return_confidences=True,
+        )
+        term_means = _get_layer_term_means(model, layer_idx)
+        layer_combined_scores: Dict[str, List[float]] = {}
+        for factor_idx, factor_name in enumerate(model.factor_names[layer_idx]):
+            genes = list(sigs.get(factor_name, []))
+            conf_arr = np.asarray(confs.get(factor_name, np.array([])), dtype=float)
+            if len(genes) > 0:
+                gene_idx = np.asarray([gene_to_idx[g] for g in genes], dtype=int)
+                mean_arr = np.asarray(term_means[factor_idx, gene_idx], dtype=float)
+            else:
+                mean_arr = np.array([], dtype=float)
+            n = min(len(genes), len(conf_arr), len(mean_arr))
+            genes = genes[:n]
+            conf_arr = conf_arr[:n]
+            mean_arr = mean_arr[:n]
+            combined_arr = _confidence_mean_score(conf_arr, mean_arr)
+
+            sigs[factor_name] = genes
+            confs[factor_name] = conf_arr
+            layer_combined_scores[factor_name] = combined_arr.tolist()
+            signatures_flat[factor_name] = genes
+
+        cache["by_layer"][str(int(layer_idx))] = {
+            "layer_name": model.layer_names[layer_idx],
+            "signatures": {k: list(v) for k, v in sigs.items()},
+            "confidences": {k: np.asarray(v, dtype=float).tolist() for k, v in confs.items()},
+            "combined_scores": layer_combined_scores,
+        }
+
+    model.adata.uns["confident_signatures"] = cache
+    model.adata.uns["factor_signatures"] = signatures_flat
+    return signatures_flat
+
+
 def factor_diagnostics(model: "scDEF", recompute: bool = False) -> None:
     """Compute/store factor diagnostics in ``model.adata.uns['factor_obs']``.
 
@@ -130,10 +270,8 @@ def set_factor_signatures(
     if signatures is None:
         signatures = {}
         for layer_idx in range(model.n_layers):
-            layer_sigs = get_confident_signatures(
-                model,
-                layer_idx=layer_idx,
-                max_genes=top_genes,
+            layer_sigs = get_stored_confident_signatures(
+                model, layer_idx=layer_idx, max_genes=top_genes
             )
             signatures.update(layer_sigs)
     model.adata.uns["factor_signatures"] = signatures
@@ -394,10 +532,8 @@ def get_biological_signature(model: "scDEF", top_genes: int = 10) -> List[str]:
         model.adata.uns["factor_obs"]["technical"]
     ].index.tolist()
     top_layer_idx = model.n_layers - 1
-    signatures_dict = get_confident_signatures(
-        model,
-        layer_idx=top_layer_idx,
-        max_genes=top_genes,
+    signatures_dict = get_stored_confident_signatures(
+        model, layer_idx=top_layer_idx, max_genes=top_genes
     )
     for tf in technical_factors:
         signatures_dict.pop(tf, None)

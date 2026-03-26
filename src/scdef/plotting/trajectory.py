@@ -11,7 +11,7 @@ from scipy.ndimage import uniform_filter1d
 from sklearn.preprocessing import minmax_scale
 
 from ..tools.trajectory import multilevel_paga as compute_multilevel_paga
-from ..tools.factor import get_confident_signatures
+from ..tools.factor import get_stored_confident_signatures
 
 if TYPE_CHECKING:
     from scdef.models._scdef import scDEF
@@ -102,11 +102,6 @@ def plot_trajectory_heatmap(
     layer_idx: int = 0,
     l0_path: Optional[Sequence[Union[int, str]]] = None,
     genes_per_factor: Optional[int] = 3,
-    confidence_threshold: float = 0.95,
-    confidence_tau_quantile: float = 0.99,
-    confidence_mc_samples_upper: int = 100,
-    confidence_random_seed: int = 0,
-    min_effect: Optional[float] = None,
     smoothing: int = 50,
     figwidth: float = 8,
     gene_height: float = 0.28,
@@ -121,7 +116,24 @@ def plot_trajectory_heatmap(
     save: Optional[str] = None,
     show: bool = True,
 ):
-    """Plot stacked trajectory heatmap of path factors and their confident genes."""
+    """Plot stacked trajectory heatmap from precomputed confident signatures.
+
+    Requires ``scd.tl.set_confident_signatures(model)`` to be run beforehand.
+
+    Cell sorting:
+        Cells are restricted to those assigned to ``factor_path`` (and optional
+        ``subset_obs`` filter), then ordered by a soft trajectory progress score.
+        For each selected cell, the function takes its factor probabilities
+        (from ``X_<layer>_probs``), keeps only the columns for the path factors,
+        and computes a probability-weighted average of path positions
+        ``0..len(path)-1``. This gives a continuous progress coordinate used to
+        sort cells from early to late along the path.
+
+        If ``layer_idx > 0`` and ``l0_path`` is provided, the sorting weights are
+        computed on layer 0 probabilities instead. If that yields near-zero total
+        path weight for all selected cells, sorting falls back to the
+        ``layer_idx`` path probabilities.
+    """
     layer_name = model.layer_names[layer_idx]
     kept_names = list(model.factor_names[layer_idx])
 
@@ -211,15 +223,8 @@ def plot_trajectory_heatmap(
     sorted_cells = selected_cells[np.argsort(progress)]
     t_path = model.adata[sorted_cells].copy()
 
-    confident_sigs = get_confident_signatures(
-        model,
-        layer_idx=layer_idx,
-        confidence_threshold=confidence_threshold,
-        tau_quantile=confidence_tau_quantile,
-        mc_samples_upper=confidence_mc_samples_upper,
-        random_seed=confidence_random_seed,
-        min_effect=min_effect,
-        max_genes=genes_per_factor,
+    confident_sigs = get_stored_confident_signatures(
+        model, layer_idx=layer_idx, max_genes=genes_per_factor
     )
 
     score_cols = [f"{name}_score" for name in path_names]

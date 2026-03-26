@@ -118,12 +118,13 @@ def test_scdef():
         model, figsize=(16, 4), reuse_pos=True, frameon=False, show=False
     )
 
+    scd.tl.set_confident_signatures(model)
     scd.pl.signatures_scores(model, "celltypes", markers, top_genes=10, show=False)
     # Confidence-based signatures are used (and capped by top_genes) in tools/plots.
     top_k = 5
     confident_all = {}
     for layer_idx in range(model.n_layers):
-        layer_sigs = scd.tl.get_confident_signatures(
+        layer_sigs = scd.tl.get_stored_confident_signatures(
             model, layer_idx=layer_idx, max_genes=top_k
         )
         confident_all.update(layer_sigs)
@@ -281,6 +282,7 @@ def test_scdef_load_and_plotting_pipeline():
 
     # Trajectory heatmap from loaded model along an L0 path.
     if len(loaded.factor_names[0]) >= 2:
+        scd.tl.set_confident_signatures(loaded)
         factor_path = loaded.factor_names[0][: min(3, len(loaded.factor_names[0]))]
         scd.pl.plot_trajectory_heatmap(
             loaded,
