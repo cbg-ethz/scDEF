@@ -62,7 +62,7 @@ class scDEF(object):
         layer_sizes: explicit list of the number of factors in each scDEF layer. If None, layer sizes are set automatically.
         layer_names: list of custom names for the layers. If None, layer names are enumerated as ["L0", "L1", ...].
         logginglevel: verbosity level for the logger.
-        layer_concentration: concentration parameter of the top-level Dirichlet prior over cell usage of factors.
+        alpha: concentration parameter of the Gamma distribution over the layer means
         shrinkage_shape: shape parameter for shrinkage prior controlling factor usage.
         shrinkage_rate: rate parameter for shrinkage prior controlling factor usage.
         top_alpha: concentration parameter for the top layer Dirichlet prior over factor proportions.
@@ -75,6 +75,9 @@ class scDEF(object):
         batch_cpal: default matplotlib color palette name used for batches.
         layer_cpal: matplotlib color palette for factors/colors at each scDEF layer.
         lightness_mult: lightness multiplier to define the base color for each new scDEF layer.
+        target_sum: target sum of the counts matrix.
+        set_alpha_from_cov: if True, set the alpha parameter from the covariance of the counts matrix.
+        marginalize_alpha: if True, marginalize the alpha parameter over the factors.
     """
 
     def make_corrected_data(self, layer_name: str = "scdef_corrected") -> None:
@@ -103,7 +106,7 @@ class scDEF(object):
         layer_sizes: Optional[list] = None,
         layer_names: Optional[list] = None,
         logginglevel: Optional[int] = logging.INFO,
-        layer_concentration: Optional[float] = 1.0,
+        alpha: Optional[float] = 1.0,
         shrinkage_shape: Optional[float] = 1.0,
         shrinkage_rate: Optional[float] = 1.0,
         shrinkage_mean: Optional[float] = 1.0,
@@ -117,6 +120,9 @@ class scDEF(object):
         batch_cpal: Optional[str] = "Dark2",
         layer_cpal: Optional[str] = "tab10",
         lightness_mult: Optional[float] = 0.15,
+        target_sum: Optional[float] = 1_000,
+        set_alpha_from_cov: Optional[bool] = False,
+        marginalize_alpha: Optional[bool] = False,
     ):
         self.n_cells, self.n_genes = adata.shape
 
@@ -135,7 +141,7 @@ class scDEF(object):
         self.load_adata(adata, layer=counts_layer, batch_key=batch_key)
 
         self.top_alpha = top_alpha
-        self.layer_concentration = layer_concentration
+        self.alpha = alpha
         self.factor_shape = factor_shape
         self.brd = brd_strength
         self.brd_mean = brd_mean
@@ -145,6 +151,9 @@ class scDEF(object):
         self.cell_scale_shape = cell_scale_shape
         self.gene_scale_shape = gene_scale_shape
         self.use_brd = use_brd
+        self.target_sum = target_sum
+        self.set_alpha_from_cov = set_alpha_from_cov
+        self.marginalize_alpha = marginalize_alpha
 
         self.decay_factor = decay_factor
         self.n_factors = n_factors
@@ -185,9 +194,7 @@ class scDEF(object):
             + "Layer sizes: "
             + ", ".join([str(len(factors)) for factors in self.factor_lists])
         )
-        out += (
-            "\n\t" + "Layer concentration parameter: " + str(self.layer_concentration)
-        )
+        out += "\n\t" + "Alpha parameter: " + str(self.alpha)
         # out += (
         #     "\n\t"
         #     + "Layer factor shape parameters: "
@@ -550,6 +557,9 @@ class scDEF(object):
 
             self.w_priors.append([prior_shapes, prior_rates])
 
+        if self.set_alpha_from_cov:
+            self.alpha = self.alpha * self.batch_lib_sizes.mean() / self.target_sum
+
     def get_effective_factors(
         self,
         brd_min: Optional[float] = 1.0,
@@ -824,11 +834,9 @@ class scDEF(object):
         )
 
         if init_alpha:
-            m = self.layer_concentration  # + 0. * np.array(self.gene_ratio_init)
+            m = self.alpha  # + 0. * np.array(self.gene_ratio_init)
         else:
-            m = self.pmeans[
-                "layer_concentration"
-            ]  # + 0. * np.array(self.gene_ratio_init)
+            m = self.pmeans["alpha"]  # + 0. * np.array(self.gene_ratio_init)
         v = m / 10.0
 
         self.global_params.append(
@@ -1059,7 +1067,7 @@ class scDEF(object):
 
         # scale
         s_sample = lognormal_sample(rng, s_shape, s_rate)
-        global_pl += gamma_logpdf(s_sample, 100.0, 100.0 / self.layer_concentration)
+        global_pl += gamma_logpdf(s_sample, 100.0, 100.0 / self.alpha)
         global_en += lognormal_entropy(s_shape, s_rate)
         if self.use_brd:
             global_pl += gamma_logpdf(
@@ -1147,13 +1155,17 @@ class scDEF(object):
             # if idx == 0 and self.use_brd:
             #     z_mean = z_mean * _wm_sample.T
 
+            if self.marginalize_alpha:
+                alpha = self.alpha
+            else:
+                alpha = s_sample
             local_pl += jax.lax.cond(
                 idx == self.n_layers - 1,
                 lambda: gamma_logpdf(_z_sample, self.top_alpha, self.top_alpha),
                 lambda: gamma_logpdf(
                     _z_sample,
-                    self.layer_concentration,
-                    self.layer_concentration / (z_mean),
+                    alpha,
+                    alpha / (z_mean),
                 ),
             )
 
@@ -1774,7 +1786,7 @@ class scDEF(object):
                 _w_shape + 0.5 * jnp.exp(_w_rate) ** 2
             )
 
-        self.pmeans["layer_concentration"] = np.exp(
+        self.pmeans["alpha"] = np.exp(
             self.global_params[-1][0] + 0.5 * np.exp(self.global_params[-1][1]) ** 2
         )
 
@@ -1800,6 +1812,9 @@ class scDEF(object):
                 _lognormal_var(fscale_params[0], fscale_params[1])
             ),
             "factor_means": np.array(_lognormal_var(wm_params[0], wm_params[1])),
+            "alpha": np.array(
+                _lognormal_var(self.global_params[-1][0], self.global_params[-1][1])
+            ),
         }
 
         for idx in range(self.n_layers):
