@@ -121,7 +121,7 @@ class scDEF(object):
         layer_cpal: Optional[str] = "tab10",
         lightness_mult: Optional[float] = 0.15,
         target_sum: Optional[float] = 1_000,
-        set_alpha_from_cov: Optional[bool] = False,
+        set_alpha_from_cov: Optional[bool] = True,
         marginalize_alpha: Optional[bool] = False,
     ):
         self.n_cells, self.n_genes = adata.shape
@@ -194,7 +194,7 @@ class scDEF(object):
             + "Layer sizes: "
             + ", ".join([str(len(factors)) for factors in self.factor_lists])
         )
-        out += "\n\t" + "Alpha parameter: " + str(self.alpha)
+        out += "\n\t" + "alpha parameter: " + str(self.alpha)
         # out += (
         #     "\n\t"
         #     + "Layer factor shape parameters: "
@@ -1156,9 +1156,9 @@ class scDEF(object):
             #     z_mean = z_mean * _wm_sample.T
 
             if self.marginalize_alpha:
-                alpha = self.alpha
-            else:
                 alpha = s_sample
+            else:
+                alpha = self.alpha
             local_pl += jax.lax.cond(
                 idx == self.n_layers - 1,
                 lambda: gamma_logpdf(_z_sample, self.top_alpha, self.top_alpha),
