@@ -109,9 +109,13 @@ def _get_confident_signature_rankings_layer(model, layer_idx, top_genes_layer):
     """Get confidence-filtered signatures and combined scores for one layer."""
     if top_genes_layer is None or int(top_genes_layer) <= 0:
         n = len(model.factor_names[layer_idx])
-        return [[] for _ in range(n)], [np.array([]) for _ in range(n)]
+        return (
+            [[] for _ in range(n)],
+            [np.array([]) for _ in range(n)],
+            [np.array([]) for _ in range(n)],
+        )
 
-    sigs, _, combined = get_stored_confident_signatures(
+    sigs, confs, combined = get_stored_confident_signatures(
         model,
         layer_idx=layer_idx,
         max_genes=int(top_genes_layer),
@@ -120,17 +124,23 @@ def _get_confident_signature_rankings_layer(model, layer_idx, top_genes_layer):
     )
     rankings = []
     scores = []
+    confidences = []
     for factor_name in model.factor_names[layer_idx]:
         genes = list(sigs.get(factor_name, []))[: int(top_genes_layer)]
         combined_scores = np.asarray(
             combined.get(factor_name, np.array([])), dtype=float
         )[: int(top_genes_layer)]
-        n = min(len(genes), len(combined_scores))
+        conf_scores = np.asarray(
+            confs.get(factor_name, np.array([])), dtype=float
+        )[: int(top_genes_layer)]
+        n = min(len(genes), len(combined_scores), len(conf_scores))
         genes = genes[:n]
         combined_scores = combined_scores[:n]
+        conf_scores = conf_scores[:n]
         rankings.append(genes)
         scores.append(combined_scores)
-    return rankings, scores
+        confidences.append(conf_scores)
+    return rankings, scores, confidences
 
 
 def _get_layer_colors(model, layer_idx, show_all, factors):
@@ -278,6 +288,7 @@ def _add_signature_to_label(
     show_all,
     gene_rankings,
     gene_scores_layer,
+    gene_confidences_layer,
     top_genes_layer,
     show_confidences,
     mc_samples,
@@ -309,18 +320,20 @@ def _add_signature_to_label(
         if factor_idx in model.factor_lists[layer_idx]:
             idx = np.where(factor_idx == np.array(model.factor_lists[layer_idx]))[0][0]
             label += print_signature(idx)
-            if show_confidences:
-                confidence_score = model.get_signature_confidence(
-                    idx, layer_idx, top_genes=top_genes_layer, mc_samples=mc_samples
+            if show_confidences and gene_confidences_layer is not None:
+                confidence_vals = np.asarray(
+                    gene_confidences_layer[idx][:top_genes_layer], dtype=float
                 )
-                label += f"<br/><br/>({confidence_score:.3f})"
+                if len(confidence_vals) > 0:
+                    label += f"<br/><br/>({float(np.mean(confidence_vals)):.3f})"
     else:
         label += print_signature(idx)
-        if show_confidences:
-            confidence_score = model.get_signature_confidence(
-                idx, layer_idx, top_genes=top_genes_layer, mc_samples=mc_samples
+        if show_confidences and gene_confidences_layer is not None:
+            confidence_vals = np.asarray(
+                gene_confidences_layer[idx][:top_genes_layer], dtype=float
             )
-            label += f"<br/><br/>({confidence_score:.3f})"
+            if len(confidence_vals) > 0:
+                label += f"<br/><br/>({float(np.mean(confidence_vals)):.3f})"
 
     return label
 
@@ -605,10 +618,12 @@ def make_graph(
         # Get gene rankings if showing signatures
         gene_rankings_layer = None
         gene_scores_layer = None
+        gene_confidences_layer = None
         if show_signatures:
             (
                 gene_rankings_layer,
                 gene_scores_layer,
+                gene_confidences_layer,
             ) = _get_confident_signature_rankings_layer(
                 model,
                 layer_idx=layer_idx,
@@ -691,6 +706,7 @@ def make_graph(
                     show_all,
                     gene_rankings_layer,
                     gene_scores_layer,
+                    gene_confidences_layer,
                     top_genes[layer_idx],
                     show_confidences,
                     mc_samples,
@@ -881,6 +897,7 @@ def make_technical_hierarchy_graph(
         # Get gene rankings if showing signatures
         gene_rankings_layer = None
         gene_scores_layer = None
+        gene_confidences_layer = None
         if show_signatures:
             if layer_idx == model.n_layers - 1:
                 gene_rankings_layer, gene_scores_layer = (
@@ -891,6 +908,7 @@ def make_technical_hierarchy_graph(
                 (
                     gene_rankings_layer,
                     gene_scores_layer,
+                    gene_confidences_layer,
                 ) = _get_confident_signature_rankings_layer(
                     model,
                     layer_idx=layer_idx,
@@ -982,6 +1000,7 @@ def make_technical_hierarchy_graph(
                     False,
                     gene_rankings_layer,
                     gene_scores_layer,
+                    gene_confidences_layer,
                     top_genes[layer_idx],
                     show_confidences,
                     mc_samples,

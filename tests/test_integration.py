@@ -155,7 +155,7 @@ def test_scdef():
     scd.pl.technical_hierarchy(model, show_label=False)
 
     simplified = scd.tl.get_hierarchy(model, simplified=True)
-    g = scd.pl.make_graph(model, hierarchy=simplified)
+    g = scd.pl.make_graph(model, hierarchy=simplified, show_confidences=True)
 
     assignments, matches = scd.utils.factor_utils.assign_obs_to_factors(
         model,
