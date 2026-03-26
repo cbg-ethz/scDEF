@@ -723,7 +723,7 @@ class scDEF(object):
                 layer_idx > 0
             ):  # If the top layer inits to very small numbers, the loss goes crazy when MC=10...
                 clip = 1e-6
-                a = z_init_concentration
+                a = 1.0
 
             if layer_idx == self.n_layers - 1:
                 clip = 1e-3
