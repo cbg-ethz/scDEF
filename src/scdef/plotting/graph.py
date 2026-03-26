@@ -122,9 +122,9 @@ def _get_confident_signature_rankings_layer(model, layer_idx, top_genes_layer):
     scores = []
     for factor_name in model.factor_names[layer_idx]:
         genes = list(sigs.get(factor_name, []))[: int(top_genes_layer)]
-        combined_scores = np.asarray(combined.get(factor_name, np.array([])), dtype=float)[
-            : int(top_genes_layer)
-        ]
+        combined_scores = np.asarray(
+            combined.get(factor_name, np.array([])), dtype=float
+        )[: int(top_genes_layer)]
         n = min(len(genes), len(combined_scores))
         genes = genes[:n]
         combined_scores = combined_scores[:n]

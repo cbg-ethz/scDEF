@@ -81,8 +81,7 @@ def get_stored_confident_signatures(
         k: np.asarray(v, dtype=float) for k, v in layer_data["confidences"].items()
     }
     combined_scores: Dict[str, np.ndarray] = {
-        k: np.asarray(v, dtype=float)
-        for k, v in layer_data["combined_scores"].items()
+        k: np.asarray(v, dtype=float) for k, v in layer_data["combined_scores"].items()
     }
     if max_genes is not None:
         kmax = int(max_genes)
@@ -163,7 +162,9 @@ def set_confident_signatures(
         cache["by_layer"][str(int(layer_idx))] = {
             "layer_name": model.layer_names[layer_idx],
             "signatures": {k: list(v) for k, v in sigs.items()},
-            "confidences": {k: np.asarray(v, dtype=float).tolist() for k, v in confs.items()},
+            "confidences": {
+                k: np.asarray(v, dtype=float).tolist() for k, v in confs.items()
+            },
             "combined_scores": layer_combined_scores,
         }
 
