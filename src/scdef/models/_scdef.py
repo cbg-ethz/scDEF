@@ -75,7 +75,6 @@ class scDEF(object):
         batch_cpal: default matplotlib color palette name used for batches.
         layer_cpal: matplotlib color palette for factors/colors at each scDEF layer.
         lightness_mult: lightness multiplier to define the base color for each new scDEF layer.
-        target_sum: target sum of the counts matrix.
         set_alpha_from_cov: if True, set the alpha parameter from the covariance of the counts matrix.
         marginalize_alpha: if True, marginalize the alpha parameter over the factors.
     """
@@ -107,6 +106,7 @@ class scDEF(object):
         layer_names: Optional[list] = None,
         logginglevel: Optional[int] = logging.INFO,
         alpha: Optional[float] = 1.0,
+        alpha_concentration: Optional[float] = 100.0,
         shrinkage_shape: Optional[float] = 1.0,
         shrinkage_rate: Optional[float] = 1.0,
         shrinkage_mean: Optional[float] = 1.0,
@@ -120,7 +120,6 @@ class scDEF(object):
         batch_cpal: Optional[str] = "Dark2",
         layer_cpal: Optional[str] = "tab10",
         lightness_mult: Optional[float] = 0.15,
-        target_sum: Optional[float] = 1_000,
         set_alpha_from_cov: Optional[bool] = True,
         marginalize_alpha: Optional[bool] = False,
     ):
@@ -142,6 +141,7 @@ class scDEF(object):
 
         self.top_alpha = top_alpha
         self.alpha = alpha
+        self.alpha_concentration = alpha_concentration
         self.factor_shape = factor_shape
         self.brd = brd_strength
         self.brd_mean = brd_mean
@@ -151,7 +151,6 @@ class scDEF(object):
         self.cell_scale_shape = cell_scale_shape
         self.gene_scale_shape = gene_scale_shape
         self.use_brd = use_brd
-        self.target_sum = target_sum
         self.set_alpha_from_cov = set_alpha_from_cov
         self.marginalize_alpha = marginalize_alpha
 
@@ -558,7 +557,14 @@ class scDEF(object):
             self.w_priors.append([prior_shapes, prior_rates])
 
         if self.set_alpha_from_cov:
-            self.alpha = self.alpha * self.batch_lib_sizes.mean() / self.target_sum
+            self.alpha = self.batch_lib_sizes.mean() / self.layer_sizes[0]
+
+        # Initialize alphas for each layer
+        self.alphas = [self.alpha] * self.n_layers
+        for layer_idx in range(self.n_layers):
+            self.alphas[layer_idx] = (
+                self.alpha * self.layer_sizes[layer_idx] / self.layer_sizes[0]
+            )
 
     def get_effective_factors(
         self,
@@ -1067,7 +1073,9 @@ class scDEF(object):
 
         # scale
         s_sample = lognormal_sample(rng, s_shape, s_rate)
-        global_pl += gamma_logpdf(s_sample, 100.0, 100.0 / self.alpha)
+        global_pl += gamma_logpdf(
+            s_sample, self.alpha_concentration, self.alpha_concentration / self.alpha
+        )
         global_en += lognormal_entropy(s_shape, s_rate)
         if self.use_brd:
             global_pl += gamma_logpdf(
@@ -1156,9 +1164,9 @@ class scDEF(object):
             #     z_mean = z_mean * _wm_sample.T
 
             if self.marginalize_alpha:
-                alpha = s_sample
+                alpha = s_sample * self.layer_sizes[idx] / self.layer_sizes[0]
             else:
-                alpha = self.alpha
+                alpha = self.alpha * self.layer_sizes[idx] / self.layer_sizes[0]
             local_pl += jax.lax.cond(
                 idx == self.n_layers - 1,
                 lambda: gamma_logpdf(_z_sample, self.top_alpha, self.top_alpha),

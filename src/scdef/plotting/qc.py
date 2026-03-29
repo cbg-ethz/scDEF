@@ -5,6 +5,7 @@ This module provides QC-related plotting functions for scDEF models.
 
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.stats import gamma as gamma_dist, lognorm as lognorm_dist
 from matplotlib.gridspec import GridSpec
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
@@ -231,6 +232,96 @@ def relevance(
     ax.set_yscale(scale)
     ax.set_ylabel(ylabel, fontsize=fontsize)
     # Intentionally do not distinguish kept vs removed factors in QC plots.
+
+    if show:
+        plt.show()
+    else:
+        return ax
+
+
+def alpha_density(
+    model: "scDEF",
+    figsize: Tuple[float, float] = (5, 4),
+    n_points: int = 500,
+    fontsize: int = 12,
+    legend_fontsize: int = 10,
+    ax: Optional[Axes] = None,
+    title: str = "alpha prior vs posterior",
+    show: bool = True,
+) -> Optional[Axes]:
+    """Plot prior and posterior densities of ``alpha`` (layer concentration).
+
+    This plot is only defined when ``model.marginalize_alpha`` is True.
+
+    The prior follows the model's Gamma prior used in training:
+    ``alpha ~ Gamma(shape=model.alpha_concentration, rate=model.alpha_concentration / model.alpha)``.
+    The posterior is the variational LogNormal approximation stored in
+    ``model.global_params[-1]``.
+
+    Args:
+        model: scDEF model instance
+        figsize: figure size
+        n_points: number of points in the density grid
+        fontsize: font size for labels/title
+        legend_fontsize: legend font size
+        ax: optional matplotlib axes to draw on
+        show: whether to show the plot
+
+    Returns:
+        Axes object if ``show`` is False, None otherwise.
+    """
+    if not getattr(model, "marginalize_alpha", False):
+        raise ValueError("alpha_density requires `model.marginalize_alpha=True`.")
+    if n_points < 50:
+        raise ValueError("n_points must be >= 50.")
+
+    if ax is None:
+        fig, ax = plt.subplots(1, 1, figsize=figsize)
+    else:
+        fig = ax.get_figure()  # noqa: F841
+
+    prior_mean = float(np.asarray(model.alpha).squeeze())
+    prior_shape = model.alpha_concentration
+    prior_rate = model.alpha_concentration / prior_mean
+    prior = gamma_dist(a=prior_shape, scale=1.0 / prior_rate)
+
+    post_mu = float(np.asarray(model.global_params[-1][0]).squeeze())
+    post_log_sigma = float(np.asarray(model.global_params[-1][1]).squeeze())
+    post_sigma = float(np.exp(post_log_sigma))
+    posterior = lognorm_dist(s=post_sigma, scale=np.exp(post_mu))
+
+    lo = min(prior.ppf(1e-4), posterior.ppf(1e-4))
+    hi = max(prior.ppf(1 - 1e-4), posterior.ppf(1 - 1e-4))
+    if not np.isfinite(lo) or lo <= 0:
+        lo = max(1e-8, 0.05 * min(prior.mean(), posterior.mean()))
+    if not np.isfinite(hi) or hi <= lo:
+        hi = max(lo * 10.0, 2.0 * max(prior.mean(), posterior.mean()))
+    x = np.linspace(lo, hi, int(n_points))
+
+    prior_pdf = prior.pdf(x)
+    post_pdf = posterior.pdf(x)
+
+    (prior_line,) = ax.plot(x, prior_pdf, label="Prior", linewidth=2.0)
+    (post_line,) = ax.plot(x, post_pdf, label="Posterior", linewidth=2.0)
+    ax.axvline(
+        prior.mean(),
+        linestyle="--",
+        linewidth=1.2,
+        alpha=0.8,
+        color=prior_line.get_color(),
+    )
+    ax.axvline(
+        posterior.mean(),
+        linestyle="--",
+        linewidth=1.2,
+        alpha=0.8,
+        color=post_line.get_color(),
+    )
+
+    ax.set_xlabel(r"$\alpha$", fontsize=fontsize)
+    ax.set_ylabel("Density", fontsize=fontsize)
+    ax.set_title(title, fontsize=fontsize)
+    ax.legend(fontsize=legend_fontsize)
 
     if show:
         plt.show()

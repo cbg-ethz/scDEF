@@ -113,6 +113,8 @@ def test_scdef():
     assert "L2" in model.adata.obs.columns
 
     scd.pl.qc(model, show=False)
+    if model.marginalize_alpha:
+        scd.pl.alpha_density(model, show=False)
 
     scd.pl.multilevel_paga(
         model, figsize=(16, 4), reuse_pos=True, frameon=False, show=False
