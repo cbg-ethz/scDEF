@@ -62,9 +62,11 @@ class scDEF(object):
         layer_sizes: explicit list of the number of factors in each scDEF layer. If None, layer sizes are set automatically.
         layer_names: list of custom names for the layers. If None, layer names are enumerated as ["L0", "L1", ...].
         logginglevel: verbosity level for the logger.
-        alpha: concentration parameter of the Gamma distribution over the layer means
+        alpha: prior mean of the Gamma prior over the shared concentration ``alpha``
+        alpha_concentration: shape/concentration of the Gamma prior over ``alpha`` (only applies if marginalize_alpha is True)
         shrinkage_shape: shape parameter for shrinkage prior controlling factor usage.
         shrinkage_rate: rate parameter for shrinkage prior controlling factor usage.
+        shrinkage_mean: target prior mean for shrinkage/factor relevance.
         top_alpha: concentration parameter for the top layer Dirichlet prior over factor proportions.
         factor_shape: shape of the prior distribution for factor-gene loadings matrix W.
         brd_strength: BRD (Batch Relevance Determination) prior concentration parameter for factor relevance estimation.
@@ -76,7 +78,8 @@ class scDEF(object):
         layer_cpal: matplotlib color palette for factors/colors at each scDEF layer.
         lightness_mult: lightness multiplier to define the base color for each new scDEF layer.
         set_alpha_from_cov: if True, set the alpha parameter from the covariance of the counts matrix.
-        marginalize_alpha: if True, marginalize the alpha parameter over the factors.
+        marginalize_alpha: if True, infer ``alpha`` variationally instead of keeping
+            it fixed.
     """
 
     def make_corrected_data(self, layer_name: str = "scdef_corrected") -> None:
