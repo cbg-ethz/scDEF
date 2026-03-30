@@ -170,7 +170,6 @@ def set_confident_signatures(
 
     model.adata.uns["confident_signatures"] = cache
     model.adata.uns["factor_signatures"] = signatures_flat
-    return signatures_flat
 
 
 def factor_diagnostics(model: "scDEF", recompute: bool = False) -> None:
@@ -188,19 +187,39 @@ def factor_diagnostics(model: "scDEF", recompute: bool = False) -> None:
     cache_key = "_factor_obs_upper_lists_fixed"
     cache_rev_key = "_factor_obs_fit_revision"
     current_fit_rev = int(getattr(model, "_fit_revision", 0))
-    reset_cache = (
-        recompute
-        or cache_key not in model.adata.uns
-        or len(model.adata.uns[cache_key]) != max(model.n_layers - 1, 0)
-        or int(model.adata.uns.get(cache_rev_key, -1)) != current_fit_rev
-    )
+    reset_reasons: List[str] = []
+    if recompute:
+        reset_reasons.append("explicit recompute=True")
+    if cache_key not in model.adata.uns:
+        reset_reasons.append("missing cached upper-layer factor lists")
+    elif len(model.adata.uns[cache_key]) != max(model.n_layers - 1, 0):
+        reset_reasons.append("cached upper-layer list length mismatch")
+    if int(model.adata.uns.get(cache_rev_key, -1)) != current_fit_rev:
+        reset_reasons.append(
+            f"fit revision changed ({model.adata.uns.get(cache_rev_key, -1)} -> {current_fit_rev})"
+        )
+    reset_cache = len(reset_reasons) > 0
     if not reset_cache:
         # Validate cached indices against current layer sizes.
         for i, idxs in enumerate(model.adata.uns[cache_key], start=1):
             arr = np.asarray(idxs, dtype=int)
             if np.any(arr < 0) or np.any(arr >= model.layer_sizes[i]):
                 reset_cache = True
+                reset_reasons.append(
+                    f"invalid cached indices for layer {i} (out of bounds)"
+                )
                 break
+    if hasattr(model, "logger"):
+        if reset_cache:
+            model.logger.info(
+                "factor_diagnostics: recomputing cached diagnostics (%s).",
+                "; ".join(reset_reasons),
+            )
+        else:
+            model.logger.info(
+                "factor_diagnostics: using cached diagnostics (fit revision %s).",
+                current_fit_rev,
+            )
     if reset_cache:
         model.adata.uns[cache_key] = [
             np.asarray(model.factor_lists[i], dtype=int).tolist()
