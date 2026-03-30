@@ -62,8 +62,7 @@ class scDEF(object):
         layer_sizes: explicit list of the number of factors in each scDEF layer. If None, layer sizes are set automatically.
         layer_names: list of custom names for the layers. If None, layer names are enumerated as ["L0", "L1", ...].
         logginglevel: verbosity level for the logger.
-        alpha: prior mean of the Gamma prior over the shared concentration ``alpha``
-        alpha_concentration: shape/concentration of the Gamma prior over ``alpha`` (only applies if marginalize_alpha is True)
+        alpha: concentration parameter for the Gamma prior on z.
         shrinkage_shape: shape parameter for shrinkage prior controlling factor usage.
         shrinkage_rate: rate parameter for shrinkage prior controlling factor usage.
         shrinkage_mean: target prior mean for shrinkage/factor relevance.
@@ -77,9 +76,7 @@ class scDEF(object):
         batch_cpal: default matplotlib color palette name used for batches.
         layer_cpal: matplotlib color palette for factors/colors at each scDEF layer.
         lightness_mult: lightness multiplier to define the base color for each new scDEF layer.
-        set_alpha_from_cov: if True, set the alpha parameter from the covariance of the counts matrix.
-        marginalize_alpha: if True, infer ``alpha`` variationally instead of keeping
-            it fixed.
+        set_alpha_from_cov: if True, set the alpha parameter from the data coverage.
     """
 
     def make_corrected_data(self, layer_name: str = "scdef_corrected") -> None:
@@ -109,7 +106,6 @@ class scDEF(object):
         layer_names: Optional[list] = None,
         logginglevel: Optional[int] = logging.INFO,
         alpha: Optional[float] = 1.0,
-        alpha_concentration: Optional[float] = 100.0,
         shrinkage_shape: Optional[float] = 1.0,
         shrinkage_rate: Optional[float] = 1.0,
         shrinkage_mean: Optional[float] = 1.0,
@@ -124,7 +120,6 @@ class scDEF(object):
         layer_cpal: Optional[str] = "tab10",
         lightness_mult: Optional[float] = 0.15,
         set_alpha_from_cov: Optional[bool] = True,
-        marginalize_alpha: Optional[bool] = False,
     ):
         self.n_cells, self.n_genes = adata.shape
 
@@ -144,7 +139,6 @@ class scDEF(object):
 
         self.top_alpha = top_alpha
         self.alpha = alpha
-        self.alpha_concentration = alpha_concentration
         self.factor_shape = factor_shape
         self.brd = brd_strength
         self.brd_mean = brd_mean
@@ -155,7 +149,6 @@ class scDEF(object):
         self.gene_scale_shape = gene_scale_shape
         self.use_brd = use_brd
         self.set_alpha_from_cov = set_alpha_from_cov
-        self.marginalize_alpha = marginalize_alpha
 
         self.decay_factor = decay_factor
         self.n_factors = n_factors
@@ -196,7 +189,7 @@ class scDEF(object):
             + "Layer sizes: "
             + ", ".join([str(len(factors)) for factors in self.factor_lists])
         )
-        out += "\n\t" + "alpha parameter: " + str(float(self.pmeans["alpha"].squeeze()))
+        out += "\n\t" + "alpha parameter: " + str(self.alpha)
         if self.use_brd:
             out += "\n\t" + "Using BRD"
         out += "\n\t" + "Number of batches: " + str(self.n_batches)
@@ -555,14 +548,9 @@ class scDEF(object):
             self.w_priors.append([prior_shapes, prior_rates])
 
         if self.set_alpha_from_cov:
-            self.alpha = self.batch_lib_sizes.mean() / self.layer_sizes[0]
-
-        # Initialize alphas for each layer
-        self.alphas = [self.alpha] * self.n_layers
-        for layer_idx in range(self.n_layers):
-            self.alphas[layer_idx] = (
-                self.alpha * self.layer_sizes[layer_idx] / self.layer_sizes[0]
-            )
+            self.alpha = (
+                float(self.batch_lib_sizes.mean()) / float(self.layer_sizes[0])
+            ) * (1.0 / float(np.mean(self.brd_mean)))
 
     def get_effective_factors(
         self,
@@ -1070,11 +1058,11 @@ class scDEF(object):
         local_en = lognormal_entropy(cell_budget_shape, cell_budget_rate)
 
         # scale
-        s_sample = lognormal_sample(rng, s_shape, s_rate)
-        global_pl += gamma_logpdf(
-            s_sample, self.alpha_concentration, self.alpha_concentration / self.alpha
-        )
-        global_en += lognormal_entropy(s_shape, s_rate)
+        # s_sample = lognormal_sample(rng, s_shape, s_rate)
+        # global_pl += gamma_logpdf(
+        #     s_sample, self.alpha_concentration, self.alpha_concentration / self.alpha
+        # )
+        # global_en += lognormal_entropy(s_shape, s_rate)
         if self.use_brd:
             global_pl += gamma_logpdf(
                 fscale_samples, self.brd, self.brd / self.brd_mean
@@ -1161,10 +1149,7 @@ class scDEF(object):
             # if idx == 0 and self.use_brd:
             #     z_mean = z_mean * _wm_sample.T
 
-            if self.marginalize_alpha:
-                alpha = s_sample * self.layer_sizes[idx] / self.layer_sizes[0]
-            else:
-                alpha = self.alpha * self.layer_sizes[idx] / self.layer_sizes[0]
+            alpha = self.alpha * self.layer_sizes[idx] / self.layer_sizes[0]
             local_pl += jax.lax.cond(
                 idx == self.n_layers - 1,
                 lambda: gamma_logpdf(_z_sample, self.top_alpha, self.top_alpha),
@@ -1468,12 +1453,17 @@ class scDEF(object):
             )
             nmf_init = False
             init_budgets = False
-            init_alpha = False
+            init_alpha = True
             l0_keep = np.array(old_factor_lists[0], dtype=int)
             init_z = np.array(self.pmeans[f"{self.layer_names[0]}z"])[:, l0_keep]
             init_w = np.array(self.pmeans["L0W"])[l0_keep]
             init_brd = np.array(self.pmeans["brd"])[l0_keep]
             init_ard = np.array(self.pmeans["factor_means"])[l0_keep]
+            if self.set_alpha_from_cov:
+                self.alpha = (
+                    float(self.batch_lib_sizes.mean()) / float(self.layer_sizes[0])
+                ) * (1.0 / float(np.mean(init_brd)))
+                self.logger.info(f"Updated alpha for refit: {self.alpha:.6g}")
         else:
             init_budgets = True
             init_alpha = True
