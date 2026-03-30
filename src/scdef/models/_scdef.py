@@ -196,12 +196,7 @@ class scDEF(object):
             + "Layer sizes: "
             + ", ".join([str(len(factors)) for factors in self.factor_lists])
         )
-        out += "\n\t" + "alpha parameter: " + str(self.alpha)
-        # out += (
-        #     "\n\t"
-        #     + "Layer factor shape parameters: "
-        #     + ", ".join([str(shape) for shape in self.factor_shapes])
-        # )
+        out += "\n\t" + "alpha parameter: " + str(float(self.pmeans["alpha"].squeeze()))
         if self.use_brd:
             out += "\n\t" + "Using BRD"
         out += "\n\t" + "Number of batches: " + str(self.n_batches)
