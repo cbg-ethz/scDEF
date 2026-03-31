@@ -1569,6 +1569,47 @@ class scDEF(object):
         if "n_epochs" in kwargs:
             n_epoch = kwargs.pop("n_epochs")
 
+        if (not anneal_alpha) and int(n_rounds) > 1:
+            total_rounds = int(n_rounds)
+            for r in range(total_rounds):
+                round_lr = lr if layerwise else lr * (0.5**r)
+                round_local_lr = local_lr if layerwise else local_lr * (0.5**r)
+                self.logger.info(
+                    "Starting learning round %s/%s (lr=%.5g, local_lr=%.5g).",
+                    r + 1,
+                    total_rounds,
+                    round_lr,
+                    round_local_lr,
+                )
+                self._learn(
+                    n_rounds=1,
+                    n_epoch=n_epoch,
+                    lr=round_lr,
+                    local_lr=round_local_lr,
+                    annealing=annealing,
+                    num_samples=num_samples,
+                    batch_size=batch_size,
+                    layerwise=layerwise,
+                    min_epochs=min_epochs,
+                    tolerance=tolerance,
+                    patience=patience,
+                    update_locals=update_locals,
+                    update_globals=update_globals,
+                    stop_cell_budgets=stop_cell_budgets,
+                    stop_gene_budgets=stop_gene_budgets,
+                    opt_layer=opt_layer,
+                    filter=filter,
+                    annotate=annotate,
+                    anneal_alpha=False,
+                    check_every=check_every,
+                    target_parents=target_parents,
+                    max_elbo_drop=max_elbo_drop,
+                    alpha_max=alpha_max,
+                    damping=damping,
+                    **kwargs,
+                )
+            return
+
         if batch_size is None:
             batch_size = self.n_cells
 
@@ -1730,6 +1771,7 @@ class scDEF(object):
         alpha_trace_epochs = []
         n_eff_parents_trace = []
         trace_epoch = []
+        stop_message = None
         if anneal_alpha and int(check_every) <= 0:
             raise ValueError("check_every must be > 0 when anneal_alpha=True.")
 
@@ -1796,13 +1838,12 @@ class scDEF(object):
                     pbar.set_postfix(
                         {
                             "Loss": current_loss,
-                            "alpha": float(self.alpha),
                             "Rel. impr.": relative_improvement,
                         }
                     )
 
                     if early_stop_counter >= patience:
-                        self.logger.info(
+                        stop_message = (
                             f"Converged at epoch {total_epochs}, alpha={self.alpha:.2f}"
                         )
                         break
@@ -1820,13 +1861,10 @@ class scDEF(object):
                         trace_epoch.append(int(total_epochs))
                         n_eff_parents_trace.append(float(median_parents))
                         if median_parents <= target_parents:
-                            self.logger.info(
-                                "Stopping annealed learning: target reached at epoch %s "
-                                "(n_eff_parents=%.3f <= %.3f, alpha=%.4f).",
-                                total_epochs,
-                                float(median_parents),
-                                float(target_parents),
-                                float(self.alpha),
+                            stop_message = (
+                                "Stopping annealed learning: target reached at epoch "
+                                f"{total_epochs} (n_eff_parents={float(median_parents):.3f} "
+                                f"<= {float(target_parents):.3f}, alpha={float(self.alpha):.4f})."
                             )
                             break
 
@@ -1834,13 +1872,10 @@ class scDEF(object):
                             best_elbo = current_loss
                         relative_drop = (current_loss - best_elbo) / abs(best_elbo)
                         if relative_drop > max_elbo_drop:
-                            self.logger.info(
+                            stop_message = (
                                 "Stopping annealed learning: ELBO drop exceeded threshold "
-                                "at epoch %s (drop=%.4f > %.4f, alpha=%.4f).",
-                                total_epochs,
-                                float(relative_drop),
-                                float(max_elbo_drop),
-                                float(self.alpha),
+                                f"at epoch {total_epochs} (drop={float(relative_drop):.4f} "
+                                f"> {float(max_elbo_drop):.4f}, alpha={float(self.alpha):.4f})."
                             )
                             break
                         best_elbo = min(best_elbo, current_loss)
@@ -1858,12 +1893,10 @@ class scDEF(object):
                                 jnp.asarray(alpha_max, dtype=alpha_jnp.dtype),
                             )
                             self.alpha = float(alpha_jnp)
-                            self.logger.info(
-                                "Stopping annealed learning: reached alpha_max at epoch %s "
-                                "(alpha=%.4f, n_eff_parents=%.3f).",
-                                total_epochs,
-                                float(self.alpha),
-                                float(median_parents),
+                            stop_message = (
+                                "Stopping annealed learning: reached alpha_max at epoch "
+                                f"{total_epochs} (alpha={float(self.alpha):.4f}, "
+                                f"n_eff_parents={float(median_parents):.3f})."
                             )
                             break
 
@@ -1872,12 +1905,27 @@ class scDEF(object):
                     pbar.set_postfix(
                         {
                             "Loss": current_loss,
-                            "alpha": float(self.alpha),
                         }
                     )
 
         except KeyboardInterrupt:
             self.logger.info("Interrupted. Exiting safely...")
+        finally:
+            pbar.close()
+
+        if stop_message is None:
+            if anneal_alpha:
+                stop_message = (
+                    "Stopping annealed learning: reached max epochs "
+                    f"(n_epoch={int(n_epoch)}, alpha={float(self.alpha):.4f})."
+                )
+            else:
+                stop_message = (
+                    f"Stopping learning: reached max epochs (n_epoch={int(n_epoch)}, "
+                    f"alpha={float(self.alpha):.2f})."
+                )
+        if stop_message is not None:
+            self.logger.info(stop_message)
 
         self.local_params = local_params
         self.global_params = global_params
