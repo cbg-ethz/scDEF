@@ -685,7 +685,7 @@ class scDEF(object):
             self.local_params = [self.local_params[0]]
             self.global_params = [self.global_params[0]]
         # BRD
-        m_brd = tfd.Gamma(100.0, 100.0 / self.brd_mean).sample(
+        m_brd = tfd.Gamma(100.0, 100.0 / self.brd_mean * 0.1).sample(
             seed=rngs[0],
             sample_shape=[self.layer_sizes[0], 1],
         )  # self.brd_mean
@@ -1485,13 +1485,20 @@ class scDEF(object):
         self._has_fit = True
         self._fit_revision += 1
 
-    def _compute_median_parents(self, local_params=None, global_params=None):
+    def _compute_median_parents(
+        self,
+        local_params=None,
+        global_params=None,
+        return_active_l0_count: bool = False,
+    ):
         """Estimate median effective parent count using variational means.
 
         Uses only the minimal variational parameters needed for the metric and
         avoids materializing full posterior summaries.
         """
         if self.n_layers < 2:
+            if return_active_l0_count:
+                return 1.0, 0
             return 1.0
 
         if local_params is None:
@@ -1524,6 +1531,8 @@ class scDEF(object):
         active_1 = np.where(counts >= 1)[0]
 
         if len(active_0) == 0 or len(active_1) == 0:
+            if return_active_l0_count:
+                return 1.0, int(len(active_0))
             return 1.0
 
         # L1 -> L0 weight posterior means
@@ -1535,7 +1544,10 @@ class scDEF(object):
         H = -np.sum(p * np.log(p + 1e-12), axis=0)
         n_parents = np.exp(H)
 
-        return np.median(n_parents)
+        median_parents = np.median(n_parents)
+        if return_active_l0_count:
+            return median_parents, int(len(active_0))
+        return median_parents
 
     def _learn(
         self,
@@ -1563,7 +1575,7 @@ class scDEF(object):
         target_parents=1.5,
         max_elbo_drop=0.05,
         alpha_max=None,
-        damping=0.5,
+        damping=1.0,
         **kwargs,
     ):
         if "n_epochs" in kwargs:
@@ -1771,7 +1783,10 @@ class scDEF(object):
         alpha_trace_epochs = []
         n_eff_parents_trace = []
         trace_epoch = []
+        active_l0_factor_counts_trace = []
         stop_message = None
+        interrupted = False
+        alpha_updates_enabled = True
         if anneal_alpha and int(check_every) <= 0:
             raise ValueError("check_every must be > 0 when anneal_alpha=True.")
 
@@ -1822,19 +1837,19 @@ class scDEF(object):
                 alpha_trace.append(float(self.alpha))
                 alpha_trace_epochs.append(int(total_epochs))
 
-                # --- Standard _learn behavior (no alpha annealing) ---
-                if not anneal_alpha and epochs_since_alpha_change >= min_epochs:
+                relative_improvement = np.nan
+                if epochs_since_alpha_change >= min_epochs:
                     if min_loss == np.inf:
                         min_loss = current_loss
-
                     relative_improvement = (min_loss - current_loss) / np.abs(min_loss)
                     min_loss = min(min_loss, current_loss)
-
                     if relative_improvement < tolerance:
                         early_stop_counter += 1
                     else:
                         early_stop_counter = 0
 
+                # --- Standard _learn behavior (no alpha annealing) ---
+                if not anneal_alpha and epochs_since_alpha_change >= min_epochs:
                     pbar.set_postfix(
                         {
                             "Loss": current_loss,
@@ -1849,58 +1864,89 @@ class scDEF(object):
                         break
                 # --- Alpha annealing mode: check every `check_every` epochs ---
                 elif anneal_alpha:
-                    postfix = {"Loss": current_loss, "alpha": float(self.alpha)}
+                    postfix = {"Loss": current_loss}
+                    if epochs_since_alpha_change >= min_epochs:
+                        postfix["Rel. impr."] = relative_improvement
+                    postfix["alpha"] = float(self.alpha)
                     if len(n_eff_parents_trace) > 0:
                         postfix["n_eff"] = float(n_eff_parents_trace[-1])
+                    if len(active_l0_factor_counts_trace) > 0:
+                        postfix["active_L0"] = int(active_l0_factor_counts_trace[-1])
                     pbar.set_postfix(postfix)
+
+                    if (
+                        (not alpha_updates_enabled)
+                        and epochs_since_alpha_change >= min_epochs
+                        and early_stop_counter >= patience
+                    ):
+                        stop_message = (
+                            f"Converged at epoch {total_epochs}, alpha={self.alpha:.2f}"
+                        )
+                        break
+
                     if (total_epochs % int(check_every)) == 0:
-                        median_parents = self._compute_median_parents(
+                        median_parents, active_l0_count = self._compute_median_parents(
                             local_params=local_params,
                             global_params=global_params,
+                            return_active_l0_count=True,
                         )
                         trace_epoch.append(int(total_epochs))
                         n_eff_parents_trace.append(float(median_parents))
-                        if median_parents <= target_parents:
-                            stop_message = (
-                                "Stopping annealed learning: target reached at epoch "
-                                f"{total_epochs} (n_eff_parents={float(median_parents):.3f} "
-                                f"<= {float(target_parents):.3f}, alpha={float(self.alpha):.4f})."
-                            )
-                            break
-
-                        if best_elbo is None:
-                            best_elbo = current_loss
-                        relative_drop = (current_loss - best_elbo) / abs(best_elbo)
-                        if relative_drop > max_elbo_drop:
-                            stop_message = (
-                                "Stopping annealed learning: ELBO drop exceeded threshold "
-                                f"at epoch {total_epochs} (drop={float(relative_drop):.4f} "
-                                f"> {float(max_elbo_drop):.4f}, alpha={float(self.alpha):.4f})."
-                            )
-                            break
-                        best_elbo = min(best_elbo, current_loss)
-
-                        alpha_mult = jnp.asarray(
-                            (median_parents / target_parents) ** damping,
-                            dtype=alpha_jnp.dtype,
+                        active_l0_factor_counts_trace.append(int(active_l0_count))
+                        pbar.set_postfix(
+                            {
+                                "Loss": current_loss,
+                                "Rel. impr.": relative_improvement,
+                                "alpha": float(self.alpha),
+                                "n_eff": float(median_parents),
+                                "active_L0": int(active_l0_count),
+                            }
                         )
-                        alpha_jnp = alpha_jnp * alpha_mult
-                        if alpha_max is not None and float(alpha_jnp) >= float(
-                            alpha_max
-                        ):
-                            alpha_jnp = jnp.minimum(
-                                alpha_jnp,
-                                jnp.asarray(alpha_max, dtype=alpha_jnp.dtype),
-                            )
-                            self.alpha = float(alpha_jnp)
-                            stop_message = (
-                                "Stopping annealed learning: reached alpha_max at epoch "
-                                f"{total_epochs} (alpha={float(self.alpha):.4f}, "
-                                f"n_eff_parents={float(median_parents):.3f})."
-                            )
-                            break
+                        if alpha_updates_enabled and median_parents <= target_parents:
+                            alpha_updates_enabled = False
+                            # Continue optimization with fixed alpha, but reset
+                            # optimizer momentum/state at the current variational params.
+                            local_opt_state = local_optimizer.init(local_params)
+                            global_opt_state = global_optimizer.init(global_params)
+                            # Restart convergence tracking for the post-annealing phase.
+                            epochs_since_alpha_change = 0
+                            min_loss = np.inf
+                            early_stop_counter = 0
 
-                        self.alpha = float(alpha_jnp)
+                        if alpha_updates_enabled:
+                            if best_elbo is None:
+                                best_elbo = current_loss
+                            relative_drop = (current_loss - best_elbo) / abs(best_elbo)
+                            if relative_drop > max_elbo_drop:
+                                stop_message = (
+                                    "Stopping annealed learning: ELBO drop exceeded threshold "
+                                    f"at epoch {total_epochs} (drop={float(relative_drop):.4f} "
+                                    f"> {float(max_elbo_drop):.4f}, alpha={float(self.alpha):.4f})."
+                                )
+                                break
+                            best_elbo = min(best_elbo, current_loss)
+
+                            alpha_mult = jnp.asarray(
+                                (median_parents / target_parents) ** damping,
+                                dtype=alpha_jnp.dtype,
+                            )
+                            alpha_jnp = alpha_jnp * alpha_mult
+                            if alpha_max is not None and float(alpha_jnp) >= float(
+                                alpha_max
+                            ):
+                                alpha_jnp = jnp.minimum(
+                                    alpha_jnp,
+                                    jnp.asarray(alpha_max, dtype=alpha_jnp.dtype),
+                                )
+                                self.alpha = float(alpha_jnp)
+                                stop_message = (
+                                    "Stopping annealed learning: reached alpha_max at epoch "
+                                    f"{total_epochs} (alpha={float(self.alpha):.4f}, "
+                                    f"n_eff_parents={float(median_parents):.3f})."
+                                )
+                                break
+
+                            self.alpha = float(alpha_jnp)
                 else:
                     pbar.set_postfix(
                         {
@@ -1909,11 +1955,12 @@ class scDEF(object):
                     )
 
         except KeyboardInterrupt:
+            interrupted = True
             self.logger.info("Interrupted. Exiting safely...")
         finally:
             pbar.close()
 
-        if stop_message is None:
+        if stop_message is None and not interrupted:
             if anneal_alpha:
                 stop_message = (
                     "Stopping annealed learning: reached max epochs "
@@ -1941,6 +1988,15 @@ class scDEF(object):
         self.adata.uns[
             "n_eff_parents_trace_epochs"
         ] = self.n_eff_parents_trace_epochs.copy()
+        if anneal_alpha:
+            self.active_l0_factor_counts_trace = np.asarray(
+                active_l0_factor_counts_trace, dtype=int
+            )
+            self.adata.uns[
+                "active_l0_factor_counts_trace"
+            ] = self.active_l0_factor_counts_trace.copy()
+        else:
+            self.adata.uns.pop("active_l0_factor_counts_trace", None)
 
         self.set_posterior_means()
         self.set_posterior_variances()
