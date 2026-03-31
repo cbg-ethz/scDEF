@@ -249,6 +249,50 @@ def test_iscdef_refit_after_filtering():
         )
 
 
+def test_scdef_alpha_annealing_fit():
+    adata = sc.datasets.pbmc3k()
+    np.random.seed(13)
+    sc.pp.filter_cells(adata, min_genes=200)
+    sc.pp.filter_genes(adata, min_cells=3)
+    adata = adata[np.random.randint(adata.shape[0], size=120)]
+    adata.var["mt"] = adata.var_names.str.startswith("MT-")
+    sc.pp.calculate_qc_metrics(
+        adata, qc_vars=["mt"], percent_top=None, log1p=False, inplace=True
+    )
+    adata = adata[adata.obs.n_genes_by_counts < 2500, :]
+    adata = adata[adata.obs.pct_counts_mt < 5, :]
+    adata.raw = adata
+    raw_adata = adata.raw.to_adata()
+    raw_adata.X = raw_adata.X.toarray()
+    adata.X = adata.X.toarray()
+    sc.pp.normalize_total(adata, target_sum=1e4)
+    sc.pp.log1p(adata)
+    sc.pp.highly_variable_genes(
+        adata, min_mean=0.0125, max_mean=3, min_disp=0.5, n_top_genes=200
+    )
+    raw_adata = raw_adata[:, adata.var.highly_variable]
+
+    model = scd.scDEF(
+        raw_adata,
+        layer_sizes=[8, 4, 2],
+        seed=1,
+    )
+    alpha_before = float(model.alpha)
+    with patch.object(model, "_compute_median_parents", return_value=3.0):
+        model.fit(
+            n_epoch=3,
+            anneal_alpha=True,
+            check_every=1,
+            target_parents=1.5,
+            max_elbo_drop=1.0,
+            damping=0.5,
+        )
+
+    assert model.alpha > alpha_before
+    assert len(model.elbos) == 1
+    assert "L0" in model.adata.obs.columns
+
+
 def test_scdef_load_and_plotting_pipeline():
     model_dir = Path(__file__).resolve().parent / "pretrained_scdef_model"
     state_file = model_dir / "model_state.pkl"

@@ -119,7 +119,7 @@ class scDEF(object):
         batch_cpal: Optional[str] = "Dark2",
         layer_cpal: Optional[str] = "tab10",
         lightness_mult: Optional[float] = 0.15,
-        set_alpha_from_cov: Optional[bool] = True,
+        set_alpha_from_cov: Optional[bool] = False,
     ):
         self.n_cells, self.n_genes = adata.shape
 
@@ -550,7 +550,7 @@ class scDEF(object):
         if self.set_alpha_from_cov:
             self.alpha = (
                 float(self.batch_lib_sizes.mean()) / float(self.layer_sizes[0])
-            ) * (1.0 / float(np.mean(self.brd_mean)))
+            )
 
     def get_effective_factors(
         self,
@@ -934,6 +934,7 @@ class scDEF(object):
         stop_gradients,
         stop_cell_budgets,
         stop_gene_budgets,
+        alpha,
         min_shape=jnp.log(1e-10),
         max_shape=jnp.log(1e6),
         min_rate=jnp.log(1e-10),
@@ -1149,14 +1150,14 @@ class scDEF(object):
             # if idx == 0 and self.use_brd:
             #     z_mean = z_mean * _wm_sample.T
 
-            alpha = self.alpha * self.layer_sizes[idx] / self.layer_sizes[0]
+            alpha_layer = alpha * self.layer_sizes[idx] / self.layer_sizes[0]
             local_pl += jax.lax.cond(
                 idx == self.n_layers - 1,
                 lambda: gamma_logpdf(_z_sample, self.top_alpha, self.top_alpha),
                 lambda: gamma_logpdf(
                     _z_sample,
-                    alpha,
-                    alpha / (z_mean),
+                    alpha_layer,
+                    alpha_layer / (z_mean),
                 ),
             )
 
@@ -1227,11 +1228,13 @@ class scDEF(object):
         stop_gradients,
         stop_cell_budgets,
         stop_gene_budgets,
+        alpha,
     ):
         # Average over a batch of random samples.
         rngs = random.split(rng, num_samples)
         vectorized_elbo = vmap(
-            self.elbo, in_axes=(0, None, None, None, None, None, None, None, None)
+            self.elbo,
+            in_axes=(0, None, None, None, None, None, None, None, None, None),
         )
         return jnp.mean(
             vectorized_elbo(
@@ -1244,6 +1247,7 @@ class scDEF(object):
                 stop_gradients,
                 stop_cell_budgets,
                 stop_gene_budgets,
+                alpha,
             )
         )
 
@@ -1459,11 +1463,6 @@ class scDEF(object):
             init_w = np.array(self.pmeans["L0W"])[l0_keep]
             init_brd = np.array(self.pmeans["brd"])[l0_keep]
             init_ard = np.array(self.pmeans["factor_means"])[l0_keep]
-            if self.set_alpha_from_cov:
-                self.alpha = (
-                    float(self.batch_lib_sizes.mean()) / float(self.layer_sizes[0])
-                ) * (1.0 / float(np.mean(init_brd)))
-                self.logger.info(f"Updated alpha for refit: {self.alpha:.6g}")
         else:
             init_budgets = True
             init_alpha = True
@@ -1488,258 +1487,360 @@ class scDEF(object):
         self._has_fit = True
         self._fit_revision += 1
 
+    def _compute_median_parents(self, local_params=None, global_params=None):
+        """Estimate median effective parent count using variational means.
+
+        Uses only the minimal variational parameters needed for the metric and
+        avoids materializing full posterior summaries.
+        """
+        if self.n_layers < 2:
+            return 1.0
+
+        if local_params is None:
+            local_params = self.local_params
+        if global_params is None:
+            global_params = self.global_params
+
+        # Active L0 factors: BRD > 1, where BRD is posterior mean of
+        # factor_concentrations.
+        fscale_params = global_params[1]
+        brd = np.array(
+            jnp.exp(fscale_params[0] + 0.5 * jnp.exp(fscale_params[1]) ** 2)
+        ).ravel()
+        active_0 = np.where(brd > 1.0)[0]
+
+        # Active L1 factors: at least 1 cell assigned
+        z_params = local_params[1]
+        start1 = int(np.sum(self.layer_sizes[:1]))
+        end1 = start1 + int(self.layer_sizes[1])
+        z1 = np.array(
+            jnp.exp(
+                z_params[0][:, start1:end1]
+                + 0.5 * jnp.exp(z_params[1][:, start1:end1]) ** 2
+            )
+        )
+        assignments = np.argmax(z1, axis=1)
+        counts = np.array([np.sum(assignments == j) for j in range(self.layer_sizes[1])])
+        active_1 = np.where(counts >= 1)[0]
+
+        if len(active_0) == 0 or len(active_1) == 0:
+            return 1.0
+
+        # L1 -> L0 weight posterior means
+        w1_params = global_params[3]  # 2 + idx where idx=1
+        W1 = np.array(jnp.exp(w1_params[0] + 0.5 * jnp.exp(w1_params[1]) ** 2))[
+            np.ix_(active_1, active_0)
+        ]
+        p = W1 / np.clip(W1.sum(axis=0, keepdims=True), 1e-12, None)
+        H = -np.sum(p * np.log(p + 1e-12), axis=0)
+        n_parents = np.exp(H)
+
+        return np.median(n_parents)
+
+
     def _learn(
         self,
-        n_rounds: Optional[int] = 1,
-        n_epoch: Optional[int] = 1000,
-        lr: Optional[float] = 1e-2,
-        local_lr: Optional[float] = 1e-2,
-        annealing: Optional[float] = 1.0,
-        num_samples: Optional[int] = 100,
-        batch_size: Optional[int] = 256,
-        layerwise: Optional[bool] = False,
-        min_epochs: Optional[int] = 50,
-        tolerance: Optional[float] = 1e-5,
-        patience: Optional[int] = 50,
-        update_locals: Optional[bool] = True,
-        update_globals: Optional[bool] = True,
-        stop_cell_budgets: Optional[int] = 0,
-        stop_gene_budgets: Optional[int] = 0,
-        opt_layer: Optional[int] = None,
-        filter: Optional[bool] = True,
-        annotate: Optional[bool] = True,
+        n_rounds=1,
+        n_epoch=1000,
+        lr=1e-2,
+        local_lr=1e-2,
+        annealing=1.0,
+        num_samples=100,
+        batch_size=256,
+        layerwise=False,
+        min_epochs=50,
+        tolerance=1e-5,
+        patience=50,
+        update_locals=True,
+        update_globals=True,
+        stop_cell_budgets=0,
+        stop_gene_budgets=0,
+        opt_layer=None,
+        filter=True,
+        annotate=True,
+        # Alpha annealing
+        anneal_alpha=False,
+        check_every=50,
+        target_parents=1.5,
+        max_elbo_drop=0.05,
+        alpha_max=None,
+        damping=0.5,
         **kwargs,
     ):
-        """Fit a variational approximation to the posterior over scDEF parameters.
-
-        Args:
-            n_epoch: number of epochs (full passes of the data).
-                Can be a list of ints for multi-step learning. ``n_epochs`` is
-                also accepted as a backward-compatible alias.
-            lr: learning rate.
-                Can be a list of floats for multi-step learning.
-            annealing: scale factor for the entropy term.
-                Can be a list of floats for multi-step learning.
-            num_samples: number of Monte Carlo samples to use in the ELBO approximation.
-            batch_size: number of data points to use per iteration. If None, uses all.
-                Useful for data sets that do not fit in GPU memory.
-            layerwise: whether to optimize the model parameters in a step-wise manner:
-                first learn only Layer 0 and 1, and then 2, and then 3, and so on. The size of
-                the n_epoch or lr schedules will be ignored, only the first value will be used
-                and each step will use that n_epoch value.
-            min_epochs: minimum number of epochs for early stopping
-            tolerance: maximum relative change in loss for early stopping
-            patience: number of epochs for which tolerated loss changes must hold for early stopping
-            update_locals: whether to optimize the local parameters
-            update_globals: whether to optimize the global parameters
-
-        Notes:
-            If all optimization steps run with zero epochs (e.g. ``n_epoch=0``),
-            no BRD-based auto-filtering is applied at the end of learning.
-        """
         if "n_epochs" in kwargs:
             n_epoch = kwargs.pop("n_epochs")
-
-        n_steps = n_rounds
-        if layerwise:
-            n_steps = self.n_layers
-
-        n_epoch_schedule = [n_epoch] * n_steps
-        did_optimize = np.any(np.asarray(n_epoch_schedule, dtype=int) > 0)
-
-        if layerwise:
-            lr_schedule = [lr] * n_steps
-            local_lr_schedule = [local_lr] * n_steps
-        else:
-            lr_schedule = [lr * 0.5**step for step in range(n_steps)]
-            local_lr_schedule = [local_lr * 0.5**step for step in range(n_steps)]
-
-        annealing_schedule = [annealing] * n_steps
 
         if batch_size is None:
             batch_size = self.n_cells
 
-        # Set up jitted functions
-        stop_gradients = np.ones((self.n_layers))
-        layers_to_optimize = np.arange(self.n_layers)
+        num_complete_batches, leftover = divmod(self.n_cells, batch_size)
+        num_batches = num_complete_batches + bool(leftover)
+        self.logger.info(
+            f"Each epoch contains {num_batches} batches of size "
+            f"{int(min(batch_size, self.n_cells))}"
+        )
+
+        # --- Build JIT-compiled functions with alpha as a traced argument ---
 
         def objective(
-            X,
-            indices,
-            local_var_params,
-            global_var_params,
-            key,
-            annealing_parameter,
-            stop_gradients,
-            stop_cell_budgets,
-            stop_gene_budgets,
+            X, indices, local_var_params, global_var_params,
+            key, annealing_parameter, stop_gradients,
+            stop_cell_budgets, stop_gene_budgets, alpha,
         ):
             return -self.batch_elbo(
-                key,
-                X,
-                indices,
-                local_var_params,
-                global_var_params,
-                num_samples,
-                annealing_parameter,
-                stop_gradients,
-                stop_cell_budgets,
-                stop_gene_budgets,
-            )  # minimize -ELBO
+                key, X, indices, local_var_params, global_var_params,
+                num_samples, annealing_parameter, stop_gradients,
+                stop_cell_budgets, stop_gene_budgets, alpha,
+            )
 
-        def clip_params(
-            params, min_mu=-1e10, max_mu=1e4, min_logstd=-1e10, max_logstd=1e1
-        ):
-            for i in range(len(params))[:-2]:  # skip the last two params (w and s)
-                params[i] = (
-                    params[i].at[0].set(jnp.clip(params[i][0], min_mu, max_mu))
-                )  # mu
-                params[i] = (
-                    params[i].at[1].set(jnp.clip(params[i][1], min_logstd, max_logstd))
-                )  # logstd
+        def clip_params(params, min_mu=-1e10, max_mu=1e4,
+                        min_logstd=-1e10, max_logstd=1e1):
+            for i in range(len(params))[:-2]:
+                params[i] = params[i].at[0].set(
+                    jnp.clip(params[i][0], min_mu, max_mu)
+                )
+                params[i] = params[i].at[1].set(
+                    jnp.clip(params[i][1], min_logstd, max_logstd)
+                )
             return params
 
         local_loss_grad = jit(value_and_grad(objective, argnums=2))
         global_loss_grad = jit(value_and_grad(objective, argnums=3))
 
-        for i in range(len(n_epoch_schedule)):
-            n_epochs = n_epoch_schedule[i]
-            step_size = lr_schedule[i]
-            local_step_size = local_lr_schedule[i]
-            anneal_param = annealing_schedule[i]
-            self.logger.info(f"Initializing optimizer with learning rate {step_size}.")
-            if anneal_param != 1:
-                self.logger.info(f"Set annealing parameter to {anneal_param}.")
+        # --- Set up layer-wise stop gradients ---
 
-            local_optimizer = optax.adam(local_step_size)
-            global_optimizer = optax.adam(step_size)
+        stop_gradients = jnp.ones((self.n_layers,))
+        layers_to_optimize = jnp.arange(self.n_layers)
+        stop_gradients = stop_gradients.at[layers_to_optimize].set(0.0)
+        stop_cell_budgets = jnp.array(stop_cell_budgets)
+        stop_gene_budgets = jnp.array(stop_gene_budgets)
 
-            if layerwise:
-                if opt_layer is not None:
-                    if i != opt_layer:
-                        continue
-                    layers_to_optimize = np.array([i])
-                else:
-                    layers_to_optimize = np.array([i])
-                # layers_to_optimize = np.arange(2 + i)
-                # if i > 0:
-                #     layers_to_optimize = np.array([2+i-1])
-                self.logger.info(f"Optimizing layers {layers_to_optimize}")
-            stop_gradients[layers_to_optimize] = 0.0
+        # --- Initialize optimizers (once, persist across annealing blocks) ---
 
-            def local_update(
-                X,
-                indices,
-                i,
-                key,
-                local_params,
-                global_params,
-                local_opt_state,
-                global_opt_state,
-                annealing_parameter,
-                stop_gradients,
-                stop_cell_budgets,
-                stop_gene_budgets,
-            ):
-                value, gradient = local_loss_grad(
-                    X,
-                    indices,
-                    local_params,
-                    global_params,
-                    key,
-                    annealing_parameter,
-                    stop_gradients,
-                    stop_cell_budgets,
-                    stop_gene_budgets,
-                )
-                updates, local_opt_state = local_optimizer.update(
-                    gradient, local_opt_state, local_params
-                )
-                local_params = optax.apply_updates(local_params, updates)
-                local_params = clip_params(local_params)
-                return value, local_params, local_opt_state
+        local_optimizer = optax.adam(local_lr)
+        global_optimizer = optax.adam(lr)
+        local_opt_state = local_optimizer.init(self.local_params)
+        global_opt_state = global_optimizer.init(self.global_params)
 
-            def global_update(
-                X,
-                indices,
-                i,
-                key,
-                local_params,
-                global_params,
-                local_opt_state,
-                global_opt_state,
-                annealing_parameter,
-                stop_gradients,
-                stop_cell_budgets,
-                stop_gene_budgets,
-            ):
-                value, gradient = global_loss_grad(
-                    X,
-                    indices,
-                    local_params,
-                    global_params,
-                    key,
-                    annealing_parameter,
-                    stop_gradients,
-                    stop_cell_budgets,
-                    stop_gene_budgets,
-                )
-                updates, global_opt_state = global_optimizer.update(
-                    gradient, global_opt_state, global_params
-                )
-                global_params = optax.apply_updates(global_params, updates)
-                global_params = clip_params(global_params)
-                return value, global_params, global_opt_state, gradient
+        local_params = self.local_params
+        global_params = self.global_params
 
-            # local_opt_state = local_opt_init(self.local_params)
-            local_opt_state = local_optimizer.init(self.local_params)
-            # global_opt_state = global_opt_init(self.global_params)
-            global_opt_state = global_optimizer.init(self.global_params)
-
-            (
-                losses,
-                local_params,
-                global_params,
-                local_opt_state,
-                global_opt_state,
-                global_gradients,
-            ) = self._optimize(
-                local_update,
-                global_update,
-                self.local_params,
-                self.global_params,
-                local_opt_state,
-                global_opt_state,
-                n_epochs=n_epochs,
-                batch_size=batch_size,
-                annealing_parameter=anneal_param,
-                stop_gradients=stop_gradients,
-                stop_cell_budgets=stop_cell_budgets,
-                stop_gene_budgets=stop_gene_budgets,
-                min_epochs=min_epochs,
-                tolerance=tolerance,
-                patience=patience,
-                update_locals=update_locals,
-                update_globals=update_globals,
-                **kwargs,
+        def local_update(
+            X, indices, key, local_params, global_params,
+            local_opt_state, annealing_parameter, stop_gradients,
+            stop_cell_budgets, stop_gene_budgets, alpha,
+        ):
+            value, gradient = local_loss_grad(
+                X, indices, local_params, global_params, key,
+                annealing_parameter, stop_gradients,
+                stop_cell_budgets, stop_gene_budgets, alpha,
             )
-            if update_locals:
-                self.local_params = local_params
-            if update_globals:
-                self.global_params = global_params
-            self.elbos.append(losses)
-            self.step_sizes.append(lr_schedule[i])
+            updates, local_opt_state_new = local_optimizer.update(
+                gradient, local_opt_state, local_params
+            )
+            local_params_new = optax.apply_updates(local_params, updates)
+            local_params_new = clip_params(local_params_new)
+            return value, local_params_new, local_opt_state_new
+
+        def global_update(
+            X, indices, key, local_params, global_params,
+            global_opt_state, annealing_parameter, stop_gradients,
+            stop_cell_budgets, stop_gene_budgets, alpha,
+        ):
+            value, gradient = global_loss_grad(
+                X, indices, local_params, global_params, key,
+                annealing_parameter, stop_gradients,
+                stop_cell_budgets, stop_gene_budgets, alpha,
+            )
+            updates, global_opt_state_new = global_optimizer.update(
+                gradient, global_opt_state, global_params
+            )
+            global_params_new = optax.apply_updates(global_params, updates)
+            global_params_new = clip_params(global_params_new)
+            return value, global_params_new, global_opt_state_new
+
+        # --- Data stream ---
+
+        def data_stream():
+            rng = np.random.RandomState(0)
+            while True:
+                perm = rng.permutation(self.n_cells)
+                for i in range(num_batches):
+                    batch_idx = perm[i * batch_size : (i + 1) * batch_size]
+                    yield jnp.array(self.X[batch_idx]), jnp.array(batch_idx)
+
+        batches = data_stream()
+
+        # --- Main training loop ---
+
+        annealing_parameter = jnp.array(annealing)
+        alpha_jnp = jnp.asarray(self.alpha, dtype=jnp.float32)
+        rng = random.PRNGKey(self.seed)
+
+        all_losses = []
+        best_elbo = None
+        total_epochs = 0
+        epochs_since_alpha_change = 0
+        min_loss = np.inf
+        early_stop_counter = 0
+        alpha_trace = []
+        alpha_trace_epochs = []
+        n_eff_parents_trace = []
+        trace_epoch = []
+        if anneal_alpha and int(check_every) <= 0:
+            raise ValueError("check_every must be > 0 when anneal_alpha=True.")
+
+        pbar = tqdm(range(n_epoch))
+        try:
+            for epoch in pbar:
+                epoch_losses = []
+
+                for it in range(num_batches):
+                    rng, rng_input = random.split(rng)
+                    X, indices = next(batches)
+
+                    if update_locals:
+                        loss, local_params, local_opt_state = local_update(
+                            X, indices, rng_input, local_params, global_params,
+                            local_opt_state, annealing_parameter, stop_gradients,
+                            stop_cell_budgets, stop_gene_budgets, alpha_jnp,
+                        )
+                    if update_globals:
+                        loss, global_params, global_opt_state = global_update(
+                            X, indices, rng_input, local_params, global_params,
+                            global_opt_state, annealing_parameter, stop_gradients,
+                            stop_cell_budgets, stop_gene_budgets, alpha_jnp,
+                        )
+
+                    epoch_losses.append(loss)
+
+                current_loss = np.mean(epoch_losses)
+                all_losses.append(current_loss)
+                total_epochs += 1
+                epochs_since_alpha_change += 1
+                alpha_trace.append(float(self.alpha))
+                alpha_trace_epochs.append(int(total_epochs))
+
+                # --- Standard _learn behavior (no alpha annealing) ---
+                if not anneal_alpha and epochs_since_alpha_change >= min_epochs:
+                    if min_loss == np.inf:
+                        min_loss = current_loss
+
+                    relative_improvement = (min_loss - current_loss) / np.abs(min_loss)
+                    min_loss = min(min_loss, current_loss)
+
+                    if relative_improvement < tolerance:
+                        early_stop_counter += 1
+                    else:
+                        early_stop_counter = 0
+
+                    pbar.set_postfix(
+                        {
+                            "Loss": current_loss,
+                            "alpha": float(self.alpha),
+                            "Rel. impr.": relative_improvement,
+                        }
+                    )
+
+                    if early_stop_counter >= patience:
+                        self.logger.info(
+                            f"Converged at epoch {total_epochs}, alpha={self.alpha:.2f}"
+                        )
+                        break
+                # --- Alpha annealing mode: check every `check_every` epochs ---
+                elif anneal_alpha:
+                    latest_neff = (
+                        float(n_eff_parents_trace[-1])
+                        if len(n_eff_parents_trace) > 0
+                        else np.nan
+                    )
+                    pbar.set_postfix(
+                        {
+                            "Loss": current_loss,
+                            "alpha": float(self.alpha),
+                            "n_eff": latest_neff,
+                        }
+                    )
+                    if (total_epochs % int(check_every)) == 0:
+                        median_parents = self._compute_median_parents(
+                            local_params=local_params,
+                            global_params=global_params,
+                        )
+                        trace_epoch.append(int(total_epochs))
+                        n_eff_parents_trace.append(float(median_parents))
+                        checkpoint_postfix = {
+                            "Loss": current_loss,
+                            "alpha": float(self.alpha),
+                            "n_eff": float(median_parents),
+                        }
+                        if median_parents <= target_parents:
+                            checkpoint_postfix["status"] = "target_reached"
+                            pbar.set_postfix(checkpoint_postfix)
+                            break
+
+                        if best_elbo is None:
+                            best_elbo = current_loss
+                        relative_drop = (current_loss - best_elbo) / abs(best_elbo)
+                        if relative_drop > max_elbo_drop:
+                            checkpoint_postfix["elbo_drop"] = float(relative_drop)
+                            checkpoint_postfix["status"] = "elbo_drop_stop"
+                            pbar.set_postfix(checkpoint_postfix)
+                            break
+                        best_elbo = min(best_elbo, current_loss)
+
+                        alpha_mult = jnp.asarray(
+                            (median_parents / target_parents) ** damping,
+                            dtype=alpha_jnp.dtype,
+                        )
+                        alpha_jnp = alpha_jnp * alpha_mult
+                        if alpha_max is not None and float(alpha_jnp) >= float(alpha_max):
+                            alpha_jnp = jnp.minimum(
+                                alpha_jnp,
+                                jnp.asarray(alpha_max, dtype=alpha_jnp.dtype),
+                            )
+                            self.alpha = float(alpha_jnp)
+                            checkpoint_postfix["alpha"] = float(self.alpha)
+                            checkpoint_postfix["status"] = "alpha_max"
+                            pbar.set_postfix(checkpoint_postfix)
+                            break
+
+                        self.alpha = float(alpha_jnp)
+                        checkpoint_postfix["alpha"] = float(self.alpha)
+                        checkpoint_postfix["status"] = "annealed"
+                        pbar.set_postfix(checkpoint_postfix)
+                else:
+                    pbar.set_postfix({
+                        "Loss": current_loss,
+                        "alpha": float(self.alpha),
+                    })
+
+        except KeyboardInterrupt:
+            self.logger.info("Interrupted. Exiting safely...")
+
+        self.local_params = local_params
+        self.global_params = global_params
+        self.elbos.append(all_losses)
+        self.step_sizes.append(lr)
+        self.alpha_trace = np.asarray(alpha_trace, dtype=float)
+        self.alpha_trace_epochs = np.asarray(alpha_trace_epochs, dtype=int)
+        self.n_eff_parents_trace = np.asarray(n_eff_parents_trace, dtype=float)
+        self.n_eff_parents_trace_epochs = np.asarray(trace_epoch, dtype=int)
+        self.adata.uns["alpha_trace"] = self.alpha_trace.copy()
+        self.adata.uns["alpha_trace_epochs"] = self.alpha_trace_epochs.copy()
+        self.adata.uns["n_eff_parents_trace"] = self.n_eff_parents_trace.copy()
+        self.adata.uns["n_eff_parents_trace_epochs"] = (
+            self.n_eff_parents_trace_epochs.copy()
+        )
 
         self.set_posterior_means()
         self.set_posterior_variances()
-        if self.use_brd and filter and did_optimize:
+        if self.use_brd and filter:
             self.filter_factors(upper_only=True)
-        else:
-            if annotate:
-                self.make_layercolors(
-                    layer_cpal=self.layer_cpal, lightness_mult=self.lightness_mult
-                )
-                self.annotate_adata()
+        elif annotate:
+            self.make_layercolors(
+                layer_cpal=self.layer_cpal, lightness_mult=self.lightness_mult
+            )
+            self.annotate_adata()
 
     def set_posterior_means(self):
         cell_budget_params = self.local_params[0]
