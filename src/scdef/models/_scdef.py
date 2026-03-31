@@ -548,9 +548,7 @@ class scDEF(object):
             self.w_priors.append([prior_shapes, prior_rates])
 
         if self.set_alpha_from_cov:
-            self.alpha = (
-                float(self.batch_lib_sizes.mean()) / float(self.layer_sizes[0])
-            )
+            self.alpha = float(self.batch_lib_sizes.mean()) / float(self.layer_sizes[0])
 
     def get_effective_factors(
         self,
@@ -1520,7 +1518,9 @@ class scDEF(object):
             )
         )
         assignments = np.argmax(z1, axis=1)
-        counts = np.array([np.sum(assignments == j) for j in range(self.layer_sizes[1])])
+        counts = np.array(
+            [np.sum(assignments == j) for j in range(self.layer_sizes[1])]
+        )
         active_1 = np.where(counts >= 1)[0]
 
         if len(active_0) == 0 or len(active_1) == 0:
@@ -1536,7 +1536,6 @@ class scDEF(object):
         n_parents = np.exp(H)
 
         return np.median(n_parents)
-
 
     def _learn(
         self,
@@ -1583,24 +1582,38 @@ class scDEF(object):
         # --- Build JIT-compiled functions with alpha as a traced argument ---
 
         def objective(
-            X, indices, local_var_params, global_var_params,
-            key, annealing_parameter, stop_gradients,
-            stop_cell_budgets, stop_gene_budgets, alpha,
+            X,
+            indices,
+            local_var_params,
+            global_var_params,
+            key,
+            annealing_parameter,
+            stop_gradients,
+            stop_cell_budgets,
+            stop_gene_budgets,
+            alpha,
         ):
             return -self.batch_elbo(
-                key, X, indices, local_var_params, global_var_params,
-                num_samples, annealing_parameter, stop_gradients,
-                stop_cell_budgets, stop_gene_budgets, alpha,
+                key,
+                X,
+                indices,
+                local_var_params,
+                global_var_params,
+                num_samples,
+                annealing_parameter,
+                stop_gradients,
+                stop_cell_budgets,
+                stop_gene_budgets,
+                alpha,
             )
 
-        def clip_params(params, min_mu=-1e10, max_mu=1e4,
-                        min_logstd=-1e10, max_logstd=1e1):
+        def clip_params(
+            params, min_mu=-1e10, max_mu=1e4, min_logstd=-1e10, max_logstd=1e1
+        ):
             for i in range(len(params))[:-2]:
-                params[i] = params[i].at[0].set(
-                    jnp.clip(params[i][0], min_mu, max_mu)
-                )
-                params[i] = params[i].at[1].set(
-                    jnp.clip(params[i][1], min_logstd, max_logstd)
+                params[i] = params[i].at[0].set(jnp.clip(params[i][0], min_mu, max_mu))
+                params[i] = (
+                    params[i].at[1].set(jnp.clip(params[i][1], min_logstd, max_logstd))
                 )
             return params
 
@@ -1626,14 +1639,29 @@ class scDEF(object):
         global_params = self.global_params
 
         def local_update(
-            X, indices, key, local_params, global_params,
-            local_opt_state, annealing_parameter, stop_gradients,
-            stop_cell_budgets, stop_gene_budgets, alpha,
+            X,
+            indices,
+            key,
+            local_params,
+            global_params,
+            local_opt_state,
+            annealing_parameter,
+            stop_gradients,
+            stop_cell_budgets,
+            stop_gene_budgets,
+            alpha,
         ):
             value, gradient = local_loss_grad(
-                X, indices, local_params, global_params, key,
-                annealing_parameter, stop_gradients,
-                stop_cell_budgets, stop_gene_budgets, alpha,
+                X,
+                indices,
+                local_params,
+                global_params,
+                key,
+                annealing_parameter,
+                stop_gradients,
+                stop_cell_budgets,
+                stop_gene_budgets,
+                alpha,
             )
             updates, local_opt_state_new = local_optimizer.update(
                 gradient, local_opt_state, local_params
@@ -1643,14 +1671,29 @@ class scDEF(object):
             return value, local_params_new, local_opt_state_new
 
         def global_update(
-            X, indices, key, local_params, global_params,
-            global_opt_state, annealing_parameter, stop_gradients,
-            stop_cell_budgets, stop_gene_budgets, alpha,
+            X,
+            indices,
+            key,
+            local_params,
+            global_params,
+            global_opt_state,
+            annealing_parameter,
+            stop_gradients,
+            stop_cell_budgets,
+            stop_gene_budgets,
+            alpha,
         ):
             value, gradient = global_loss_grad(
-                X, indices, local_params, global_params, key,
-                annealing_parameter, stop_gradients,
-                stop_cell_budgets, stop_gene_budgets, alpha,
+                X,
+                indices,
+                local_params,
+                global_params,
+                key,
+                annealing_parameter,
+                stop_gradients,
+                stop_cell_budgets,
+                stop_gene_budgets,
+                alpha,
             )
             updates, global_opt_state_new = global_optimizer.update(
                 gradient, global_opt_state, global_params
@@ -1701,15 +1744,31 @@ class scDEF(object):
 
                     if update_locals:
                         loss, local_params, local_opt_state = local_update(
-                            X, indices, rng_input, local_params, global_params,
-                            local_opt_state, annealing_parameter, stop_gradients,
-                            stop_cell_budgets, stop_gene_budgets, alpha_jnp,
+                            X,
+                            indices,
+                            rng_input,
+                            local_params,
+                            global_params,
+                            local_opt_state,
+                            annealing_parameter,
+                            stop_gradients,
+                            stop_cell_budgets,
+                            stop_gene_budgets,
+                            alpha_jnp,
                         )
                     if update_globals:
                         loss, global_params, global_opt_state = global_update(
-                            X, indices, rng_input, local_params, global_params,
-                            global_opt_state, annealing_parameter, stop_gradients,
-                            stop_cell_budgets, stop_gene_budgets, alpha_jnp,
+                            X,
+                            indices,
+                            rng_input,
+                            local_params,
+                            global_params,
+                            global_opt_state,
+                            annealing_parameter,
+                            stop_gradients,
+                            stop_cell_budgets,
+                            stop_gene_budgets,
+                            alpha_jnp,
                         )
 
                     epoch_losses.append(loss)
@@ -1749,18 +1808,10 @@ class scDEF(object):
                         break
                 # --- Alpha annealing mode: check every `check_every` epochs ---
                 elif anneal_alpha:
-                    latest_neff = (
-                        float(n_eff_parents_trace[-1])
-                        if len(n_eff_parents_trace) > 0
-                        else np.nan
-                    )
-                    pbar.set_postfix(
-                        {
-                            "Loss": current_loss,
-                            "alpha": float(self.alpha),
-                            "n_eff": latest_neff,
-                        }
-                    )
+                    postfix = {"Loss": current_loss, "alpha": float(self.alpha)}
+                    if len(n_eff_parents_trace) > 0:
+                        postfix["n_eff"] = float(n_eff_parents_trace[-1])
+                    pbar.set_postfix(postfix)
                     if (total_epochs % int(check_every)) == 0:
                         median_parents = self._compute_median_parents(
                             local_params=local_params,
@@ -1768,23 +1819,29 @@ class scDEF(object):
                         )
                         trace_epoch.append(int(total_epochs))
                         n_eff_parents_trace.append(float(median_parents))
-                        checkpoint_postfix = {
-                            "Loss": current_loss,
-                            "alpha": float(self.alpha),
-                            "n_eff": float(median_parents),
-                        }
                         if median_parents <= target_parents:
-                            checkpoint_postfix["status"] = "target_reached"
-                            pbar.set_postfix(checkpoint_postfix)
+                            self.logger.info(
+                                "Stopping annealed learning: target reached at epoch %s "
+                                "(n_eff_parents=%.3f <= %.3f, alpha=%.4f).",
+                                total_epochs,
+                                float(median_parents),
+                                float(target_parents),
+                                float(self.alpha),
+                            )
                             break
 
                         if best_elbo is None:
                             best_elbo = current_loss
                         relative_drop = (current_loss - best_elbo) / abs(best_elbo)
                         if relative_drop > max_elbo_drop:
-                            checkpoint_postfix["elbo_drop"] = float(relative_drop)
-                            checkpoint_postfix["status"] = "elbo_drop_stop"
-                            pbar.set_postfix(checkpoint_postfix)
+                            self.logger.info(
+                                "Stopping annealed learning: ELBO drop exceeded threshold "
+                                "at epoch %s (drop=%.4f > %.4f, alpha=%.4f).",
+                                total_epochs,
+                                float(relative_drop),
+                                float(max_elbo_drop),
+                                float(self.alpha),
+                            )
                             break
                         best_elbo = min(best_elbo, current_loss)
 
@@ -1793,26 +1850,31 @@ class scDEF(object):
                             dtype=alpha_jnp.dtype,
                         )
                         alpha_jnp = alpha_jnp * alpha_mult
-                        if alpha_max is not None and float(alpha_jnp) >= float(alpha_max):
+                        if alpha_max is not None and float(alpha_jnp) >= float(
+                            alpha_max
+                        ):
                             alpha_jnp = jnp.minimum(
                                 alpha_jnp,
                                 jnp.asarray(alpha_max, dtype=alpha_jnp.dtype),
                             )
                             self.alpha = float(alpha_jnp)
-                            checkpoint_postfix["alpha"] = float(self.alpha)
-                            checkpoint_postfix["status"] = "alpha_max"
-                            pbar.set_postfix(checkpoint_postfix)
+                            self.logger.info(
+                                "Stopping annealed learning: reached alpha_max at epoch %s "
+                                "(alpha=%.4f, n_eff_parents=%.3f).",
+                                total_epochs,
+                                float(self.alpha),
+                                float(median_parents),
+                            )
                             break
 
                         self.alpha = float(alpha_jnp)
-                        checkpoint_postfix["alpha"] = float(self.alpha)
-                        checkpoint_postfix["status"] = "annealed"
-                        pbar.set_postfix(checkpoint_postfix)
                 else:
-                    pbar.set_postfix({
-                        "Loss": current_loss,
-                        "alpha": float(self.alpha),
-                    })
+                    pbar.set_postfix(
+                        {
+                            "Loss": current_loss,
+                            "alpha": float(self.alpha),
+                        }
+                    )
 
         except KeyboardInterrupt:
             self.logger.info("Interrupted. Exiting safely...")
@@ -1828,9 +1890,9 @@ class scDEF(object):
         self.adata.uns["alpha_trace"] = self.alpha_trace.copy()
         self.adata.uns["alpha_trace_epochs"] = self.alpha_trace_epochs.copy()
         self.adata.uns["n_eff_parents_trace"] = self.n_eff_parents_trace.copy()
-        self.adata.uns["n_eff_parents_trace_epochs"] = (
-            self.n_eff_parents_trace_epochs.copy()
-        )
+        self.adata.uns[
+            "n_eff_parents_trace_epochs"
+        ] = self.n_eff_parents_trace_epochs.copy()
 
         self.set_posterior_means()
         self.set_posterior_variances()
