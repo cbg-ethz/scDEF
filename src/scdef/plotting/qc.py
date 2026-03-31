@@ -409,9 +409,11 @@ def qc(
 
     if model.use_brd and has_alpha_trace and has_neff_trace:
         fig = plt.figure(figsize=figsize)
-        outer = fig.add_gridspec(2, 1, height_ratios=[1.0, 1.0], hspace=0.35)
+        outer = fig.add_gridspec(
+            4, 1, height_ratios=[1.0, 1.0, 0.85, 0.85], hspace=0.35
+        )
         top = outer[0].subgridspec(1, 3, wspace=0.35)
-        bottom = outer[1].subgridspec(1, 5, wspace=0.35)
+        middle = outer[1].subgridspec(1, 3, wspace=0.35)
 
         # First row: ELBO, n_eff_parents trace, alpha trace
         loss(model, ax=fig.add_subplot(top[0, 0]), show=False)
@@ -440,12 +442,13 @@ def qc(
             x_values=alpha_epochs,
         )
 
-        # Second row: BRD vs Gini, cell scale, gene scale, BRD, ARD
-        gini_brd(model, ax=fig.add_subplot(bottom[0, 0]), show=False)
-        scale(model, "cell", ax=fig.add_subplot(bottom[0, 1]), show=False)
-        scale(model, "gene", ax=fig.add_subplot(bottom[0, 2]), show=False)
-        relevance(model, mode="brd", ax=fig.add_subplot(bottom[0, 3]), show=False)
-        relevance(model, mode="ard", ax=fig.add_subplot(bottom[0, 4]), show=False)
+        # Second row: BRD vs Gini, cell scale, gene scale
+        gini_brd(model, ax=fig.add_subplot(middle[0, 0]), show=False)
+        scale(model, "cell", ax=fig.add_subplot(middle[0, 1]), show=False)
+        scale(model, "gene", ax=fig.add_subplot(middle[0, 2]), show=False)
+        # Third/Fourth rows: BRD and ARD as full-width panels
+        relevance(model, mode="brd", ax=fig.add_subplot(outer[2]), show=False)
+        relevance(model, mode="ard", ax=fig.add_subplot(outer[3]), show=False)
     elif model.use_brd:
         fig = plt.figure(figsize=figsize)
         gs = GridSpec(4, 2)
