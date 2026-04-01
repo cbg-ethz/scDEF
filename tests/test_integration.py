@@ -278,10 +278,13 @@ def test_scdef_alpha_annealing_fit():
         seed=1,
     )
     alpha_before = float(model.alpha)
-    with patch.object(model, "_compute_median_parents", return_value=(3.0, 3)):
+    with patch.object(
+        model, "_compute_median_parents", return_value=(3.0, 3)
+    ) as mocked:
         model.fit(
             n_epoch=3,
             anneal_alpha=True,
+            alpha_burn_in=2,
             check_every=1,
             target_parents=1.5,
             max_elbo_drop=1.0,
@@ -289,6 +292,7 @@ def test_scdef_alpha_annealing_fit():
         )
 
     assert model.alpha > alpha_before
+    assert mocked.call_count == 1
     assert len(model.elbos) == 1
     assert "L0" in model.adata.obs.columns
 

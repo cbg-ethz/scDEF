@@ -55,6 +55,13 @@ def _get_confident_signatures_cache(model: "scDEF") -> Dict[str, object]:
             "Confident signatures were not precomputed. "
             "Run `scd.tl.set_confident_signatures(model)` first."
         )
+    cache_fit_rev = int(cache.get("fit_revision", -1))
+    current_fit_rev = int(getattr(model, "_fit_revision", 0))
+    if cache_fit_rev != current_fit_rev:
+        raise KeyError(
+            "Stored confident signatures are stale for this fitted model. "
+            "Run `scd.tl.set_confident_signatures(model)` again."
+        )
     return cache
 
 

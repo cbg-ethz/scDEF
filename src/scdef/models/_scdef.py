@@ -1479,11 +1479,28 @@ class scDEF(object):
             max_cells=max_cells_init,
             z_init_concentration=z_init_concentration,
         )
+        self._invalidate_cached_diagnostics()
         self.elbos = []
         self.step_sizes = []
         self._learn(n_rounds=n_rounds, **kwargs)
         self._has_fit = True
         self._fit_revision += 1
+
+    def _invalidate_cached_diagnostics(self) -> None:
+        """Drop cached diagnostics/signatures that become stale after refit."""
+        if not hasattr(self, "adata") or self.adata is None:
+            return
+        if not hasattr(self.adata, "uns"):
+            return
+        for key in [
+            "_factor_obs_upper_lists_fixed",
+            "_factor_obs_fit_revision",
+            "factor_obs",
+            "factor_signatures",
+            "confident_signatures",
+            "technical_hierarchy",
+        ]:
+            self.adata.uns.pop(key, None)
 
     def _compute_median_parents(
         self,
@@ -1571,7 +1588,8 @@ class scDEF(object):
         annotate=True,
         # Alpha annealing
         anneal_alpha=False,
-        check_every=50,
+        alpha_burn_in=20,
+        check_every=20,
         target_parents=1.5,
         max_elbo_drop=0.05,
         alpha_max=None,
@@ -1613,6 +1631,7 @@ class scDEF(object):
                     filter=filter,
                     annotate=annotate,
                     anneal_alpha=False,
+                    alpha_burn_in=alpha_burn_in,
                     check_every=check_every,
                     target_parents=target_parents,
                     max_elbo_drop=max_elbo_drop,
@@ -1789,6 +1808,9 @@ class scDEF(object):
         alpha_updates_enabled = True
         if anneal_alpha and int(check_every) <= 0:
             raise ValueError("check_every must be > 0 when anneal_alpha=True.")
+        alpha_burn_in = int(alpha_burn_in)
+        if alpha_burn_in < 0:
+            raise ValueError("alpha_burn_in must be >= 0.")
 
         pbar = tqdm(range(n_epoch))
         try:
@@ -1884,7 +1906,8 @@ class scDEF(object):
                         )
                         break
 
-                    if (total_epochs % int(check_every)) == 0:
+                    anneal_epochs = total_epochs - alpha_burn_in
+                    if anneal_epochs > 0 and (anneal_epochs % int(check_every)) == 0:
                         median_parents, active_l0_count = self._compute_median_parents(
                             local_params=local_params,
                             global_params=global_params,
