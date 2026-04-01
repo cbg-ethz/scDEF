@@ -278,7 +278,7 @@ def test_scdef_alpha_annealing_fit():
         seed=1,
     )
     alpha_before = float(model.alpha)
-    with patch.object(model, "_compute_median_parents", return_value=3.0):
+    with patch.object(model, "_compute_median_parents", return_value=(3.0, 3)):
         model.fit(
             n_epoch=3,
             anneal_alpha=True,
