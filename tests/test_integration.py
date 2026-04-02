@@ -170,6 +170,26 @@ def test_scdef():
     for obs_value in ["B", "NK"]:
         sub = ranked[ranked["obs_value"] == obs_value]
         assert sub["score"].is_monotonic_decreasing
+    specific = scd.tl.get_obs_value_specific_factors(
+        model,
+        layer=0,
+        obs_key="celltypes",
+        obs_values=["B", "NK"],
+        score_model="fracs",
+        min_specificity=0.0,
+    )
+    assert set(specific.keys()) == {"B", "NK"}
+    specific_df = scd.tl.get_obs_value_specific_factors(
+        model,
+        layer=0,
+        obs_key="celltypes",
+        obs_values=["B", "NK"],
+        score_model="fracs",
+        min_specificity=0.0,
+        return_scores=True,
+    )
+    assert isinstance(specific_df, pd.DataFrame)
+    assert "specificity" in specific_df.columns
     entropy_cols = scd.tl.set_cell_entropies(model)
     assert len(entropy_cols) == model.n_layers
     for idx in range(model.n_layers):

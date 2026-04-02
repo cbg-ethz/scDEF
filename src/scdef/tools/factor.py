@@ -422,6 +422,92 @@ def get_obs_score_rankings(
     return df.drop(columns=["_obs_value_order"])
 
 
+def get_obs_value_specific_factors(
+    model: "scDEF",
+    layer: Union[int, str],
+    obs_key: str,
+    obs_values: Union[str, Sequence[str]],
+    score_model: Literal["f1", "fracs", "weights"] = "fracs",
+    min_specificity: float = 0.0,
+    top_n: Optional[int] = None,
+    recompute: bool = False,
+    return_scores: bool = False,
+) -> Union[Dict[str, List[str]], pd.DataFrame]:
+    """Get factors specific to each obs value in a layer.
+
+    Specificity is defined within the provided ``obs_values`` as:
+    ``specificity = score(obs_value) - max(score(other_obs_values))``.
+    Higher values indicate stronger specificity for that obs category.
+    """
+    if isinstance(obs_values, str):
+        obs_values = [obs_values]
+    obs_values = list(obs_values)
+    if len(obs_values) == 0:
+        raise ValueError("obs_values must contain at least one value.")
+
+    ranked = get_obs_score_rankings(
+        model=model,
+        layer=layer,
+        obs_key=obs_key,
+        obs_values=obs_values,
+        score_model=score_model,
+        recompute=recompute,
+        ascending=False,
+    )
+
+    score_table = ranked.pivot(index="factor", columns="obs_value", values="score")
+    rows: List[Dict[str, object]] = []
+    for obs_value in obs_values:
+        others = [v for v in obs_values if v != obs_value]
+        score_v = score_table[obs_value].to_numpy(dtype=float)
+        if len(others) == 0:
+            best_other = np.zeros_like(score_v)
+            best_other_name = np.array([""] * len(score_v), dtype=object)
+        else:
+            other_mat = score_table[others].to_numpy(dtype=float)
+            best_other_idx = np.argmax(other_mat, axis=1)
+            best_other = other_mat[np.arange(other_mat.shape[0]), best_other_idx]
+            best_other_name = np.asarray(others, dtype=object)[best_other_idx]
+
+        specificity = score_v - best_other
+        for i, factor_name in enumerate(score_table.index.tolist()):
+            rows.append(
+                {
+                    "factor": factor_name,
+                    "obs_value": obs_value,
+                    "score": float(score_v[i]),
+                    "best_other_obs_value": best_other_name[i],
+                    "best_other_score": float(best_other[i]),
+                    "specificity": float(specificity[i]),
+                }
+            )
+
+    spec_df = pd.DataFrame(rows)
+    spec_df = spec_df[spec_df["specificity"] >= float(min_specificity)].copy()
+    spec_df["layer"] = ranked["layer"].iloc[0]
+    spec_df["layer_idx"] = int(ranked["layer_idx"].iloc[0])
+    spec_df["obs_key"] = obs_key
+    spec_df["score_model"] = score_model
+    spec_df = spec_df.sort_values(
+        ["obs_value", "specificity", "score"],
+        ascending=[True, False, False],
+    )
+
+    if top_n is not None:
+        top_n = int(top_n)
+        spec_df = spec_df.groupby("obs_value", as_index=False, group_keys=False).head(
+            top_n
+        )
+
+    spec_df = spec_df.reset_index(drop=True)
+    if return_scores:
+        return spec_df
+    return {
+        obs_value: spec_df.loc[spec_df["obs_value"] == obs_value, "factor"].tolist()
+        for obs_value in obs_values
+    }
+
+
 def set_cell_entropies(
     model: "scDEF",
     layers: Optional[Sequence[Union[int, str]]] = None,
