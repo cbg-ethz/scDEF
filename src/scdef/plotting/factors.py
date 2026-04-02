@@ -549,6 +549,14 @@ def obs_scores(
         f,
         hierarchy=hierarchy,
     )
+    data_utils.cache_obs_factor_scores(
+        model=model,
+        obs_keys=obs_keys,
+        mode=mode,
+        obs_mats=obs_mats,
+        obs_clusters=obs_clusters,
+        obs_vals_dict=obs_vals_dict,
+    )
 
     if mode == "f1" or mode == "fracs":
         vmax = 1.0
@@ -818,6 +826,8 @@ def factors_bars(
 def cell_entropies(
     model: "scDEF",
     thres: float = 0.9,
+    entropy_suffix: str = "entropy",
+    effective_suffix: str = "effective_n_factors",
     show: bool = True,
 ) -> Optional[Figure]:
     """Plot cell entropies and factor numbers across layers.
@@ -825,34 +835,135 @@ def cell_entropies(
     Args:
         model: scDEF model instance
         thres: Threshold for cumulative sum calculation
+        entropy_suffix: suffix used by per-layer entropy columns in ``adata.obs``
+        effective_suffix: suffix used by per-layer effective-factor columns
         show: Whether to show the plot
     """
+    entropy_cols = [
+        f"{layer_name}_{entropy_suffix}" for layer_name in model.layer_names
+    ]
+    effective_cols = [
+        f"{layer_name}_{effective_suffix}" for layer_name in model.layer_names
+    ]
+    missing_cols = [
+        c for c in entropy_cols + effective_cols if c not in model.adata.obs.columns
+    ]
+    if len(missing_cols) > 0:
+        from ..tools.factor import set_cell_entropies
+
+        set_cell_entropies(
+            model,
+            layers=model.layer_names,
+            key_suffix=entropy_suffix,
+            effective_suffix=effective_suffix,
+        )
+
     entropies = []
     factor_ns = []
-    for layer_idx in range(4):
+    for layer_idx in range(model.n_layers):
         layer_name = model.layer_names[layer_idx]
-        nf = len(model.factor_lists[layer_idx])
-        a = (
-            model.adata.obsm[f"X_{layer_name}factors"]
-            / np.sum(model.adata.obsm[f"X_{layer_name}factors"], axis=1)[:, None]
+        factor_ns.append(
+            np.asarray(model.adata.obs[f"{layer_name}_{effective_suffix}"])
         )
-        a_sorted = np.vstack(
-            [a[i, np.argsort(a, axis=1)[:, ::-1][i]] for i in range(a.shape[0])]
-        )
-        a_cumsums = np.cumsum(a_sorted, axis=1)
-        n_factors = np.array(
-            [(np.where(a_cumsums[i] > thres)[0][0] + 1) for i in range(a.shape[0])]
-        )
-        factor_ns.append(n_factors)
-        entropy = np.array(
-            [np.sum(-np.log(a[i]) * a[i]) / np.log(nf) for i in range(a.shape[0])]
-        )
-        entropies.append(entropy)
+        entropies.append(np.asarray(model.adata.obs[f"{layer_name}_{entropy_suffix}"]))
     fig, axes = plt.subplots(1, 2)
     plt.sca(axes[0])
     plt.boxplot(entropies)
+    axes[0].set_title("Cell entropy per layer")
+    axes[0].set_ylabel("Normalized entropy")
+    axes[0].set_xticks(np.arange(1, model.n_layers + 1))
+    axes[0].set_xticklabels(model.layer_names, rotation=45, ha="right")
     plt.sca(axes[1])
     plt.boxplot(factor_ns)
+    axes[1].set_title("Effective # factors per cell (exp(H))")
+    axes[1].set_ylabel("Effective # factors")
+    axes[1].set_xticks(np.arange(1, model.n_layers + 1))
+    axes[1].set_xticklabels(model.layer_names, rotation=45, ha="right")
+    fig.tight_layout()
+    if show:
+        plt.show()
+    else:
+        return fig
+
+
+def within_group_pairwise_dissimilarity(
+    model: "scDEF",
+    layer: Union[int, str],
+    obs_key: str,
+    metric: Literal["jsd", "euclidean", "cosine"] = "jsd",
+    kind: Literal["box", "violin"] = "box",
+    showfliers: bool = False,
+    figsize: Tuple[float, float] = (8, 4),
+    show: bool = True,
+) -> Optional[Figure]:
+    """Plot within-group pairwise dissimilarity distributions.
+
+    Uses cached results from
+    ``model.adata.uns['within_group_pairwise_dissimilarity']`` when available,
+    otherwise computes them with
+    ``scd.tl.compute_within_group_pairwise_dissimilarity``.
+    """
+    from ..tools.factor import compute_within_group_pairwise_dissimilarity
+
+    if isinstance(layer, str):
+        if layer not in model.layer_names:
+            raise ValueError(f"Unknown layer '{layer}'. Valid: {model.layer_names}.")
+        layer_name = layer
+    else:
+        layer_idx = int(layer)
+        if layer_idx < 0 or layer_idx >= model.n_layers:
+            raise ValueError(f"layer must be in [0, {model.n_layers - 1}].")
+        layer_name = model.layer_names[layer_idx]
+
+    cache_root = model.adata.uns.get("within_group_pairwise_dissimilarity", {})
+    cache_key = f"{layer_name}::{obs_key}::{metric}"
+    cached = cache_root.get(cache_key, None)
+    current_fit_rev = int(getattr(model, "_fit_revision", 0))
+    if cached is None or int(cached.get("fit_revision", -1)) != current_fit_rev:
+        summary_df = compute_within_group_pairwise_dissimilarity(
+            model, layer=layer_name, obs_key=obs_key, metric=metric
+        )
+        cache_root = model.adata.uns.get("within_group_pairwise_dissimilarity", {})
+        cached = cache_root.get(cache_key, None)
+    else:
+        summary_df = pd.DataFrame(cached.get("summary", []))
+
+    if cached is None:
+        raise RuntimeError(
+            "Could not load or compute within-group dissimilarity cache."
+        )
+
+    distributions = cached.get("distributions", {})
+    if len(summary_df) == 0:
+        raise ValueError("No groups found to plot.")
+
+    group_order = summary_df["obs_value"].astype(str).tolist()
+    data = [np.asarray(distributions.get(g, []), dtype=float) for g in group_order]
+    data = [d for d in data if d.size > 0]
+    group_order = [g for g in group_order if len(distributions.get(g, [])) > 0]
+
+    if len(data) == 0:
+        raise ValueError(
+            f"No within-group pairwise distances available for obs_key='{obs_key}'."
+        )
+
+    fig, ax = plt.subplots(figsize=figsize)
+    if kind == "box":
+        ax.boxplot(data, labels=group_order, showfliers=showfliers)
+    elif kind == "violin":
+        vp = ax.violinplot(data, showmeans=True, showmedians=False)
+        for body in vp["bodies"]:
+            body.set_alpha(0.6)
+        ax.set_xticks(np.arange(1, len(group_order) + 1))
+        ax.set_xticklabels(group_order)
+    else:
+        raise ValueError("kind must be one of ['box', 'violin'].")
+
+    ax.set_title(f"Within-group {metric.upper()} dissimilarity ({layer_name})")
+    ax.set_xlabel(obs_key)
+    ax.set_ylabel("Pairwise distance")
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
+    fig.tight_layout()
     if show:
         plt.show()
     else:

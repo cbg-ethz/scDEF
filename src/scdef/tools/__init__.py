@@ -9,7 +9,10 @@ from .hierarchy import (
     compute_hierarchy_scores,
 )
 from .factor import (
+    compute_within_group_pairwise_dissimilarity,
     factor_diagnostics,
+    get_obs_score_rankings,
+    set_cell_entropies,
     set_confident_signatures,
     get_stored_confident_signatures,
     set_factor_signatures,
@@ -26,7 +29,10 @@ __all__ = [
     "make_hierarchies",
     "make_biological_hierarchy",
     "make_technical_hierarchy",
+    "compute_within_group_pairwise_dissimilarity",
     "factor_diagnostics",
+    "get_obs_score_rankings",
+    "set_cell_entropies",
     "set_confident_signatures",
     "get_stored_confident_signatures",
     "set_factor_signatures",

@@ -1498,6 +1498,8 @@ class scDEF(object):
             "factor_obs",
             "factor_signatures",
             "confident_signatures",
+            "obs_scores",
+            "within_group_pairwise_dissimilarity",
             "technical_hierarchy",
         ]:
             self.adata.uns.pop(key, None)

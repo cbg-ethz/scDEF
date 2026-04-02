@@ -142,6 +142,46 @@ def test_scdef():
             hierarchy=true_hierarchy,
             show=False,
         )
+    assert "obs_scores" in model.adata.uns
+    assert "fracs" in model.adata.uns["obs_scores"]
+    ranked = scd.tl.get_obs_score_rankings(
+        model,
+        layer=0,
+        obs_key="celltypes",
+        obs_values=["B", "NK"],
+        score_model="fracs",
+    )
+    assert isinstance(ranked, pd.DataFrame)
+    assert len(ranked) == 2 * len(model.factor_names[0])
+    assert set(ranked["obs_value"].unique()) == {"B", "NK"}
+    assert "score" in ranked.columns
+    for obs_value in ["B", "NK"]:
+        sub = ranked[ranked["obs_value"] == obs_value]
+        assert sub["score"].is_monotonic_decreasing
+    entropy_cols = scd.tl.set_cell_entropies(model)
+    assert len(entropy_cols) == model.n_layers
+    for idx in range(model.n_layers):
+        col = f"{model.layer_names[idx]}_entropy"
+        assert col in model.adata.obs.columns
+        eff_col = f"{model.layer_names[idx]}_effective_n_factors"
+        assert eff_col in model.adata.obs.columns
+    jsd_df = scd.tl.compute_within_group_pairwise_dissimilarity(
+        model,
+        layer=0,
+        obs_key="celltypes",
+        metric="jsd",
+    )
+    assert isinstance(jsd_df, pd.DataFrame)
+    assert "mean_distance" in jsd_df.columns
+    assert "within_group_pairwise_dissimilarity" in model.adata.uns
+    scd.pl.within_group_pairwise_dissimilarity(
+        model,
+        layer=0,
+        obs_key="celltypes",
+        metric="jsd",
+        kind="box",
+        show=False,
+    )
 
     scd.tl.factor_diagnostics(model, recompute=True)
     scd.tl.set_technical_factors(model, factors=[model.factor_names[0][0]])

@@ -9,6 +9,7 @@ import scanpy as sc
 import decoupler
 from scipy.cluster.hierarchy import ward, leaves_list
 from scipy.spatial.distance import pdist
+from typing import Any, Dict, Sequence, Literal
 from . import score_utils
 
 
@@ -155,6 +156,49 @@ def prepare_obs_factor_scores(
         obs_joined_mats[obs_key] = joined_mats
         obs_clusters[obs_key] = hclust_index
     return obs_mats, obs_clusters, obs_vals_dict
+
+
+def cache_obs_factor_scores(
+    model,
+    obs_keys: Sequence[str],
+    mode: Literal["f1", "fracs", "weights"],
+    obs_mats: Dict[str, list],
+    obs_clusters: Dict[str, np.ndarray],
+    obs_vals_dict: Dict[str, list],
+) -> None:
+    """Store obs-factor score matrices in ``model.adata.uns``.
+
+    Cached payload schema:
+    ``model.adata.uns["obs_scores"][mode]["obs_keys"][obs_key]`` with
+    per-layer score matrices (rows=obs values, cols=factors), row clusters,
+    factor names and metadata.
+    """
+    if not isinstance(obs_keys, list):
+        obs_keys = list(obs_keys)
+
+    fit_rev = int(getattr(model, "_fit_revision", 0))
+    root = model.adata.uns.setdefault("obs_scores", {})
+    mode_cache: Dict[str, Any] = root.get(mode, {})
+    if int(mode_cache.get("fit_revision", -1)) != fit_rev:
+        mode_cache = {"fit_revision": fit_rev, "obs_keys": {}}
+
+    for obs_key in obs_keys:
+        layer_payload: Dict[str, Any] = {}
+        mats = obs_mats[obs_key]
+        for layer_idx, mat in enumerate(mats):
+            layer_payload[str(int(layer_idx))] = {
+                "layer_name": model.layer_names[layer_idx],
+                "factor_names": list(model.factor_names[layer_idx]),
+                "scores": np.asarray(mat, dtype=float).tolist(),
+            }
+        mode_cache["obs_keys"][obs_key] = {
+            "obs_values": list(obs_vals_dict[obs_key]),
+            "cluster_order": np.asarray(obs_clusters[obs_key], dtype=int).tolist(),
+            "layers": layer_payload,
+        }
+
+    root[mode] = mode_cache
+    model.adata.uns["obs_scores"] = root
 
 
 def prepare_continuous_factor_scores(model, obs_keys, get_scores_func, **kwargs):

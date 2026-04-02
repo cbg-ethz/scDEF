@@ -5,10 +5,11 @@ import matplotlib as mpl
 import copy
 from scipy.stats import norm
 from scipy.ndimage import uniform_filter1d
+from scipy.spatial.distance import pdist
 from sklearn.preprocessing import minmax_scale
 import pandas as pd
 from .hierarchy import get_hierarchy, compute_hierarchy_scores
-from typing import Optional, Sequence, Dict, List, Tuple, Union, TYPE_CHECKING
+from typing import Optional, Sequence, Dict, List, Tuple, Union, TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from scdef.models._scdef import scDEF
@@ -303,6 +304,275 @@ def set_factor_signatures(
             signatures.update(layer_sigs)
     model.adata.uns["factor_signatures"] = signatures
     return signatures
+
+
+def get_obs_score_rankings(
+    model: "scDEF",
+    layer: Union[int, str],
+    obs_key: str,
+    obs_values: Union[str, Sequence[str]],
+    score_model: Literal["f1", "fracs", "weights"] = "fracs",
+    ascending: bool = False,
+    recompute: bool = False,
+) -> pd.DataFrame:
+    """Return per-obs-value factor rankings by observation association score.
+
+    This reads cached matrices from ``model.adata.uns['obs_scores']`` (written by
+    ``scd.pl.obs_scores``). If cache is missing/stale for the requested key/model,
+    it is recomputed on demand for the requested ``obs_key`` and ``score_model``.
+    """
+    if isinstance(layer, str):
+        if layer not in model.layer_names:
+            raise ValueError(f"Unknown layer '{layer}'. Valid: {model.layer_names}.")
+        layer_idx = model.layer_names.index(layer)
+    else:
+        layer_idx = int(layer)
+    if layer_idx < 0 or layer_idx >= model.n_layers:
+        raise ValueError(f"layer must be in [0, {model.n_layers - 1}].")
+
+    if isinstance(obs_values, str):
+        obs_values = [obs_values]
+    obs_values = list(obs_values)
+    if len(obs_values) == 0:
+        raise ValueError("obs_values must contain at least one value.")
+
+    from ..utils import data_utils
+
+    fit_rev = int(getattr(model, "_fit_revision", 0))
+    cache_root = model.adata.uns.get("obs_scores", {})
+    mode_cache = cache_root.get(score_model, {})
+    need_recompute = recompute
+    if int(mode_cache.get("fit_revision", -1)) != fit_rev:
+        need_recompute = True
+    if "obs_keys" not in mode_cache or obs_key not in mode_cache["obs_keys"]:
+        need_recompute = True
+
+    if need_recompute:
+        if score_model == "f1":
+            score_func = data_utils.get_assignment_scores
+        elif score_model == "fracs":
+            score_func = data_utils.get_assignment_fracs
+        elif score_model == "weights":
+            score_func = data_utils.get_weight_scores
+        else:
+            raise ValueError("score_model must be one of ['f1', 'fracs', 'weights'].")
+
+        obs_mats, obs_clusters, obs_vals_dict = data_utils.prepare_obs_factor_scores(
+            model,
+            [obs_key],
+            score_func,
+        )
+        data_utils.cache_obs_factor_scores(
+            model=model,
+            obs_keys=[obs_key],
+            mode=score_model,
+            obs_mats=obs_mats,
+            obs_clusters=obs_clusters,
+            obs_vals_dict=obs_vals_dict,
+        )
+        cache_root = model.adata.uns.get("obs_scores", {})
+        mode_cache = cache_root.get(score_model, {})
+
+    obs_entry = mode_cache["obs_keys"][obs_key]
+    available_obs_values = list(obs_entry["obs_values"])
+    missing = [v for v in obs_values if v not in available_obs_values]
+    if len(missing) > 0:
+        raise ValueError(
+            f"obs_values {missing} not found for obs_key '{obs_key}'. "
+            f"Available values: {available_obs_values}."
+        )
+
+    layer_entry = obs_entry["layers"][str(int(layer_idx))]
+    factor_names = list(layer_entry["factor_names"])
+    score_mat = np.asarray(layer_entry["scores"], dtype=float)
+    row_idx = [available_obs_values.index(v) for v in obs_values]
+    selected = score_mat[row_idx, :]
+    if selected.ndim == 1:
+        selected = selected[None, :]
+
+    per_obs_frames = []
+    for i, obs_value in enumerate(obs_values):
+        per_obs_frames.append(
+            pd.DataFrame(
+                {
+                    "factor": factor_names,
+                    "layer": model.layer_names[layer_idx],
+                    "layer_idx": int(layer_idx),
+                    "obs_key": obs_key,
+                    "obs_value": obs_value,
+                    "score_model": score_model,
+                    "score": selected[i, :],
+                }
+            )
+        )
+    df = pd.concat(per_obs_frames, axis=0, ignore_index=True)
+    obs_order = {v: i for i, v in enumerate(obs_values)}
+    df["_obs_value_order"] = df["obs_value"].map(obs_order)
+    df = df.sort_values(
+        by=["_obs_value_order", "score"],
+        ascending=[True, ascending],
+    ).reset_index(drop=True)
+    return df.drop(columns=["_obs_value_order"])
+
+
+def set_cell_entropies(
+    model: "scDEF",
+    layers: Optional[Sequence[Union[int, str]]] = None,
+    key_suffix: str = "entropy",
+    effective_suffix: str = "effective_n_factors",
+    normalize: bool = True,
+    eps: float = 1e-12,
+) -> List[str]:
+    """Compute per-cell assignment entropy and store one column per layer.
+
+    For each selected layer, uses ``model.adata.obsm[f"X_{layer_name}"]`` to
+    build per-cell membership probabilities and computes Shannon entropy.
+
+    If ``normalize=True``, entropy is divided by ``log(n_factors_layer)`` so
+    values are approximately in ``[0, 1]`` (for layers with >1 factors).
+
+    Also stores an effective number of factors per cell, defined as
+    ``exp(H)`` where ``H`` is the non-normalized Shannon entropy.
+
+    Returns:
+        List of created/updated entropy column names.
+    """
+    if layers is None:
+        layer_indices = list(range(model.n_layers))
+    else:
+        layer_indices = []
+        for layer in layers:
+            if isinstance(layer, str):
+                if layer not in model.layer_names:
+                    raise ValueError(
+                        f"Unknown layer '{layer}'. Valid: {model.layer_names}."
+                    )
+                layer_indices.append(model.layer_names.index(layer))
+            else:
+                layer_idx = int(layer)
+                if layer_idx < 0 or layer_idx >= model.n_layers:
+                    raise ValueError(f"layer must be in [0, {model.n_layers - 1}].")
+                layer_indices.append(layer_idx)
+
+    created_cols: List[str] = []
+    for layer_idx in layer_indices:
+        layer_name = model.layer_names[layer_idx]
+        obsm_key = f"X_{layer_name}"
+        if obsm_key not in model.adata.obsm:
+            raise KeyError(
+                f"Missing '{obsm_key}' in model.adata.obsm. "
+                "Run `model.annotate_adata()` (or `model.fit(...)`) first."
+            )
+
+        x = np.asarray(model.adata.obsm[obsm_key], dtype=float)
+        if x.ndim != 2:
+            raise ValueError(f"{obsm_key} must be a 2D array.")
+        probs = x / np.clip(x.sum(axis=1, keepdims=True), eps, None)
+        ent_raw = -np.sum(probs * np.log(np.clip(probs, eps, None)), axis=1)
+        ent = ent_raw.copy()
+        if normalize:
+            n_factors = x.shape[1]
+            if n_factors > 1:
+                ent = ent / np.log(float(n_factors))
+            else:
+                ent = np.zeros_like(ent)
+
+        col = f"{layer_name}_{key_suffix}"
+        model.adata.obs[col] = ent
+        eff_col = f"{layer_name}_{effective_suffix}"
+        model.adata.obs[eff_col] = np.exp(ent_raw)
+        created_cols.append(col)
+
+    return created_cols
+
+
+def compute_within_group_pairwise_dissimilarity(
+    model: "scDEF",
+    layer: Union[int, str],
+    obs_key: str,
+    metric: Literal["jsd", "euclidean", "cosine"] = "jsd",
+    eps: float = 1e-12,
+) -> pd.DataFrame:
+    """Compute within-group pairwise cell dissimilarity for one layer.
+
+    Cells are represented by normalized factor memberships from
+    ``model.adata.obsm[f"X_{layer_name}"]``. Pairwise distances are computed
+    within each category of ``obs_key`` and summarized per group.
+
+    Results are cached in ``model.adata.uns['within_group_pairwise_dissimilarity']``.
+    """
+    if obs_key not in model.adata.obs.columns:
+        raise KeyError(f"obs_key '{obs_key}' not found in model.adata.obs.")
+
+    if isinstance(layer, str):
+        if layer not in model.layer_names:
+            raise ValueError(f"Unknown layer '{layer}'. Valid: {model.layer_names}.")
+        layer_idx = model.layer_names.index(layer)
+    else:
+        layer_idx = int(layer)
+    if layer_idx < 0 or layer_idx >= model.n_layers:
+        raise ValueError(f"layer must be in [0, {model.n_layers - 1}].")
+
+    layer_name = model.layer_names[layer_idx]
+    x_key = f"X_{layer_name}"
+    if x_key not in model.adata.obsm:
+        raise KeyError(
+            f"Missing '{x_key}' in model.adata.obsm. "
+            "Run `model.annotate_adata()` (or `model.fit(...)`) first."
+        )
+
+    x = np.asarray(model.adata.obsm[x_key], dtype=float)
+    x = x / np.clip(x.sum(axis=1, keepdims=True), eps, None)
+    groups = model.adata.obs[obs_key]
+    group_values = list(pd.unique(groups))
+
+    metric_name = "jensenshannon" if metric == "jsd" else metric
+    summary_rows = []
+    distributions: Dict[str, List[float]] = {}
+
+    for group_value in group_values:
+        mask = np.asarray(groups == group_value)
+        group_x = x[mask]
+        n_cells = int(group_x.shape[0])
+        if n_cells < 2:
+            dists = np.array([], dtype=float)
+        else:
+            dists = pdist(group_x, metric=metric_name).astype(float)
+        distributions[str(group_value)] = dists.tolist()
+
+        summary_rows.append(
+            {
+                "layer_idx": int(layer_idx),
+                "layer": layer_name,
+                "obs_key": obs_key,
+                "obs_value": group_value,
+                "metric": metric,
+                "n_cells": n_cells,
+                "n_pairs": int(dists.size),
+                "mean_distance": float(np.mean(dists)) if dists.size > 0 else np.nan,
+                "median_distance": float(np.median(dists))
+                if dists.size > 0
+                else np.nan,
+                "std_distance": float(np.std(dists)) if dists.size > 0 else np.nan,
+            }
+        )
+
+    summary_df = pd.DataFrame(summary_rows).sort_values(
+        "mean_distance", ascending=False, na_position="last"
+    )
+    cache = model.adata.uns.get("within_group_pairwise_dissimilarity", {})
+    cache_key = f"{layer_name}::{obs_key}::{metric}"
+    cache[cache_key] = {
+        "fit_revision": int(getattr(model, "_fit_revision", 0)),
+        "layer_idx": int(layer_idx),
+        "layer": layer_name,
+        "obs_key": obs_key,
+        "metric": metric,
+        "summary": summary_df.to_dict(orient="records"),
+        "distributions": distributions,
+    }
+    model.adata.uns["within_group_pairwise_dissimilarity"] = cache
+    return summary_df.reset_index(drop=True)
 
 
 def get_confident_signatures(
