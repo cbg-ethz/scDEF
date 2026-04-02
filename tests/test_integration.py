@@ -133,6 +133,18 @@ def test_scdef():
     cached_sigs = scd.tl.set_factor_signatures(model, top_genes=top_k)
     for factor_name, sig in confident_all.items():
         assert cached_sigs[factor_name] == sig
+    ranked_terms, ranked_scores = model.get_rankings(
+        layer_idx=0, top_genes=top_k, return_scores=True
+    )
+    expected_terms, expected_scores = scd.tl.get_stored_confident_signatures(
+        model,
+        layer_idx=0,
+        max_genes=top_k,
+        return_combined_scores=True,
+    )
+    for factor_idx, factor_name in enumerate(model.factor_names[0]):
+        assert ranked_terms[factor_idx] == expected_terms[factor_name]
+        assert np.allclose(ranked_scores[factor_idx], expected_scores[factor_name])
 
     for mode in ["f1", "fracs", "weights"]:
         scd.pl.obs_scores(

@@ -2412,7 +2412,9 @@ class scDEF(object):
         Args:
             layer_idx: layer index to get rankings for
             top_genes: number of top genes/factors to return
-            genes: whether to return gene rankings (True) or factor rankings (False)
+            genes: whether to return gene rankings (True) or factor rankings (False).
+                Gene rankings use cached confidence+mean combined scores when
+                ``sorted_scores=True`` and ``drop_factors`` is not provided.
             return_scores: whether to return scores along with rankings
             sorted_scores: whether to return scores sorted by ranking
             drop_factors: list of factors to drop from rankings
@@ -2420,8 +2422,48 @@ class scDEF(object):
         Returns:
             list of rankings per factor, or tuple of (rankings, scores) if return_scores is True
         """
+        top_genes_provided = top_genes is not None
         if top_genes is None:
             top_genes = len(self.adata.var_names)
+
+        if (
+            genes
+            and sorted_scores
+            and top_genes_provided
+            and (drop_factors is None or len(drop_factors) == 0)
+        ):
+            from scdef.tools.factor import (
+                get_stored_confident_signatures,
+                set_confident_signatures,
+            )
+
+            try:
+                top_terms_dict, top_scores_dict = get_stored_confident_signatures(
+                    self,
+                    layer_idx=layer_idx,
+                    max_genes=int(top_genes),
+                    return_combined_scores=True,
+                )
+            except KeyError:
+                set_confident_signatures(self)
+                top_terms_dict, top_scores_dict = get_stored_confident_signatures(
+                    self,
+                    layer_idx=layer_idx,
+                    max_genes=int(top_genes),
+                    return_combined_scores=True,
+                )
+
+            top_terms = []
+            top_scores = []
+            for factor_name in self.factor_names[layer_idx]:
+                genes_k = list(top_terms_dict.get(factor_name, []))
+                scores_k = np.asarray(top_scores_dict.get(factor_name, []), dtype=float)
+                top_terms.append(genes_k)
+                top_scores.append(scores_k.tolist())
+
+            if return_scores:
+                return top_terms, top_scores
+            return top_terms
 
         term_names = np.array(self.adata.var_names)
         factor_names_0 = np.array(self.factor_names[0])
@@ -2727,37 +2769,6 @@ class scDEF(object):
         self.logger.info(summary)
 
         return summary
-
-    def get_enrichments(
-        self,
-        libs: List[str] = ["KEGG_2019_Human"],
-        gene_rankings: Optional[List[List[str]]] = None,
-    ) -> List[Any]:
-        """Get gene set enrichments for factor signatures using gseapy.
-
-        Args:
-            libs: list of gene set library names to use
-            gene_rankings: gene rankings for each factor, if None will be computed
-
-        Returns:
-            list of enrichment results, one per factor
-        """
-        import gseapy as gp
-
-        if gene_rankings is None:
-            gene_rankings = self.get_rankings(layer_idx=0)
-
-        enrichments = []
-        for rank in tqdm(gene_rankings):
-            enr = gp.enrichr(
-                gene_list=rank,
-                gene_sets=libs,
-                organism="Human",
-                outdir="test/enrichr",
-                cutoff=0.05,
-            )
-            enrichments.append(enr)
-        return enrichments
 
     def get_layer_factor_orders(self) -> List[np.ndarray]:
         """Get the ordering of factors in each layer for plotting.

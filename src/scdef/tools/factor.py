@@ -39,14 +39,21 @@ def _get_layer_term_means(model: "scDEF", layer_idx: int) -> np.ndarray:
     if layer_idx == 0:
         kept = np.asarray(model.factor_lists[layer_idx], dtype=int)
         return np.asarray(model.pmeans[f"{layer_name}W"], dtype=float)[kept]
-    _, mean_scores = model.get_rankings(
-        layer_idx=layer_idx,
-        top_genes=len(model.adata.var_names),
-        genes=True,
-        return_scores=True,
-        sorted_scores=False,
-    )
-    return np.asarray(mean_scores, dtype=float)
+    term_scores = np.asarray(
+        model.pmeans[f"{model.layer_names[layer_idx]}W"], dtype=float
+    )[np.asarray(model.factor_lists[layer_idx], dtype=int)][
+        :, np.asarray(model.factor_lists[layer_idx - 1], dtype=int)
+    ]
+    for layer in range(layer_idx - 1, 0, -1):
+        lower_mat = np.asarray(model.pmeans[f"{model.layer_names[layer]}W"], dtype=float)[
+            np.asarray(model.factor_lists[layer], dtype=int)
+        ][:, np.asarray(model.factor_lists[layer - 1], dtype=int)]
+        term_scores = term_scores.dot(lower_mat)
+    w0 = np.asarray(model.pmeans[f"{model.layer_names[0]}W"], dtype=float)[
+        np.asarray(model.factor_lists[0], dtype=int),
+        :,
+    ]
+    return term_scores.dot(w0)
 
 
 def _get_confident_signatures_cache(model: "scDEF") -> Dict[str, object]:
@@ -672,14 +679,7 @@ def get_confident_signatures(
                 layer_idx,
                 mc_samples_upper,
             )
-        _, mean_scores = model.get_rankings(
-            layer_idx=layer_idx,
-            top_genes=len(term_names),
-            genes=True,
-            return_scores=True,
-            sorted_scores=False,
-        )
-        term_means = np.asarray(mean_scores, dtype=float)
+        term_means = _get_layer_term_means(model, layer_idx)
         base_rng = random.PRNGKey(int(random_seed))
         n_genes = len(term_names)
 
@@ -837,6 +837,49 @@ def get_biological_signature(model: "scDEF", top_genes: int = 10) -> List[str]:
     top_factor = f"{model.layer_names[top_layer_idx]}_0"
     signature = signatures_dict.get(top_factor, [])
     return signature
+
+
+def get_enrichments(
+    model: "scDEF",
+    layer_idx: int = 0,
+    libs: Sequence[str] = ("KEGG_2019_Human",),
+    organism: str = "Human",
+    top_genes: Optional[int] = None,
+    cutoff: float = 0.05,
+    outdir: Optional[str] = None,
+) -> pd.DataFrame:
+    """Run Enrichr pathway enrichment from cached confident signatures.
+
+    This utility uses signatures from ``scd.tl.get_stored_confident_signatures``
+    and does not rely on model-level ranking by raw ``W``.
+    """
+    import gseapy as gp
+
+    signatures = get_stored_confident_signatures(
+        model,
+        layer_idx=layer_idx,
+        max_genes=top_genes,
+    )
+    all_results: List[pd.DataFrame] = []
+    for factor_name, genes in signatures.items():
+        if len(genes) == 0:
+            continue
+        enr = gp.enrichr(
+            gene_list=genes,
+            gene_sets=list(libs),
+            organism=organism,
+            outdir=outdir,
+            cutoff=float(cutoff),
+        )
+        df = enr.results.copy()
+        df["factor"] = factor_name
+        df["layer_idx"] = int(layer_idx)
+        df["layer"] = model.layer_names[layer_idx]
+        all_results.append(df)
+
+    if len(all_results) == 0:
+        return pd.DataFrame()
+    return pd.concat(all_results, axis=0, ignore_index=True)
 
 
 def umap(
