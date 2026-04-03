@@ -268,15 +268,46 @@ def _get_base_label(factor_name, factor_annotations, n_cells_label, node_num_cel
     return label
 
 
-def _add_enrichments_to_label(label, enrichments, factor_idx, top_genes_layer):
-    """Add enrichment information to label."""
-    label += "<br/><br/>" + "<br/>".join(
-        [
-            enrichments[factor_idx].results["Term"].values[i]
-            + f" ({enrichments[factor_idx].results['Adjusted P-value'][i]:.3f})"
-            for i in range(top_genes_layer)
-        ]
-    )
+def _add_enrichments_to_label(label, enrichments_df, factor_name, top_genes_layer):
+    """Add top significant enrichment terms to node label."""
+    if enrichments_df is None or not isinstance(enrichments_df, pd.DataFrame):
+        return label
+    if "factor" not in enrichments_df.columns:
+        return label
+    if top_genes_layer is None or int(top_genes_layer) <= 0:
+        return label
+
+    df = enrichments_df[enrichments_df["factor"] == factor_name].copy()
+    if len(df) == 0:
+        return label
+
+    cols_ci = {c.lower(): c for c in df.columns}
+    term_col = cols_ci.get("term", None)
+    padj_col = cols_ci.get("adjusted p-value", None)
+    combined_col = None
+    for candidate in ["combined score", "combined_score", "combinedscore"]:
+        if candidate in cols_ci:
+            combined_col = cols_ci[candidate]
+            break
+    if term_col is None or combined_col is None:
+        return label
+
+    if padj_col is not None:
+        df = df[np.isfinite(df[padj_col])].copy()
+        df = df[df[padj_col] <= 0.05].copy()
+    df = df.sort_values(combined_col, ascending=False).head(int(top_genes_layer))
+    if len(df) == 0:
+        return label
+
+    lines = []
+    for _, row in df.iterrows():
+        if padj_col is not None:
+            lines.append(
+                f"{row[term_col]} (score={float(row[combined_col]):.2f}, adj.p={float(row[padj_col]):.3g})"
+            )
+        else:
+            lines.append(f"{row[term_col]} (score={float(row[combined_col]):.2f})")
+    label += "<br/><br/>" + "<br/>".join(lines)
     return label
 
 
@@ -530,6 +561,7 @@ def make_graph(
     root_signature: Optional[List[str]] = None,
     root_ranking: Optional[List[str]] = None,
     enrichments: Optional[pd.DataFrame] = None,
+    show_enrichments: Optional[bool] = False,
     top_genes: Optional[Union[int, List[int]]] = None,
     show_batch_counts: Optional[bool] = False,
     filled: Optional[Union[str, Dict[str, float]]] = None,
@@ -563,7 +595,8 @@ def make_graph(
         drop_factors: list of factors to drop from the graph
         root_signature: root signature to display
         root_ranking: root ranking to display
-        enrichments: enrichment results from gseapy to include in the node labels
+        enrichments: enrichment results dataframe to include in node labels
+        show_enrichments: whether to show enrichment terms in node labels
         top_genes: number of genes from each signature to be shown in the node labels
         show_batch_counts: whether to show the number of cells from each batch that attach to each factor
         filled: key from model.adata.obs to use to fill the nodes with, or dictionary of factor scores
@@ -597,6 +630,22 @@ def make_graph(
     )
     hierarchy_nodes = _get_hierarchy_nodes(hierarchy, top_factor)
     layer_factor_orders = _compute_layer_factor_orders(model, show_all)
+    if enrichments is not None:
+        show_enrichments = True
+    enrichments_df = enrichments
+    if show_enrichments and enrichments_df is None:
+        stored = model.adata.uns.get("factor_enrichments", {})
+        if isinstance(stored, dict):
+            rows = []
+            current_fit_rev = int(getattr(model, "_fit_revision", 0))
+            for _, payload in stored.items():
+                if not isinstance(payload, dict):
+                    continue
+                if int(payload.get("fit_revision", -1)) != current_fit_rev:
+                    continue
+                rows.extend(payload.get("results", []))
+            if len(rows) > 0:
+                enrichments_df = pd.DataFrame(rows)
 
     # Initialize graph
     g = Graph()
@@ -692,12 +741,8 @@ def make_graph(
                         model, wedged, factor_name
                     )
 
-            # Add enrichments or signatures to label
-            if enrichments is not None:
-                label = _add_enrichments_to_label(
-                    label, enrichments, factor_idx, top_genes[layer_idx]
-                )
-            elif show_signatures:
+            # Add signatures then enrichments.
+            if show_signatures:
                 label = _add_signature_to_label(
                     label,
                     model,
@@ -712,7 +757,16 @@ def make_graph(
                     mc_samples,
                     fontsize_kwargs,
                 )
-            elif isinstance(filled, str) and filled != "factor":
+            if show_enrichments:
+                label = _add_enrichments_to_label(
+                    label, enrichments_df, factor_name, top_genes[layer_idx]
+                )
+            if (
+                (not show_signatures)
+                and (not show_enrichments)
+                and isinstance(filled, str)
+                and filled != "factor"
+            ):
                 label += "<br/><br/>"
 
             # Compute node size
@@ -806,6 +860,7 @@ def make_technical_hierarchy_graph(
     root_gene_scores: Optional[list] = None,
     root_name: Optional[str] = "tech_top",
     enrichments: Optional[pd.DataFrame] = None,
+    show_enrichments: Optional[bool] = False,
     top_genes: Optional[int] = None,
     filled: Optional[str] = None,
     wedged: Optional[str] = None,
@@ -838,7 +893,8 @@ def make_technical_hierarchy_graph(
         root_gene_rankings: gene rankings for the root node
         root_gene_scores: gene scores for the root node
         root_name: name of the root node
-        enrichments: enrichment results from gseapy to include in the node labels
+        enrichments: enrichment results dataframe to include in node labels
+        show_enrichments: whether to show enrichment terms in node labels
         top_genes: number of genes from each signature to be shown in the node labels
         filled: key from model.adata.obs to use to fill the nodes with, or dictionary of factor scores
         wedged: key from model.adata.obs to use to wedge the nodes with
@@ -871,6 +927,22 @@ def make_technical_hierarchy_graph(
     )
     hierarchy_nodes = _get_hierarchy_nodes(hierarchy, top_factor)
     layer_factor_orders = _compute_layer_factor_orders(model, False)
+    if enrichments is not None:
+        show_enrichments = True
+    enrichments_df = enrichments
+    if show_enrichments and enrichments_df is None:
+        stored = model.adata.uns.get("factor_enrichments", {})
+        if isinstance(stored, dict):
+            rows = []
+            current_fit_rev = int(getattr(model, "_fit_revision", 0))
+            for _, payload in stored.items():
+                if not isinstance(payload, dict):
+                    continue
+                if int(payload.get("fit_revision", -1)) != current_fit_rev:
+                    continue
+                rows.extend(payload.get("results", []))
+            if len(rows) > 0:
+                enrichments_df = pd.DataFrame(rows)
 
     # Initialize graph
     g = Graph()
@@ -986,12 +1058,8 @@ def make_technical_hierarchy_graph(
                             factor_name,
                         )
 
-            # Add enrichments or signatures to label
-            if enrichments is not None:
-                label = _add_enrichments_to_label(
-                    label, enrichments, factor_idx, top_genes[layer_idx]
-                )
-            elif show_signatures:
+            # Add signatures then enrichments.
+            if show_signatures:
                 label = _add_signature_to_label(
                     label,
                     model,
@@ -1006,7 +1074,16 @@ def make_technical_hierarchy_graph(
                     mc_samples,
                     fontsize_kwargs,
                 )
-            elif isinstance(filled, str) and filled != "factor":
+            if show_enrichments:
+                label = _add_enrichments_to_label(
+                    label, enrichments_df, factor_name, top_genes[layer_idx]
+                )
+            if (
+                (not show_signatures)
+                and (not show_enrichments)
+                and isinstance(filled, str)
+                and filled != "factor"
+            ):
                 label += "<br/><br/>"
 
             # Compute node size

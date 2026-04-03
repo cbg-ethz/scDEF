@@ -21,7 +21,7 @@ from .factor import (
     set_technical_factors,
     get_technical_signature,
     get_biological_signature,
-    get_enrichments,
+    gsea,
     umap,
 )
 from .trajectory import multilevel_paga
@@ -43,7 +43,7 @@ __all__ = [
     "set_technical_factors",
     "get_technical_signature",
     "get_biological_signature",
-    "get_enrichments",
+    "gsea",
     "compute_hierarchy_scores",
     "umap",
     "multilevel_paga",

@@ -925,44 +925,130 @@ def get_biological_signature(model: "scDEF", top_genes: int = 10) -> List[str]:
     return signature
 
 
-def get_enrichments(
+def gsea(
     model: "scDEF",
-    layer_idx: int = 0,
     libs: Sequence[str] = ("KEGG_2019_Human",),
+    custom_gene_sets: Optional[Dict[str, Sequence[str]]] = None,
     organism: str = "Human",
+    background_genes: Optional[Sequence[str]] = None,
+    layers: Optional[Sequence[int]] = None,
     top_genes: Optional[int] = None,
     cutoff: float = 0.05,
     outdir: Optional[str] = None,
 ) -> pd.DataFrame:
-    """Run Enrichr pathway enrichment from cached confident signatures.
+    """Run Enrichr pathway enrichment for cached signatures across layers.
 
     This utility uses signatures from ``scd.tl.get_stored_confident_signatures``
     and does not rely on model-level ranking by raw ``W``.
+    Online libraries in ``libs`` are fetched to local dicts and merged with
+    ``custom_gene_sets`` so each factor is tested against one combined
+    gene-set universe using a single ``gp.enrich`` call. By default, runs
+    for all layers and stores per-layer results in ``adata.uns['factor_enrichments']``.
     """
     import gseapy as gp
 
-    signatures = get_stored_confident_signatures(
-        model,
-        layer_idx=layer_idx,
-        max_genes=top_genes,
-    )
-    all_results: List[pd.DataFrame] = []
-    for factor_name, genes in signatures.items():
-        if len(genes) == 0:
-            continue
-        enr = gp.enrichr(
-            gene_list=genes,
-            gene_sets=list(libs),
-            organism=organism,
-            outdir=outdir,
-            cutoff=float(cutoff),
-        )
-        df = enr.results.copy()
-        df["factor"] = factor_name
-        df["layer_idx"] = int(layer_idx)
-        df["layer"] = model.layer_names[layer_idx]
-        all_results.append(df)
+    if layers is None:
+        layers = list(range(model.n_layers))
+    else:
+        layers = [int(i) for i in layers]
+    for layer_idx in layers:
+        if layer_idx < 0 or layer_idx >= model.n_layers:
+            raise ValueError(f"layer index {layer_idx} out of bounds.")
 
+    use_online_libs = libs is not None and len(list(libs)) > 0
+    use_custom_sets = custom_gene_sets is not None and len(custom_gene_sets) > 0
+    if not use_online_libs and not use_custom_sets:
+        raise ValueError(
+            "Provide at least one online library in `libs` and/or `custom_gene_sets`."
+        )
+
+    # Build one merged gene-set dictionary (shared universe for all factors).
+    all_sets: Dict[str, List[str]] = {}
+    term_sources: Dict[str, List[str]] = {}
+    if use_online_libs:
+        for lib_name in libs:
+            lib_sets = gp.get_library(name=lib_name, organism=organism)
+            for term, genes in lib_sets.items():
+                all_sets[term] = list(genes)
+                term_sources.setdefault(term, [])
+                if lib_name not in term_sources[term]:
+                    term_sources[term].append(lib_name)
+    if use_custom_sets:
+        for term, genes in custom_gene_sets.items():
+            all_sets[term] = list(genes)
+            term_sources.setdefault(term, [])
+            if "custom" not in term_sources[term]:
+                term_sources[term].append("custom")
+
+    if len(all_sets) == 0:
+        raise ValueError("Combined gene-set dictionary is empty.")
+
+    bg = list(model.adata.var_names) if background_genes is None else background_genes
+
+    cache = {}
+    all_results: List[pd.DataFrame] = []
+    for layer_idx in layers:
+        signatures = get_stored_confident_signatures(
+            model,
+            layer_idx=layer_idx,
+            max_genes=top_genes,
+        )
+        layer_frames: List[pd.DataFrame] = []
+        for factor_name, genes in signatures.items():
+            if len(genes) == 0:
+                continue
+            enr = gp.enrich(
+                gene_list=genes,
+                gene_sets=all_sets,
+                background=bg,
+                outdir=outdir,
+            )
+            df = enr.results.copy()
+            if len(df) == 0:
+                continue
+
+            cols_ci = {c.lower(): c for c in df.columns}
+            term_col = cols_ci.get("term", None)
+            if term_col is not None:
+                source_labels = df[term_col].map(
+                    lambda t: "|".join(term_sources.get(str(t), ["merged"]))
+                )
+                df["Gene_set"] = source_labels.values
+                df["gene_set_source"] = source_labels.values
+
+            padj_col = cols_ci.get("adjusted p-value", None)
+            if padj_col is None:
+                raise KeyError(
+                    "Enrichr results missing 'Adjusted P-value' column; cannot filter significance."
+                )
+            df = df[df[padj_col] <= float(cutoff)].copy()
+            if len(df) == 0:
+                continue
+
+            combined_col = None
+            for candidate in ["combined score", "combined_score", "combinedscore"]:
+                if candidate in cols_ci:
+                    combined_col = cols_ci[candidate]
+                    break
+            if combined_col is None:
+                raise KeyError(
+                    "Enrichment results missing 'Combined Score' column; cannot sort by combined score."
+                )
+            df = df.sort_values(combined_col, ascending=False)
+            df["factor"] = factor_name
+            df["layer_idx"] = int(layer_idx)
+            df["layer"] = model.layer_names[layer_idx]
+            layer_frames.append(df)
+
+        if len(layer_frames) > 0:
+            layer_df = pd.concat(layer_frames, axis=0, ignore_index=True)
+            all_results.append(layer_df)
+            cache[str(int(layer_idx))] = {
+                "fit_revision": int(getattr(model, "_fit_revision", 0)),
+                "results": layer_df.to_dict(orient="records"),
+            }
+
+    model.adata.uns["factor_enrichments"] = cache
     if len(all_results) == 0:
         return pd.DataFrame()
     return pd.concat(all_results, axis=0, ignore_index=True)
