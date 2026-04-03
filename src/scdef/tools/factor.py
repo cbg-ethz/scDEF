@@ -45,9 +45,11 @@ def _get_layer_term_means(model: "scDEF", layer_idx: int) -> np.ndarray:
         :, np.asarray(model.factor_lists[layer_idx - 1], dtype=int)
     ]
     for layer in range(layer_idx - 1, 0, -1):
-        lower_mat = np.asarray(model.pmeans[f"{model.layer_names[layer]}W"], dtype=float)[
-            np.asarray(model.factor_lists[layer], dtype=int)
-        ][:, np.asarray(model.factor_lists[layer - 1], dtype=int)]
+        lower_mat = np.asarray(
+            model.pmeans[f"{model.layer_names[layer]}W"], dtype=float
+        )[np.asarray(model.factor_lists[layer], dtype=int)][
+            :, np.asarray(model.factor_lists[layer - 1], dtype=int)
+        ]
         term_scores = term_scores.dot(lower_mat)
     w0 = np.asarray(model.pmeans[f"{model.layer_names[0]}W"], dtype=float)[
         np.asarray(model.factor_lists[0], dtype=int),
