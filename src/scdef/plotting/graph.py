@@ -165,6 +165,11 @@ def _map_scores_to_fontsizes(
     """Map scores to font sizes."""
     max_fontsize = fontsize_kwargs.get("max_fontsize", max_fontsize)
     min_fontsize = fontsize_kwargs.get("min_fontsize", min_fontsize)
+    scores = np.asarray(scores, dtype=float)
+    if scores.size == 0:
+        return np.asarray([], dtype=float)
+    if scores.size == 1:
+        return np.asarray([max_fontsize], dtype=float)
     scores = scores - np.min(scores)
     scores = scores / np.max(scores) if np.max(scores) > 0 else scores
     return min_fontsize + scores * (max_fontsize - min_fontsize)
