@@ -7,6 +7,7 @@ import scdef.plotting.graph as graph_plot
 from pathlib import Path
 import pytest
 from unittest.mock import patch
+import os
 
 
 def test_scdef():
@@ -446,3 +447,57 @@ def test_scdef_load_and_plotting_pipeline():
             random_seed=0,
             show=False,
         )
+
+
+@pytest.mark.skipif(
+    os.getenv("GITHUB_ACTIONS") == "true",
+    reason="Network-dependent enrichment test is skipped on GitHub Actions.",
+)
+def test_scdef_gsea_and_graph_enrichments():
+    pytest.importorskip("gseapy")
+    adata = sc.datasets.pbmc3k()
+    np.random.seed(21)
+    sc.pp.filter_cells(adata, min_genes=200)
+    sc.pp.filter_genes(adata, min_cells=3)
+    adata = adata[np.random.randint(adata.shape[0], size=120)]
+    adata.var["mt"] = adata.var_names.str.startswith("MT-")
+    sc.pp.calculate_qc_metrics(
+        adata, qc_vars=["mt"], percent_top=None, log1p=False, inplace=True
+    )
+    adata = adata[adata.obs.n_genes_by_counts < 2500, :]
+    adata = adata[adata.obs.pct_counts_mt < 5, :]
+    adata.raw = adata
+    raw_adata = adata.raw.to_adata()
+    raw_adata.X = raw_adata.X.toarray()
+    adata.X = adata.X.toarray()
+    sc.pp.normalize_total(adata, target_sum=1e4)
+    sc.pp.log1p(adata)
+    sc.pp.highly_variable_genes(
+        adata, min_mean=0.0125, max_mean=3, min_disp=0.5, n_top_genes=200
+    )
+    raw_adata = raw_adata[:, adata.var.highly_variable]
+
+    model = scd.scDEF(
+        raw_adata,
+        layer_sizes=[8, 4, 2],
+        seed=1,
+    )
+    model.fit(n_epoch=3)
+    scd.tl.set_confident_signatures(model)
+    enr = scd.tl.gsea(
+        model,
+        libs=["KEGG_2019_Human"],
+        layers=[0],
+        top_genes=50,
+        cutoff=0.05,
+        outdir=None,
+    )
+    assert isinstance(enr, pd.DataFrame)
+    assert "factor_enrichments" in model.adata.uns
+
+    g = scd.pl.make_graph(
+        model,
+        show_enrichments=True,
+        show_signatures=False,
+    )
+    assert g is not None
