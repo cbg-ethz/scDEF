@@ -268,7 +268,9 @@ def _get_base_label(factor_name, factor_annotations, n_cells_label, node_num_cel
     return label
 
 
-def _add_enrichments_to_label(label, enrichments_df, factor_name, top_genes_layer):
+def _add_enrichments_to_label(
+    label, enrichments_df, factor_name, top_genes_layer, fontsize_kwargs
+):
     """Add top significant enrichment terms to node label."""
     if enrichments_df is None or not isinstance(enrichments_df, pd.DataFrame):
         return label
@@ -295,18 +297,20 @@ def _add_enrichments_to_label(label, enrichments_df, factor_name, top_genes_laye
     if padj_col is not None:
         df = df[np.isfinite(df[padj_col])].copy()
         df = df[df[padj_col] <= 0.05].copy()
+    df = df[np.isfinite(df[combined_col])].copy()
     df = df.sort_values(combined_col, ascending=False).head(int(top_genes_layer))
     if len(df) == 0:
         return label
 
-    lines = []
-    for _, row in df.iterrows():
-        if padj_col is not None:
-            lines.append(
-                f"{row[term_col]} (score={float(row[combined_col]):.2f}, adj.p={float(row[padj_col]):.3g})"
-            )
-        else:
-            lines.append(f"{row[term_col]} (score={float(row[combined_col]):.2f})")
+    term_labels = df[term_col].astype(str).tolist()
+    term_scores = np.asarray(df[combined_col].values, dtype=float)
+    if len(term_scores) == 0:
+        return label
+    fontsizes = _map_scores_to_fontsizes(term_scores, **fontsize_kwargs)
+    lines = [
+        f'<FONT POINT-SIZE="{fontsizes[j]}">{term}</FONT>'
+        for j, term in enumerate(term_labels)
+    ]
     label += "<br/><br/>" + "<br/>".join(lines)
     return label
 
@@ -759,7 +763,11 @@ def make_graph(
                 )
             if show_enrichments:
                 label = _add_enrichments_to_label(
-                    label, enrichments_df, factor_name, top_genes[layer_idx]
+                    label,
+                    enrichments_df,
+                    factor_name,
+                    top_genes[layer_idx],
+                    fontsize_kwargs,
                 )
             if (
                 (not show_signatures)
@@ -1076,7 +1084,11 @@ def make_technical_hierarchy_graph(
                 )
             if show_enrichments:
                 label = _add_enrichments_to_label(
-                    label, enrichments_df, factor_name, top_genes[layer_idx]
+                    label,
+                    enrichments_df,
+                    factor_name,
+                    top_genes[layer_idx],
+                    fontsize_kwargs,
                 )
             if (
                 (not show_signatures)
