@@ -310,7 +310,16 @@ def loss(
     """
     if ax is None:
         fig, ax = plt.subplots(figsize=figsize)
-    y = np.concatenate(model.elbos)[:]
+    elbos_for_qc = getattr(model, "qc_elbos", None)
+    if elbos_for_qc is None:
+        elbos_for_qc = model.elbos
+        root_epochs = int(getattr(model, "root_epochs", 0))
+    else:
+        root_epochs = 0
+
+    y = np.concatenate(elbos_for_qc)[:]
+    if root_epochs > 0 and root_epochs < len(y):
+        y = y[:-root_epochs]
     x = np.arange(1, len(y) + 1)
     ax.plot(x, y)
     ax.set_xlabel("Epoch", fontsize=fontsize)

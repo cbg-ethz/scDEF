@@ -846,6 +846,10 @@ def set_technical_factors(
         ):
             model.adata.uns["factor_obs"].loc[factor, "technical"] = True
 
+    # Refresh annotations/probabilities so cell assignments and factor probabilities
+    # are computed using biological factors only.
+    model.annotate_adata()
+
 
 def __build_consensus_signature(var_names, gene_scores_array, sizes_array):
     sizes_array = sizes_array / np.sum(sizes_array)

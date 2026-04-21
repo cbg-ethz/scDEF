@@ -443,6 +443,7 @@ def _add_node_to_graph(
     shell,
     pos,
     ordering,
+    fontcolor="black",
 ):
     """Add a node to the graph."""
     node_kwargs = {
@@ -454,6 +455,7 @@ def _add_node_to_graph(
         "height": str(size),
         "fixedsize": fixedsize,
         "label": label,
+        "fontcolor": fontcolor,
     }
 
     if shell:
@@ -661,6 +663,16 @@ def make_graph(
     g.engine = "neato" if shell else "dot"
     ordering = "out"
     angle_dict = {}
+    technical_factors = set()
+    if (
+        "factor_obs" in model.adata.uns
+        and "technical" in model.adata.uns["factor_obs"].columns
+    ):
+        technical_factors = set(
+            model.adata.uns["factor_obs"]
+            .index[model.adata.uns["factor_obs"]["technical"]]
+            .tolist()
+        )
 
     # Process each layer
     for layer_idx in range(model.n_layers):
@@ -808,6 +820,7 @@ def make_graph(
 
             # Finalize label
             label = _finalize_node_label(label, show_label)
+            fontcolor = "gray" if factor_name in technical_factors else "black"
 
             # Compute position for shell layout
             pos = None
@@ -836,6 +849,7 @@ def make_graph(
                 shell,
                 pos,
                 ordering,
+                fontcolor=fontcolor,
             )
 
             # Add edges

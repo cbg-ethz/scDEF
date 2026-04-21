@@ -108,7 +108,8 @@ def test_scdef():
 
     model.fit(n_epoch=10)
 
-    assert len(model.elbos) == 1
+    expected_fit_passes = 1 + int(getattr(model, "root_epochs", 0) > 0)
+    assert len(model.elbos) == expected_fit_passes
     assert "L0" in model.adata.obs.columns
     assert "L1" in model.adata.obs.columns
     assert "L2" in model.adata.obs.columns
@@ -366,8 +367,10 @@ def test_scdef_alpha_annealing_fit():
 
     assert model.alpha > alpha_before
     assert mocked.call_count == 1
-    assert len(model.elbos) == 1
+    expected_anneal_passes = 1 + int(getattr(model, "root_epochs", 0) > 0)
+    assert len(model.elbos) == expected_anneal_passes
     assert "L0" in model.adata.obs.columns
+    assert "n_eff_parents_trace" in model.adata.uns
 
 
 def test_scdef_load_and_plotting_pipeline():
