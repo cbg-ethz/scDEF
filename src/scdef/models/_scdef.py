@@ -590,14 +590,27 @@ class scDEF(object):
         keep = np.array(range(self.layer_sizes[0]))[np.where(counts >= min_cells)[0]]
         if self.use_brd:
             required_cols = {"BRD", "ARD", "clarity_score_01", "original_factor_idx"}
-            if "factor_obs" not in self.adata.uns or not required_cols.issubset(
-                set(self.adata.uns["factor_obs"].columns)
+
+            def _has_required(key):
+                return key in self.adata.uns and required_cols.issubset(
+                    set(self.adata.uns[key].columns)
+                )
+
+            if not _has_required("factor_obs_full") and not _has_required(
+                "factor_obs"
             ):
                 from scdef.tools.factor import factor_diagnostics
 
                 factor_diagnostics(self)
 
-            factor_obs = self.adata.uns["factor_obs"]
+            # Prefer the full (pre-filter) snapshot so re-filtering with
+            # looser thresholds can reconsider previously dropped factors.
+            source_key = (
+                "factor_obs_full"
+                if _has_required("factor_obs_full")
+                else "factor_obs"
+            )
+            factor_obs = self.adata.uns[source_key]
             if "child_layer" in factor_obs.columns:
                 factor_obs_l0 = factor_obs[
                     factor_obs["child_layer"] == self.layer_names[0]
@@ -2458,13 +2471,73 @@ class scDEF(object):
         self.factor_lists = new_factor_lists
         self.set_factor_names()
         if "factor_obs" in self.adata.uns:
-            self.adata.uns["factor_obs"]["technical"] = False
+            self._sync_factor_obs_with_filter()
 
         self.make_layercolors(
             layer_cpal=self.layer_cpal, lightness_mult=self.lightness_mult
         )
         if annotate:
             self.annotate_adata()
+
+    def _sync_factor_obs_with_filter(self):
+        """Rebuild ``adata.uns['factor_obs']`` so it reflects the currently
+        kept factors, with rows renamed to match ``self.factor_names``.
+
+        The rebuild is sourced from ``adata.uns['factor_obs_full']`` when
+        available (the complete snapshot written by
+        ``scdef.tools.factor_diagnostics``), so that re-filtering with
+        looser thresholds can restore rows for factors that had been
+        previously dropped from the live view. Falls back to the current
+        ``factor_obs`` if the full snapshot is not present.
+
+        Rows for filtered-out factors are omitted, kept rows are renamed
+        (index and ``child_factor`` column) to the current factor names, and
+        ``technical`` is reset to False. Name-valued columns that reference
+        other factors (e.g. ``best_parent``) retain their diagnostic-time
+        values and may become stale if upper-layer factors were filtered;
+        re-run ``scdef.tools.factor_diagnostics(model, recompute=True)`` to
+        refresh those.
+        """
+        if "factor_obs_full" in self.adata.uns:
+            source = self.adata.uns["factor_obs_full"]
+        else:
+            source = self.adata.uns["factor_obs"]
+
+        if not (
+            "child_layer" in source.columns
+            and "original_factor_idx" in source.columns
+        ):
+            self.adata.uns["factor_obs"]["technical"] = False
+            return
+
+        layer_lookup = {}
+        for layer_idx, layer_name in enumerate(self.layer_names):
+            layer_lookup[layer_name] = {
+                int(orig): (slot, self.factor_names[layer_idx][slot])
+                for slot, orig in enumerate(self.factor_lists[layer_idx])
+            }
+
+        rows = []
+        for pos in range(len(source)):
+            row = source.iloc[pos]
+            mapping = layer_lookup.get(row["child_layer"], {}).get(
+                int(row["original_factor_idx"])
+            )
+            if mapping is None:
+                continue
+            slot, current_name = mapping
+            rows.append((row["child_layer"], slot, pos, current_name))
+
+        rows.sort(key=lambda t: (self.layer_names.index(t[0]), t[1]))
+        positions = [t[2] for t in rows]
+        new_index = [t[3] for t in rows]
+
+        new_factor_obs = source.iloc[positions].copy()
+        new_factor_obs.index = new_index
+        if "child_factor" in new_factor_obs.columns:
+            new_factor_obs["child_factor"] = new_index
+        new_factor_obs["technical"] = False
+        self.adata.uns["factor_obs"] = new_factor_obs
 
     def set_factor_names(self):
         self.factor_names = [

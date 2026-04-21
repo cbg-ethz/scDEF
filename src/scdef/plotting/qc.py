@@ -507,6 +507,7 @@ def factor_diagnostics(
     annotate_factors: bool = False,
     annotation_fontsize: int = 8,
     annotation_alpha: float = 0.8,
+    all_factors: bool = False,
     show: bool = True,
 ) -> Optional[Axes]:
     """
@@ -522,17 +523,27 @@ def factor_diagnostics(
         annotate_factors: whether to annotate each point with its factor label
         annotation_fontsize: fontsize for factor text annotations
         annotation_alpha: alpha value for factor text annotations
+        all_factors: if True, plot diagnostics for all layer-0 factors from the
+            complete snapshot ``model.adata.uns['factor_obs_full']`` (including
+            factors that were filtered out). Default (False) plots the current
+            view ``model.adata.uns['factor_obs']``, which after
+            ``model.filter_factors()`` contains only kept factors.
         show: whether to show the plot
 
     Returns:
         Axes object if show is False, None otherwise.
     """
-    if "factor_obs" not in model.adata.uns:
-        raise KeyError(
-            "model.adata.uns['factor_obs'] not found. Run scdef.tools.factor_diagnostics(model) first."
-        )
+    source_key = "factor_obs_full" if all_factors else "factor_obs"
+    if source_key not in model.adata.uns:
+        if all_factors and "factor_obs" in model.adata.uns:
+            source_key = "factor_obs"
+        else:
+            raise KeyError(
+                f"model.adata.uns['{source_key}'] not found. Run "
+                "scdef.tools.factor_diagnostics(model) first."
+            )
 
-    factor_obs = model.adata.uns["factor_obs"]
+    factor_obs = model.adata.uns[source_key]
     l0_name = model.layer_names[0]
     if "child_layer" in factor_obs.columns:
         factor_obs_l0 = factor_obs[factor_obs["child_layer"] == l0_name].copy()
@@ -550,20 +561,23 @@ def factor_diagnostics(
         factor_obs_l0 = factor_obs_l0.sort_values("original_factor_idx")
 
     labels = factor_obs_l0.index.to_numpy()
-    # Backward compatibility: older cached diagnostics may store layer-0 factors
-    # as generic names (e.g., "L0_3"). Prefer current model factor names when
-    # original indices are available.
+    # Remap labels of currently kept factors to their current model names
+    # (useful when plotting from factor_obs_full, whose index reflects the
+    # diagnostic-time naming and may differ from the post-filter names).
     if (
         "original_factor_idx" in factor_obs_l0.columns
         and hasattr(model, "factor_names")
         and len(model.factor_names) > 0
     ):
         original_idx = factor_obs_l0["original_factor_idx"].to_numpy(dtype=int)
-        named_l0 = np.asarray(model.factor_names[0], dtype=object)
-        valid_named = (original_idx >= 0) & (original_idx < len(named_l0))
-        if np.any(valid_named):
-            labels = labels.astype(object, copy=True)
-            labels[valid_named] = named_l0[original_idx[valid_named]]
+        kept = np.asarray(model.factor_lists[0], dtype=int)
+        orig_to_slot = {int(o): i for i, o in enumerate(kept)}
+        labels = labels.astype(object, copy=True)
+        current_names_l0 = model.factor_names[0]
+        for i, oidx in enumerate(original_idx):
+            slot = orig_to_slot.get(int(oidx))
+            if slot is not None:
+                labels[i] = current_names_l0[slot]
     x = factor_obs_l0["BRD"].to_numpy(dtype=float)
     y = factor_obs_l0["n_eff_parents"].to_numpy(dtype=float)
     z = factor_obs_l0["ARD"].to_numpy(dtype=float)

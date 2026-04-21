@@ -194,18 +194,80 @@ def factor_diagnostics(model: "scDEF", recompute: bool = False) -> None:
 
     Args:
         model: scDEF model instance
-        recompute: kept for API compatibility. Diagnostics are always
-            recomputed from the current ``model.factor_lists``.
+        recompute: if True, force recomputation of the cached fixed upper-layer
+            factor subset used for clarity scores, even if the fit revision
+            did not change.
     """
-    if hasattr(model, "logger"):
-        model.logger.info(
-            "factor_diagnostics: recomputing diagnostics from current filtered factors."
+    # Keep layer 0 unfiltered, but use a fixed filtered subset on upper layers.
+    # Cache and reuse upper-layer factor lists so diagnostics remain stable across
+    # later calls to filter/annotate routines.
+    cache_key = "_factor_obs_upper_lists_fixed"
+    cache_rev_key = "_factor_obs_fit_revision"
+    current_fit_rev = int(getattr(model, "_fit_revision", 0))
+    reset_reasons: List[str] = []
+    if recompute:
+        reset_reasons.append("explicit recompute=True")
+    if cache_key not in model.adata.uns:
+        reset_reasons.append("missing cached upper-layer factor lists")
+    elif len(model.adata.uns[cache_key]) != max(model.n_layers - 1, 0):
+        reset_reasons.append("cached upper-layer list length mismatch")
+    if int(model.adata.uns.get(cache_rev_key, -1)) != current_fit_rev:
+        reset_reasons.append(
+            f"fit revision changed ({model.adata.uns.get(cache_rev_key, -1)} -> {current_fit_rev})"
         )
-    res = compute_hierarchy_scores(
-        model,
-        use_filtered=True,
-        filter_upper_layers=True,
+    reset_cache = len(reset_reasons) > 0
+    if not reset_cache:
+        # Validate cached indices against current layer sizes.
+        for i, idxs in enumerate(model.adata.uns[cache_key], start=1):
+            arr = np.asarray(idxs, dtype=int)
+            if np.any(arr < 0) or np.any(arr >= model.layer_sizes[i]):
+                reset_cache = True
+                reset_reasons.append(
+                    f"invalid cached indices for layer {i} (out of bounds)"
+                )
+                break
+    if hasattr(model, "logger"):
+        if reset_cache:
+            model.logger.info(
+                "factor_diagnostics: recomputing cached diagnostics (%s).",
+                "; ".join(reset_reasons),
+            )
+        else:
+            model.logger.info(
+                "factor_diagnostics: using cached diagnostics (fit revision %s).",
+                current_fit_rev,
+            )
+    if reset_cache:
+        model.adata.uns[cache_key] = [
+            np.asarray(model.factor_lists[i], dtype=int).tolist()
+            for i in range(1, model.n_layers)
+        ]
+        model.adata.uns[cache_rev_key] = current_fit_rev
+
+    fixed_upper_lists = [
+        np.asarray(idxs, dtype=int) for idxs in model.adata.uns[cache_key]
+    ]
+    old_factor_lists = [np.asarray(f, dtype=int).copy() for f in model.factor_lists]
+    old_factor_names = (
+        [list(names) for names in model.factor_names]
+        if hasattr(model, "factor_names")
+        else None
     )
+    try:
+        model.factor_lists = [
+            np.arange(model.layer_sizes[0], dtype=int)
+        ] + fixed_upper_lists
+        if hasattr(model, "set_factor_names"):
+            model.set_factor_names()
+        res = compute_hierarchy_scores(
+            model,
+            use_filtered=True,
+            filter_upper_layers=True,
+        )
+    finally:
+        model.factor_lists = old_factor_lists
+        if old_factor_names is not None:
+            model.factor_names = old_factor_names
     model.adata.uns["factor_obs"] = res["per_factor"].set_index("child_factor")
     model.adata.uns["factor_obs"]["ARD"] = np.array(
         [np.nan] * len(model.adata.uns["factor_obs"])
@@ -233,8 +295,14 @@ def factor_diagnostics(model: "scDEF", recompute: bool = False) -> None:
     brd_all = np.asarray(model.pmeans["factor_concentrations"]).ravel()
     factor_obs.loc[l0_rows, "ARD"] = ard_all[original_idx]
     factor_obs.loc[l0_rows, "BRD"] = brd_all[original_idx]
-    # Initialize technical annotation for all factors.
     factor_obs["technical"] = False
+
+    # Cache a complete snapshot of factor_obs keyed by (child_layer,
+    # original_factor_idx). This is the source of truth for filtering
+    # decisions (e.g. get_effective_factors / filter_factors), so that
+    # re-filtering with looser thresholds still sees diagnostics for
+    # factors previously dropped from the live factor_obs view.
+    model.adata.uns["factor_obs_full"] = factor_obs.copy()
 
 
 def set_factor_signatures(
@@ -752,6 +820,55 @@ def get_confident_signatures(
     return signatures
 
 
+def _resolve_factor_obs_names(
+    model: "scDEF", names: Sequence[str]
+) -> Tuple[List[str], List[str]]:
+    """Map user-supplied factor names to ``factor_obs`` index entries.
+
+    User names are first matched directly against ``factor_obs.index``. If a
+    name is not present, it is interpreted as an entry of the current
+    ``model.factor_names[layer]`` and translated to the corresponding
+    ``factor_obs`` row via ``original_factor_idx``. This makes it safe to pass
+    names taken from the *current* (possibly filtered) model, even when
+    ``factor_obs`` was populated before filtering.
+
+    Returns:
+        (resolved_names, unknown_names)
+    """
+    factor_obs = model.adata.uns["factor_obs"]
+    has_meta = (
+        "child_layer" in factor_obs.columns
+        and "original_factor_idx" in factor_obs.columns
+    )
+
+    current_to_orig: dict = {}
+    for layer_idx, layer_names in enumerate(model.factor_names):
+        for slot, name in enumerate(layer_names):
+            current_to_orig[name] = (
+                layer_idx,
+                int(model.factor_lists[layer_idx][slot]),
+            )
+
+    resolved: List[str] = []
+    unknown: List[str] = []
+    for name in names:
+        if has_meta and name in current_to_orig:
+            layer_idx, orig = current_to_orig[name]
+            layer_name = model.layer_names[layer_idx]
+            mask = (factor_obs["child_layer"] == layer_name) & (
+                factor_obs["original_factor_idx"].astype(int) == orig
+            )
+            matches = factor_obs.index[mask].tolist()
+            if matches:
+                resolved.append(matches[0])
+                continue
+        if name in factor_obs.index:
+            resolved.append(name)
+        else:
+            unknown.append(name)
+    return resolved, unknown
+
+
 def set_technical_factors(
     model: "scDEF",
     factors: Optional[Sequence[str]] = None,
@@ -766,8 +883,11 @@ def set_technical_factors(
 
     Args:
         model: scDEF model instance
-        factors: list of factor names to mark as technical. When provided,
-            criteria-based selection is skipped.
+        factors: list of factor names to mark as technical. Names are resolved
+            against the current ``model.factor_names`` (and translated to the
+            corresponding ``factor_obs`` rows via ``original_factor_idx``), so
+            it is safe to pass names from the model after ``filter_factors()``.
+            When provided, criteria-based selection is skipped.
         brd_min: minimum BRD threshold for keeping biological layer-0 factors
             when ``factors`` is None.
         ard_min: minimum ARD fraction threshold for keeping biological layer-0
@@ -777,46 +897,73 @@ def set_technical_factors(
         min_cells_lower: minimum cell-count criterion for keeping biological
             layer-0 factors when ``factors`` is None. Same semantics as
             ``scDEF.filter_factors(..., min_cells_lower=...)``.
+
+    Notes:
+        When ``factors`` is None, the candidate pool is restricted to the
+        layer-0 factors currently kept in ``model.factor_lists[0]``. Already
+        filtered-out factors are never re-introduced as technical.
     """
-    # in model.adata.uns["factor_obs"], annotate as technical or not.
     if "factor_obs" not in model.adata.uns:
         factor_diagnostics(model)
     if "technical" not in model.adata.uns["factor_obs"].columns:
         model.adata.uns["factor_obs"]["technical"] = False
     model.adata.uns["factor_obs"]["technical"] = False
 
-    technical_factors = []
+    factor_obs = model.adata.uns["factor_obs"]
+    has_meta = (
+        "child_layer" in factor_obs.columns
+        and "original_factor_idx" in factor_obs.columns
+    )
+
+    technical_factors: List[str] = []
     if factors is not None:
-        technical_factors = list(factors)
+        resolved, unknown = _resolve_factor_obs_names(model, factors)
+        if len(unknown) > 0:
+            raise ValueError(
+                "Unknown factor name(s) in `factors`: "
+                + ", ".join(map(str, unknown))
+            )
+        technical_factors = resolved
     else:
-        keep_idx = model.get_effective_factors(
-            brd_min=brd_min,
-            ard_min=ard_min,
-            clarity_min=clarity_min,
-            min_cells=min_cells_lower,
+        bio_orig = set(
+            int(i)
+            for i in model.get_effective_factors(
+                brd_min=brd_min,
+                ard_min=ard_min,
+                clarity_min=clarity_min,
+                min_cells=min_cells_lower,
+            )
         )
-        keep_names = set(model.factor_names[0][i] for i in keep_idx)
-        factor_obs = model.adata.uns["factor_obs"]
-        if "child_layer" in factor_obs.columns:
-            l0_names = factor_obs.index[
-                factor_obs["child_layer"] == model.layer_names[0]
-            ].tolist()
+        kept_orig = set(int(o) for o in model.factor_lists[0])
+
+        if has_meta:
+            l0_mask = factor_obs["child_layer"] == model.layer_names[0]
+            l0_rows = factor_obs.index[l0_mask].tolist()
+            orig_arr = factor_obs.loc[l0_rows, "original_factor_idx"].astype(int)
+            technical_factors = [
+                name
+                for name, o in zip(l0_rows, orig_arr)
+                if int(o) in kept_orig and int(o) not in bio_orig
+            ]
         else:
+            kept_slots_bio = [
+                slot
+                for slot, orig in enumerate(model.factor_lists[0])
+                if int(orig) in bio_orig
+            ]
+            keep_names = set(
+                model.factor_names[0][slot] for slot in kept_slots_bio
+            )
             l0_prefix = f"{model.layer_names[0]}_"
             l0_names = [
-                name for name in factor_obs.index if str(name).startswith(l0_prefix)
+                name
+                for name in factor_obs.index
+                if str(name).startswith(l0_prefix)
             ]
-        technical_factors = [name for name in l0_names if name not in keep_names]
+            technical_factors = [
+                name for name in l0_names if name not in keep_names
+            ]
 
-    unknown = [
-        name
-        for name in technical_factors
-        if name not in model.adata.uns["factor_obs"].index
-    ]
-    if len(unknown) > 0:
-        raise ValueError(
-            "Unknown factor name(s) in `factors`: " + ", ".join(map(str, unknown))
-        )
     if len(technical_factors) > 0:
         model.adata.uns["factor_obs"].loc[technical_factors, "technical"] = True
 
