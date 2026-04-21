@@ -596,9 +596,7 @@ class scDEF(object):
                     set(self.adata.uns[key].columns)
                 )
 
-            if not _has_required("factor_obs_full") and not _has_required(
-                "factor_obs"
-            ):
+            if not _has_required("factor_obs_full") and not _has_required("factor_obs"):
                 from scdef.tools.factor import factor_diagnostics
 
                 factor_diagnostics(self)
@@ -606,9 +604,7 @@ class scDEF(object):
             # Prefer the full (pre-filter) snapshot so re-filtering with
             # looser thresholds can reconsider previously dropped factors.
             source_key = (
-                "factor_obs_full"
-                if _has_required("factor_obs_full")
-                else "factor_obs"
+                "factor_obs_full" if _has_required("factor_obs_full") else "factor_obs"
             )
             factor_obs = self.adata.uns[source_key]
             if "child_layer" in factor_obs.columns:
@@ -2504,8 +2500,7 @@ class scDEF(object):
             source = self.adata.uns["factor_obs"]
 
         if not (
-            "child_layer" in source.columns
-            and "original_factor_idx" in source.columns
+            "child_layer" in source.columns and "original_factor_idx" in source.columns
         ):
             self.adata.uns["factor_obs"]["technical"] = False
             return

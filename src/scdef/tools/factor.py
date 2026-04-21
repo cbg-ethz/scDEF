@@ -920,8 +920,7 @@ def set_technical_factors(
         resolved, unknown = _resolve_factor_obs_names(model, factors)
         if len(unknown) > 0:
             raise ValueError(
-                "Unknown factor name(s) in `factors`: "
-                + ", ".join(map(str, unknown))
+                "Unknown factor name(s) in `factors`: " + ", ".join(map(str, unknown))
             )
         technical_factors = resolved
     else:
@@ -951,18 +950,12 @@ def set_technical_factors(
                 for slot, orig in enumerate(model.factor_lists[0])
                 if int(orig) in bio_orig
             ]
-            keep_names = set(
-                model.factor_names[0][slot] for slot in kept_slots_bio
-            )
+            keep_names = set(model.factor_names[0][slot] for slot in kept_slots_bio)
             l0_prefix = f"{model.layer_names[0]}_"
             l0_names = [
-                name
-                for name in factor_obs.index
-                if str(name).startswith(l0_prefix)
+                name for name in factor_obs.index if str(name).startswith(l0_prefix)
             ]
-            technical_factors = [
-                name for name in l0_names if name not in keep_names
-            ]
+            technical_factors = [name for name in l0_names if name not in keep_names]
 
     if len(technical_factors) > 0:
         model.adata.uns["factor_obs"].loc[technical_factors, "technical"] = True
