@@ -230,12 +230,18 @@ def _compute_wedged_fillcolor(model, wedged, cells):
 
     # cells in this factor that belong to each obs
     # normalized by total num of cells in each obs
-    prevs = [
-        np.count_nonzero(model.adata.obs[wedged][cells] == b)
-        / len(np.where(model.adata.obs[wedged] == b)[0])
-        for b in model.adata.obs[wedged].cat.categories
-    ]
-    fracs = prevs / np.sum(prevs)
+    prevs = np.array(
+        [
+            np.count_nonzero(model.adata.obs[wedged][cells] == b)
+            / len(np.where(model.adata.obs[wedged] == b)[0])
+            for b in model.adata.obs[wedged].cat.categories
+        ],
+        dtype=float,
+    )
+    total = float(np.sum(prevs))
+    if not np.isfinite(total) or total <= 0:
+        return "#FFFFFF"
+    fracs = prevs / total
     # make color string for pie chart
     return ":".join(
         [
@@ -252,7 +258,11 @@ def _compute_wedged_fillcolor_with_scores(model, wedged, factor_name):
         group_mask = (model.adata.obs[wedged] == b).values
         score = np.mean(scores[group_mask]) if len(group_mask) > 0 else 0.0
         prevs.append(score)
-    fracs = prevs / np.sum(prevs)
+    prevs = np.asarray(prevs, dtype=float)
+    total = float(np.sum(prevs))
+    if not np.isfinite(total) or total <= 0:
+        return "#FFFFFF"
+    fracs = prevs / total
     return ":".join(
         [
             f"{model.adata.uns[f'{wedged}_colors'][obs_idx]};{frac}"
