@@ -9,6 +9,7 @@ from .hierarchy import (
     compute_hierarchy_scores,
 )
 from .factor import (
+    assign_confident,
     compute_within_group_pairwise_dissimilarity,
     factor_diagnostics,
     get_obs_score_rankings,
@@ -23,10 +24,13 @@ from .factor import (
     get_biological_signature,
     gsea,
     umap,
+    multilayer_umap,
 )
 from .trajectory import multilevel_paga
 
 __all__ = [
+    "assign_confident",
+    "multilayer_umap",
     "get_hierarchy",
     "make_hierarchies",
     "make_biological_hierarchy",

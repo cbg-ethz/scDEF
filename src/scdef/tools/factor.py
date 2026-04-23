@@ -516,6 +516,372 @@ def get_obs_value_specific_factors(
     }
 
 
+def assign_confident(
+    model: "scDEF",
+    n_samples: int = 500,
+    tau: float = 0.3,
+    credible_level: float = 0.9,
+    key_added: str = "confident",
+    rng_key=None,
+) -> None:
+    """Pick the finest scDEF layer at which each cell is confidently assigned.
+
+    For each cell ``c`` and layer ``k`` (restricted to filtered factors
+    ``model.factor_lists[k]``), draws ``n_samples`` reparameterized samples
+    ``z^(s) ~ q(z_{c,k})`` from the log-normal variational posterior and
+    normalizes each sample: ``ẑ^(s) = z^(s) / sum(z^(s))``.
+
+    The confidence score is defined on the **gap** between the
+    cell-level winner and its nearest competitor, so the score is
+    invariant to layer size ``K_k`` (only the top two factors enter,
+    dormant factors don't inflate it):
+
+    - **Cell-level winner** ``f* = argmax_f E_s[ẑ_f]``.
+    - **Per-sample gap** ``gap^(s) = ẑ^(s)_{f*} - max_{g != f*} ẑ^(s)_g``.
+      Equals 0 when the winner and runner-up are tied, ``1`` when the
+      winner holds all the mass, and goes negative in samples where
+      some other factor out-competes ``f*`` (so identity flipping
+      directly penalizes the score).
+    - **Effect size** ``= E_s[gap^(s)]`` — posterior-mean margin by
+      which the winner beats its nearest competitor.
+    - **Posterior SD** ``= SD_s[gap^(s)]`` — uncertainty of that
+      margin (diagnostic).
+    - **Confidence** ``= quantile_{1 - credible_level}({gap^(s)})`` —
+      the empirical ``(1 - credible_level)``-quantile of the gap across
+      posterior samples. Reads as:
+
+        "In at least ``credible_level`` of posterior samples, the
+         winning factor ``f*`` had at least ``confidence`` more
+         normalized mass than any competing factor."
+
+      Layer-size invariant: a value of e.g. ``0.3`` means "winner leads
+      runner-up by 30 percentage points of normalized mass" regardless
+      of the number of factors at the layer.
+
+    Two auxiliary diagnostic scores are also computed:
+
+    - ``winner_probability[c, k] = max_f P_s[argmax = f]`` — how often
+      the winner is the argmax across samples. Identity-stability only;
+      ignores magnitude (a tight ``0.51/0.49`` scores ``1.0`` here).
+    - ``entropy_confidence[c, k] = 1 - H(p) / log(K_k)`` — normalized
+      entropy of the argmax distribution.
+
+    **Selection rule (finest-that-clears)**. For each cell, the "best"
+    layer is the finest (lowest index) multi-factor layer
+    (``K_k >= 2``) whose ``confidence`` clears ``tau``. If no
+    multi-factor layer clears ``tau``, the cell is assigned to the
+    top-most single-factor layer (typically the root) as a
+    "stem-cell-like" catch-all. This encodes the biological intuition:
+
+    - Terminally differentiated cells have a clear dominant factor at
+      L0 with tight posterior → assigned at L0.
+    - Partially differentiated cells are ambiguous between siblings at
+      L0 but clear at their parent layer L1 → assigned at L1.
+    - Stem-like cells are ambiguous everywhere → assigned at the root.
+
+    Writes:
+
+    - ``adata.obsm[f"{key_added}_effect_size"]`` — ``(n_cells, n_layers)``
+      float. Posterior-mean **gap** between winner and nearest competitor.
+    - ``adata.obsm[f"{key_added}_posterior_sd"]`` — ``(n_cells, n_layers)``
+      float. Posterior SD of the gap.
+    - ``adata.obsm[f"{key_added}_confidence"]`` — ``(n_cells, n_layers)``
+      float. Lower empirical quantile of the gap — the layer-size-invariant
+      score that ``tau`` gates on.
+    - ``adata.obsm[f"{key_added}_winner_mass"]`` — ``(n_cells, n_layers)``
+      float. Diagnostic: posterior mean of the winner's normalized mass
+      (``E[ẑ_{f*}]``). Not K-invariant.
+    - ``adata.obsm[f"{key_added}_winner_probability"]`` — ``(n_cells, n_layers)``
+      float. Diagnostic: posterior argmax-identity probability.
+    - ``adata.obsm[f"{key_added}_entropy_confidence"]`` — ``(n_cells, n_layers)``
+      float. Diagnostic: normalized-entropy score.
+    - ``adata.obsm[f"{key_added}_argmax_factor"]`` — ``(n_cells, n_layers)`` int,
+      slot indices into the filtered factor list of each layer (``-1`` if the
+      layer has no kept factors).
+    - ``adata.obs[f"{key_added}_confidence_{layer_name}"]`` per layer.
+    - ``adata.obs[f"{key_added}_argmax_{layer_name}"]`` per layer (factor name).
+    - ``adata.obs[f"{key_added}_best_layer"]`` — layer name of the chosen layer.
+    - ``adata.obs[f"{key_added}_best_factor_idx"]`` — slot within the best
+      layer's filtered factor list.
+    - ``adata.obs[f"{key_added}_factor"]`` — factor name at the best layer.
+    - ``adata.obs[f"{key_added}_best_effect_size"]`` — effect size at the
+      best layer.
+    - ``adata.obs[f"{key_added}_best_posterior_sd"]`` — posterior SD at the
+      best layer.
+    - ``adata.obs[f"{key_added}_best_confidence"]`` — combined confidence
+      at the best layer.
+    - ``adata.uns[key_added]`` — metadata (layer names, sizes, ``tau``,
+      ``n_samples``, ``credible_level``, metric name, fit revision).
+
+    Args:
+        model: scDEF model instance (must already be fitted).
+        n_samples: number of Monte Carlo samples ``S`` drawn per cell/layer.
+        tau: minimum confidence (lower quantile of the winner-runner-up
+            gap) for a multi-factor layer to be eligible as the cell's
+            best layer (in ``[0, 1]``). Reads as "in at least
+            ``credible_level`` of posterior samples, the winner must lead
+            the runner-up by at least ``tau`` of the normalized mass".
+        credible_level: posterior credibility of the lower bound, in
+            ``(0, 1)``. The confidence is the empirical
+            ``(1 - credible_level)``-quantile of the per-sample gap.
+            Default ``0.9`` → "in 90% of posterior samples, the winner
+            led by at least ``confidence``". Set higher (e.g. ``0.95``)
+            for a stricter score.
+        key_added: prefix used for all written keys in ``adata``.
+        rng_key: optional ``jax.random`` key; if ``None``, derived from
+            ``model.seed``.
+    """
+    import jax
+    import jax.numpy as jnp
+    from jax import random, lax
+
+    if int(n_samples) <= 0:
+        raise ValueError("n_samples must be > 0.")
+    if not (0.0 <= float(tau) <= 1.0):
+        raise ValueError("tau must be in [0, 1].")
+    if not (0.0 < float(credible_level) < 1.0):
+        raise ValueError("credible_level must be in (0, 1).")
+
+    if rng_key is None:
+        rng_key = random.PRNGKey(int(getattr(model, "seed", 0)))
+
+    z_params = model.local_params[1]
+    mu_full = jnp.asarray(z_params[0])
+    log_std_full = jnp.asarray(z_params[1])
+
+    n_cells = int(mu_full.shape[0])
+    n_layers = int(model.n_layers)
+    layer_sizes = [int(s) for s in model.layer_sizes]
+    layer_names = [str(model.layer_names[i]) for i in range(n_layers)]
+    n_samples = int(n_samples)
+
+    effect_size_mat = np.zeros((n_cells, n_layers), dtype=float)
+    posterior_sd_mat = np.zeros((n_cells, n_layers), dtype=float)
+    confidence_mat = np.zeros((n_cells, n_layers), dtype=float)
+    winner_mass_mat = np.zeros((n_cells, n_layers), dtype=float)
+    winner_prob_mat = np.zeros((n_cells, n_layers), dtype=float)
+    entropy_conf_mat = np.zeros((n_cells, n_layers), dtype=float)
+    argmax_mat = np.full((n_cells, n_layers), -1, dtype=int)
+    label_mat = np.empty((n_cells, n_layers), dtype=object)
+    label_mat[:] = ""
+
+    layer_rng_keys = random.split(rng_key, max(n_layers, 1))
+
+    for layer_idx in range(n_layers):
+        start = int(sum(layer_sizes[:layer_idx]))
+        kept = np.asarray(model.factor_lists[layer_idx], dtype=int)
+        K_k = int(len(kept))
+        if K_k == 0:
+            continue
+
+        kept_cols = jnp.asarray(start + kept, dtype=jnp.int32)
+        mu_k = mu_full[:, kept_cols]
+        sigma_k = jnp.exp(log_std_full[:, kept_cols])
+        sample_keys = random.split(layer_rng_keys[layer_idx], n_samples)
+
+        # Single-factor layer: the only factor has all the normalized
+        # mass (ẑ ≡ 1). No runner-up exists; define confidence = 1.
+        if K_k == 1:
+            argmax_slot = np.zeros(n_cells, dtype=int)
+            effect_size_mat[:, layer_idx] = 1.0
+            posterior_sd_mat[:, layer_idx] = 0.0
+            confidence_mat[:, layer_idx] = 1.0
+            winner_mass_mat[:, layer_idx] = 1.0
+            winner_prob_mat[:, layer_idx] = 1.0
+            entropy_conf_mat[:, layer_idx] = 1.0
+            argmax_mat[:, layer_idx] = argmax_slot
+            names_arr = np.asarray(model.factor_names[layer_idx], dtype=object)
+            label_mat[:, layer_idx] = names_arr[argmax_slot]
+            continue
+
+        # Pass 1: accumulate summary statistics over posterior samples.
+        # Memory O(n_cells * K_k) for the state.
+        #   - argmax one-hot counts → posterior P(argmax = f)
+        #   - normalized mass       → posterior E[ẑ_f] (used to pick f*)
+        def _accumulate_step(state, key):
+            counts, sum_zhat = state
+            eps = random.normal(key, shape=mu_k.shape)
+            z = jnp.exp(mu_k + sigma_k * eps)
+            zhat = z / jnp.clip(jnp.sum(z, axis=-1, keepdims=True), 1e-30, None)
+            a = jnp.argmax(zhat, axis=-1)
+            one_hot = jax.nn.one_hot(a, num_classes=K_k, dtype=jnp.float32)
+            return (counts + one_hot, sum_zhat + zhat), None
+
+        init_state = (
+            jnp.zeros((n_cells, K_k), dtype=jnp.float32),
+            jnp.zeros((n_cells, K_k), dtype=jnp.float32),
+        )
+        (counts_final, sum_zhat_final), _ = lax.scan(
+            _accumulate_step, init_state, sample_keys
+        )
+        p = counts_final / float(n_samples)
+        mean_zhat = sum_zhat_final / float(n_samples)
+        argmax_slot_jax = jnp.argmax(mean_zhat, axis=-1)  # (n_cells,)
+
+        # Pass 2: re-draw samples with the same keys and, for each sample,
+        # compute gap^(s) = ẑ^(s)[f*] - max_{g != f*} ẑ^(s)[g] at the
+        # cell-level winner slot f*. Collect into a (S, n_cells) matrix
+        # from which we take the exact empirical quantile, mean, and SD.
+        # Memory O(S * n_cells) — no (S, n_cells, K_k) tensor.
+        rows_jax = jnp.arange(n_cells)
+        winner_onehot = jax.nn.one_hot(argmax_slot_jax, K_k, dtype=bool)
+
+        def _gather_step(_, key):
+            eps = random.normal(key, shape=mu_k.shape)
+            z = jnp.exp(mu_k + sigma_k * eps)
+            zhat = z / jnp.clip(jnp.sum(z, axis=-1, keepdims=True), 1e-30, None)
+            winner_mass = zhat[rows_jax, argmax_slot_jax]
+            zhat_others = jnp.where(winner_onehot, -jnp.inf, zhat)
+            runner_up_mass = jnp.max(zhat_others, axis=-1)
+            gap = winner_mass - runner_up_mass
+            return None, (gap, winner_mass)
+
+        _, (gap_samples, winner_mass_samples) = lax.scan(
+            _gather_step, None, sample_keys
+        )
+        # gap_samples, winner_mass_samples: (S, n_cells)
+
+        q_level = 1.0 - float(credible_level)
+        conf_jax = jnp.quantile(gap_samples, q=q_level, axis=0)
+        mean_gap_jax = jnp.mean(gap_samples, axis=0)
+        sd_gap_jax = jnp.std(gap_samples, axis=0)
+        winner_mass_mean_jax = jnp.mean(winner_mass_samples, axis=0)
+
+        p_np = np.asarray(p, dtype=float)
+        argmax_slot = np.asarray(argmax_slot_jax, dtype=int)
+
+        # Effect size: posterior-mean margin of winner over runner-up.
+        effect_size = np.clip(np.asarray(mean_gap_jax, dtype=float), -1.0, 1.0)
+
+        # Posterior SD of the gap (uncertainty of the margin).
+        posterior_sd = np.clip(np.asarray(sd_gap_jax, dtype=float), 0.0, 1.0)
+
+        # Primary confidence: exact empirical lower quantile of the gap.
+        conf = np.clip(np.asarray(conf_jax, dtype=float), 0.0, 1.0)
+
+        # Diagnostic: posterior mean of the winner's normalized mass
+        # (not K-invariant; included as a direct interpretability aid).
+        winner_mass = np.clip(np.asarray(winner_mass_mean_jax, dtype=float), 0.0, 1.0)
+
+        # Diagnostic: argmax-identity probability.
+        winner_prob = np.clip(np.max(p_np, axis=-1), 0.0, 1.0)
+
+        # Diagnostic: normalized entropy of argmax distribution.
+        with np.errstate(divide="ignore", invalid="ignore"):
+            safe_p = np.clip(p_np, 1e-30, 1.0)
+            H = -np.sum(p_np * np.log(safe_p), axis=-1)
+        entropy_conf = np.clip(1.0 - H / float(np.log(K_k)), 0.0, 1.0)
+
+        effect_size_mat[:, layer_idx] = effect_size
+        posterior_sd_mat[:, layer_idx] = posterior_sd
+        confidence_mat[:, layer_idx] = conf
+        winner_mass_mat[:, layer_idx] = winner_mass
+        winner_prob_mat[:, layer_idx] = winner_prob
+        entropy_conf_mat[:, layer_idx] = entropy_conf
+        argmax_mat[:, layer_idx] = argmax_slot
+        names_arr = np.asarray(model.factor_names[layer_idx], dtype=object)
+        label_mat[:, layer_idx] = names_arr[argmax_slot]
+
+    # Per-cell aggregation across layers.
+    #
+    # Selection rule: "finest layer that clears tau".
+    #   1) Scan multi-factor layers (K_k >= 2) from finest (lowest idx)
+    #      to coarsest and take the first one whose confidence clears
+    #      `tau`.
+    #   2) Otherwise fall back to the top-most single-factor layer
+    #      (typically the root), which acts as a "stem-cell-like"
+    #      catch-all for cells not confidently assigned at any finer
+    #      multi-factor layer.
+    is_primary_layer = np.asarray(
+        [len(model.factor_lists[i]) >= 2 for i in range(n_layers)],
+        dtype=bool,
+    )
+    has_factors = np.asarray(
+        [len(model.factor_lists[i]) > 0 for i in range(n_layers)],
+        dtype=bool,
+    )
+
+    primary_mask = (confidence_mat >= float(tau)) & is_primary_layer[None, :]
+    has_primary = np.any(primary_mask, axis=1)
+
+    # Finest-first: argmax over a mask is the first True index, which is
+    # the finest (lowest-index) multi-factor layer clearing tau.
+    finest_primary = np.argmax(primary_mask, axis=1)
+
+    fallback_layer = -1
+    for i in range(n_layers - 1, -1, -1):
+        if has_factors[i] and not is_primary_layer[i]:
+            fallback_layer = i
+            break
+
+    best_layer_idx_raw = np.where(
+        has_primary,
+        finest_primary,
+        fallback_layer,
+    )
+    any_cand = best_layer_idx_raw >= 0
+
+    best_layer_idx = np.full(n_cells, -1, dtype=int)
+    best_confidence = np.full(n_cells, np.nan, dtype=float)
+    best_effect_size = np.full(n_cells, np.nan, dtype=float)
+    best_posterior_sd = np.full(n_cells, np.nan, dtype=float)
+    best_factor_slot = np.full(n_cells, -1, dtype=int)
+    best_layer_name = np.empty(n_cells, dtype=object)
+    best_layer_name[:] = ""
+    best_label = np.empty(n_cells, dtype=object)
+    best_label[:] = ""
+
+    if np.any(any_cand):
+        idxs = np.where(any_cand)[0]
+        sel = best_layer_idx_raw[any_cand]
+        best_layer_idx[idxs] = sel
+        best_confidence[idxs] = confidence_mat[idxs, sel]
+        best_effect_size[idxs] = effect_size_mat[idxs, sel]
+        best_posterior_sd[idxs] = posterior_sd_mat[idxs, sel]
+        best_factor_slot[idxs] = argmax_mat[idxs, sel]
+        best_layer_name[idxs] = np.asarray(
+            [layer_names[int(k)] for k in sel], dtype=object
+        )
+        best_label[idxs] = label_mat[idxs, sel]
+
+    adata = model.adata
+    adata.obsm[f"{key_added}_effect_size"] = effect_size_mat
+    adata.obsm[f"{key_added}_posterior_sd"] = posterior_sd_mat
+    adata.obsm[f"{key_added}_confidence"] = confidence_mat
+    adata.obsm[f"{key_added}_winner_mass"] = winner_mass_mat
+    adata.obsm[f"{key_added}_winner_probability"] = winner_prob_mat
+    adata.obsm[f"{key_added}_entropy_confidence"] = entropy_conf_mat
+    adata.obsm[f"{key_added}_argmax_factor"] = argmax_mat
+
+    for layer_idx in range(n_layers):
+        layer_name = layer_names[layer_idx]
+        adata.obs[f"{key_added}_confidence_{layer_name}"] = confidence_mat[:, layer_idx]
+        adata.obs[f"{key_added}_argmax_{layer_name}"] = pd.Categorical(
+            label_mat[:, layer_idx].astype(str)
+        )
+
+    adata.obs[f"{key_added}_best_layer"] = pd.Categorical(best_layer_name.astype(str))
+    adata.obs[f"{key_added}_best_factor_idx"] = best_factor_slot
+    adata.obs[f"{key_added}_factor"] = pd.Categorical(best_label.astype(str))
+    adata.obs[f"{key_added}_best_effect_size"] = best_effect_size
+    adata.obs[f"{key_added}_best_posterior_sd"] = best_posterior_sd
+    adata.obs[f"{key_added}_best_confidence"] = best_confidence
+
+    adata.uns[key_added] = {
+        "layer_names": list(layer_names),
+        "layer_sizes_filtered": [
+            int(len(model.factor_lists[i])) for i in range(n_layers)
+        ],
+        "tau": float(tau),
+        "n_samples": int(n_samples),
+        "credible_level": float(credible_level),
+        "quantile_level": float(1.0 - float(credible_level)),
+        "metric": "empirical_lower_quantile_winner_runner_up_gap",
+        "selection_rule": "finest_layer_clearing_tau",
+        "fit_revision": int(getattr(model, "_fit_revision", 0)),
+    }
+
+
 def set_cell_entropies(
     model: "scDEF",
     layers: Optional[Sequence[Union[int, str]]] = None,
@@ -1229,6 +1595,144 @@ def umap(
         sc.tl.umap(model.adata)
         # Store under a layer-specific key
         model.adata.obsm[f"X_umap_{layer_name}"] = model.adata.obsm["X_umap"].copy()
+
+
+def multilayer_umap(
+    model: "scDEF",
+    layers: Optional[Sequence[int]] = None,
+    weights: Optional[Sequence[float]] = None,
+    normalize_per_layer: bool = False,
+    use_log: bool = False,
+    metric: str = "euclidean",
+    key_added: str = "multilayer",
+    eps: float = 1e-8,
+    neighbors_kwargs: Optional[Dict[str, object]] = None,
+    umap_kwargs: Optional[Dict[str, object]] = None,
+) -> np.ndarray:
+    """Compute a single UMAP from the concatenation of all scDEF layers.
+
+    Each cell's representation is the concatenation of its soft factor
+    assignments ``X_{layer_name}`` across the selected layers, producing
+    a multi-resolution signature that encodes identity at every level
+    of the hierarchy simultaneously.
+
+    This tends to produce a **lineage-aware** embedding that smooths
+    through differentiation trajectories: terminally differentiated
+    cells form tight clusters by shared fine-layer factor, progenitor
+    cells bridge siblings through their shared parent-layer mass, and
+    stem-like cells with diffuse loadings sit in their own regime.
+    Contrast with ``umap`` (per-layer), which only captures a single
+    scale.
+
+    By default it uses raw per-layer scores as stored in ``X_{layer}``.
+    Set ``normalize_per_layer=True`` to convert each layer's row to
+    proportions before optional log/weighting; this makes geometry
+    reflect relative composition at each layer rather than absolute
+    loading scale.
+
+    Use ``weights`` to bias the embedding toward fine or coarse
+    resolution.
+
+    Single-factor layers (``K_k == 1``, typically the root) are skipped
+    automatically — every cell has mass 1 there, so they add no
+    discriminative signal.
+
+    Args:
+        model: fitted scDEF model.
+        layers: layer indices to include. If None, uses all layers with
+            ``K_k >= 2``, in ascending order.
+        weights: optional per-layer multiplicative weights applied to
+            each layer's sub-vector before concatenation. Must have the
+            same length as ``layers``. Larger weight → that layer has
+            more influence on the embedding geometry. Default: uniform.
+        normalize_per_layer: if True, row-normalize each selected layer
+            block so rows sum to 1 before optional ``log`` and
+            weighting. Useful when you want distances to depend on
+            relative factor composition rather than total per-layer
+            loading magnitude.
+        use_log: if True, replace each sub-vector by ``log(X + eps)``
+            before applying weights/concatenation. Helpful when fine
+            resolution is dominated by a single factor and small
+            proportions get crushed by Euclidean distance.
+        metric: distance metric for ``sc.pp.neighbors``.
+        key_added: suffix used to store results. Writes
+            ``adata.obsm[f"X_{key_added}"]`` (the concatenated
+            representation) and ``adata.obsm[f"X_umap_{key_added}"]``
+            (the UMAP embedding).
+        eps: floor for ``log`` when ``use_log=True``.
+        neighbors_kwargs: extra kwargs forwarded to ``sc.pp.neighbors``.
+        umap_kwargs: extra kwargs forwarded to ``sc.tl.umap``.
+
+    Returns:
+        The concatenated representation of shape ``(n_cells, sum K_k)``.
+    """
+    if layers is None:
+        layers = [i for i in range(model.n_layers) if len(model.factor_lists[i]) >= 2]
+    else:
+        layers = [int(i) for i in layers]
+        for layer_idx in layers:
+            if layer_idx < 0 or layer_idx >= model.n_layers:
+                raise ValueError(f"layer index {layer_idx} out of bounds.")
+        layers = [i for i in layers if len(model.factor_lists[i]) >= 2]
+
+    if len(layers) == 0:
+        raise ValueError(
+            "No layers with K >= 2 to concatenate. "
+            "Run `model.annotate_adata()` and check `factor_lists`."
+        )
+
+    if weights is None:
+        weights_arr = np.ones(len(layers), dtype=float)
+    else:
+        weights_arr = np.asarray(list(weights), dtype=float)
+        if weights_arr.shape != (len(layers),):
+            raise ValueError(
+                f"weights must have length {len(layers)} (one per selected layer)."
+            )
+        if np.any(weights_arr < 0):
+            raise ValueError("weights must be non-negative.")
+
+    parts: List[np.ndarray] = []
+    for w, layer_idx in zip(weights_arr, layers):
+        layer_name = model.layer_names[layer_idx]
+        obsm_key = f"X_{layer_name}"
+        if obsm_key not in model.adata.obsm:
+            raise KeyError(
+                f"Missing '{obsm_key}' in model.adata.obsm. "
+                "Run `model.annotate_adata()` (or `model.fit(...)`) first."
+            )
+        x = np.asarray(model.adata.obsm[obsm_key], dtype=float)
+        if normalize_per_layer:
+            x = x / np.clip(np.sum(x, axis=1, keepdims=True), float(eps), None)
+        if use_log:
+            x = np.log(np.clip(x, float(eps), None))
+        if w != 1.0:
+            x = x * float(w)
+        parts.append(x)
+
+    concat = np.concatenate(parts, axis=1)
+    rep_key = f"X_{key_added}"
+    model.adata.obsm[rep_key] = concat
+
+    nb_kwargs = dict(neighbors_kwargs or {})
+    nb_kwargs.setdefault("use_rep", rep_key)
+    nb_kwargs.setdefault("metric", metric)
+    sc.pp.neighbors(model.adata, **nb_kwargs)
+    sc.tl.umap(model.adata, **(umap_kwargs or {}))
+    model.adata.obsm[f"X_umap_{key_added}"] = model.adata.obsm["X_umap"].copy()
+
+    model.adata.uns[f"{key_added}_umap_config"] = {
+        "layers": [int(i) for i in layers],
+        "layer_names": [model.layer_names[i] for i in layers],
+        "layer_sizes_filtered": [int(len(model.factor_lists[i])) for i in layers],
+        "weights": weights_arr.tolist(),
+        "normalize_per_layer": bool(normalize_per_layer),
+        "use_log": bool(use_log),
+        "metric": str(metric),
+        "fit_revision": int(getattr(model, "_fit_revision", 0)),
+    }
+
+    return concat
 
 
 from .trajectory import multilevel_paga  # noqa: E402,F401

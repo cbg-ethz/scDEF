@@ -373,6 +373,177 @@ def test_scdef_alpha_annealing_fit():
     assert "n_eff_parents_trace" in model.adata.uns
 
 
+def test_scdef_assign_confident():
+    adata = sc.datasets.pbmc3k()
+    np.random.seed(17)
+    sc.pp.filter_cells(adata, min_genes=200)
+    sc.pp.filter_genes(adata, min_cells=3)
+    adata = adata[np.random.randint(adata.shape[0], size=120)]
+    adata.var["mt"] = adata.var_names.str.startswith("MT-")
+    sc.pp.calculate_qc_metrics(
+        adata, qc_vars=["mt"], percent_top=None, log1p=False, inplace=True
+    )
+    adata = adata[adata.obs.n_genes_by_counts < 2500, :]
+    adata = adata[adata.obs.pct_counts_mt < 5, :]
+    adata.raw = adata
+    raw_adata = adata.raw.to_adata()
+    raw_adata.X = raw_adata.X.toarray()
+    adata.X = adata.X.toarray()
+    sc.pp.normalize_total(adata, target_sum=1e4)
+    sc.pp.log1p(adata)
+    sc.pp.highly_variable_genes(
+        adata, min_mean=0.0125, max_mean=3, min_disp=0.5, n_top_genes=200
+    )
+    raw_adata = raw_adata[:, adata.var.highly_variable]
+
+    # Top layer has K=1 so it is a true single-factor "root" that can
+    # act as the stem-cell fallback for cells with no confident
+    # multi-factor assignment at lower layers.
+    model = scd.scDEF(
+        raw_adata,
+        layer_sizes=[8, 4, 1],
+        seed=1,
+    )
+    model.fit(n_epoch=3)
+
+    n_cells = model.adata.n_obs
+    n_layers = model.n_layers
+    top_layer_name = model.layer_names[-1]
+
+    # Default call uses the gap-based (winner minus runner-up) metric,
+    # which is invariant to layer size K_k:
+    #   per-sample gap^(s) = ẑ^(s)_{f*} - max_{g != f*} ẑ^(s)_g
+    #   effect_size   = E_s[gap^(s)]
+    #   posterior_sd  = SD_s[gap^(s)]
+    #   confidence    = quantile_{1 - credible_level}({gap^(s)})
+    # and picks the FINEST multi-factor layer whose confidence clears tau.
+    tau = 0.3
+    credible_level = 0.9
+    scd.tl.assign_confident(
+        model, n_samples=200, tau=tau, credible_level=credible_level
+    )
+
+    effect_mat = np.asarray(model.adata.obsm["confident_effect_size"])
+    sd_mat = np.asarray(model.adata.obsm["confident_posterior_sd"])
+    conf_mat = np.asarray(model.adata.obsm["confident_confidence"])
+    winner_mass_mat = np.asarray(model.adata.obsm["confident_winner_mass"])
+    winner_prob_mat = np.asarray(model.adata.obsm["confident_winner_probability"])
+    ent_conf_mat = np.asarray(model.adata.obsm["confident_entropy_confidence"])
+    argmax_mat = np.asarray(model.adata.obsm["confident_argmax_factor"])
+    for mat in (
+        effect_mat,
+        sd_mat,
+        conf_mat,
+        winner_mass_mat,
+        winner_prob_mat,
+        ent_conf_mat,
+        argmax_mat,
+    ):
+        assert mat.shape == (n_cells, n_layers)
+    # gap can go slightly negative in cells where posterior identity is
+    # not stable, but it's bounded in [-1, 1]; confidence is clipped to
+    # [0, 1].
+    assert np.all((effect_mat >= -1.0) & (effect_mat <= 1.0))
+    assert np.all((sd_mat >= 0.0) & (sd_mat <= 1.0))
+    assert np.all((conf_mat >= 0.0) & (conf_mat <= 1.0))
+    assert np.all((winner_mass_mat >= 0.0) & (winner_mass_mat <= 1.0))
+    assert np.all((winner_prob_mat >= 0.0) & (winner_prob_mat <= 1.0))
+    assert np.all((ent_conf_mat >= 0.0) & (ent_conf_mat <= 1.0))
+
+    # Single-factor layers have ẑ ≡ 1 and no runner-up: gap is defined
+    # as 1 so confidence = 1 (stem-cell fallback can always win).
+    for layer_idx in range(n_layers):
+        if len(model.factor_lists[layer_idx]) == 1:
+            np.testing.assert_allclose(effect_mat[:, layer_idx], 1.0)
+            np.testing.assert_allclose(sd_mat[:, layer_idx], 0.0, atol=1e-6)
+            np.testing.assert_allclose(conf_mat[:, layer_idx], 1.0)
+            np.testing.assert_allclose(winner_mass_mat[:, layer_idx], 1.0)
+            np.testing.assert_allclose(winner_prob_mat[:, layer_idx], 1.0)
+            np.testing.assert_allclose(ent_conf_mat[:, layer_idx], 1.0)
+        if len(model.factor_lists[layer_idx]) > 0:
+            assert np.all(argmax_mat[:, layer_idx] >= 0)
+            assert np.all(argmax_mat[:, layer_idx] < len(model.factor_lists[layer_idx]))
+
+    # For multi-factor layers, winner_mass is in [1/K_k, 1).
+    for layer_idx in range(n_layers):
+        K_k = len(model.factor_lists[layer_idx])
+        if K_k >= 2:
+            assert np.all(winner_mass_mat[:, layer_idx] >= 1.0 / K_k - 1e-9)
+            assert np.all(winner_mass_mat[:, layer_idx] < 1.0)
+
+    # Per-layer obs columns exist.
+    for layer_idx in range(n_layers):
+        layer_name = model.layer_names[layer_idx]
+        assert f"confident_confidence_{layer_name}" in model.adata.obs.columns
+        assert f"confident_argmax_{layer_name}" in model.adata.obs.columns
+
+    # Best-layer summaries.
+    for col in [
+        "confident_best_layer",
+        "confident_best_factor_idx",
+        "confident_factor",
+        "confident_best_effect_size",
+        "confident_best_posterior_sd",
+        "confident_best_confidence",
+    ]:
+        assert col in model.adata.obs.columns
+
+    best_layer = model.adata.obs["confident_best_layer"].astype(str).to_numpy()
+    best_conf = model.adata.obs["confident_best_confidence"].to_numpy()
+    best_effect = model.adata.obs["confident_best_effect_size"].to_numpy()
+    best_sd = model.adata.obs["confident_best_posterior_sd"].to_numpy()
+    best_label = model.adata.obs["confident_factor"].astype(str).to_numpy()
+
+    # Every cell has SOME assignment (root is a universal fallback).
+    assert not np.any(best_layer == "")
+    assert not np.any(np.isnan(best_conf))
+    assert not np.any(np.isnan(best_effect))
+    assert not np.any(np.isnan(best_sd))
+
+    # Finest-that-clears invariant: for each cell, the chosen layer is
+    # either (a) the finest multi-factor layer with conf >= tau, or
+    # (b) the top single-factor fallback layer.
+    layer_name_to_idx = {name: i for i, name in enumerate(model.layer_names)}
+    for cell_idx in range(n_cells):
+        lname = best_layer[cell_idx]
+        chosen_idx = layer_name_to_idx[lname]
+        K_chosen = len(model.factor_lists[chosen_idx])
+        if K_chosen >= 2:
+            assert best_conf[cell_idx] >= tau
+            for finer_idx in range(chosen_idx):
+                if len(model.factor_lists[finer_idx]) >= 2:
+                    assert conf_mat[cell_idx, finer_idx] < tau
+        else:
+            assert lname == top_layer_name
+
+    # best_label should be a valid factor name in the chosen layer.
+    for cell_idx in range(n_cells):
+        lname = best_layer[cell_idx]
+        layer_idx = model.layer_names.index(lname)
+        assert best_label[cell_idx] in model.factor_names[layer_idx]
+
+    # uns metadata is populated.
+    meta = model.adata.uns["confident"]
+    assert meta["tau"] == tau
+    assert meta["n_samples"] == 200
+    assert meta["metric"] == "empirical_lower_quantile_winner_runner_up_gap"
+    assert meta["selection_rule"] == "finest_layer_clearing_tau"
+    np.testing.assert_allclose(meta["credible_level"], credible_level)
+    np.testing.assert_allclose(meta["quantile_level"], 1.0 - credible_level)
+    assert list(meta["layer_names"]) == list(model.layer_names)
+
+    # Fallback semantics: with tau = 1.0, NO multi-factor layer can
+    # clear the bar (the gap is strictly < 1 whenever K_k >= 2, since
+    # the runner-up has some positive mass), so every cell must fall
+    # back to the single-factor root.
+    scd.tl.assign_confident(model, n_samples=100, tau=1.0, key_added="cf_hi")
+    assert "cf_hi_best_layer" in model.adata.obs.columns
+    best_layer_hi = model.adata.obs["cf_hi_best_layer"].astype(str).to_numpy()
+    best_conf_hi = model.adata.obs["cf_hi_best_confidence"].to_numpy()
+    assert np.all(best_layer_hi == top_layer_name)
+    np.testing.assert_allclose(best_conf_hi, 1.0)
+
+
 def test_scdef_load_and_plotting_pipeline():
     model_dir = Path(__file__).resolve().parent / "pretrained_scdef_model"
     state_file = model_dir / "model_state.pkl"
