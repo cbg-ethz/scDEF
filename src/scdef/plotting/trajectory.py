@@ -421,3 +421,210 @@ def plot_trajectory_heatmap(
         plt.show()
         return None
     return fig
+
+
+def path_embedding(
+    model: "scDEF",
+    path_id: Union[int, str] = "auto",
+    paths_key: str = "transition_paths",
+    score_key: Optional[str] = None,
+    basis: str = "umap_multilayer",
+    min_affinity: float = 0.0,
+    affinity_alpha_range: Tuple[float, float] = (0.15, 1.0),
+    cmap: str = "viridis",
+    point_size: float = 10.0,
+    show_background: bool = True,
+    background_color: str = "lightgray",
+    background_alpha: float = 0.2,
+    obs_key: Optional[str] = None,
+    obs_order: Optional[Sequence[str]] = None,
+    ncols: int = 3,
+    ax: Optional[plt.Axes] = None,
+    show: bool = True,
+) -> Optional[plt.Figure]:
+    """Plot cells on an embedding colored by position along one path.
+
+    This visualization uses outputs from ``scd.tl.score_paths``:
+      - ``adata.obsm[f"{score_key}_positions"]``
+      - ``adata.obsm[f"{score_key}_affinities"]``.
+
+    Color encodes path position (0->1), and point alpha scales with
+    path affinity. If ``obs_key`` is provided, draws one facet per
+    category value.
+    """
+    if score_key is None:
+        score_key = paths_key
+    pos_key = f"{score_key}_positions"
+    aff_key = f"{score_key}_affinities"
+
+    if paths_key not in model.adata.uns:
+        raise KeyError(f"'{paths_key}' not found in adata.uns.")
+    path_objs = list(model.adata.uns[paths_key].get("paths", []))
+    if len(path_objs) == 0:
+        raise ValueError(f"No paths found in adata.uns['{paths_key}']['paths'].")
+    if pos_key not in model.adata.obsm or aff_key not in model.adata.obsm:
+        raise KeyError(
+            f"Missing '{pos_key}' or '{aff_key}' in adata.obsm. "
+            f"Run `scd.tl.score_paths(model, paths_key='{paths_key}', key_added='{score_key}')` first."
+        )
+
+    emb_key = basis if basis.startswith("X_") else f"X_{basis}"
+    if emb_key not in model.adata.obsm:
+        raise KeyError(
+            f"Embedding '{emb_key}' not found in adata.obsm. "
+            "Compute the embedding first."
+        )
+    emb = np.asarray(model.adata.obsm[emb_key], dtype=float)
+    if emb.ndim != 2 or emb.shape[1] < 2:
+        raise ValueError(f"Embedding '{emb_key}' must be a 2D array with >=2 columns.")
+
+    # Resolve path id (supports "auto")
+    if isinstance(path_id, str):
+        if path_id != "auto":
+            raise ValueError("path_id must be an int or 'auto'.")
+        stats = list(model.adata.uns[paths_key].get("path_stats", []))
+        if len(stats) == len(path_objs):
+            ranked = sorted(
+                stats,
+                key=lambda s: (
+                    s.get("n_cells_mid_region", 0),
+                    s.get("n_cells_with_position", 0),
+                    s.get("mean_affinity", 0.0),
+                ),
+                reverse=True,
+            )
+            resolved_path_id = int(ranked[0].get("path_id", 0))
+        else:
+            aff_all = np.asarray(model.adata.obsm[aff_key], dtype=float)
+            pos_all = np.asarray(model.adata.obsm[pos_key], dtype=float)
+            support = []
+            for p in range(aff_all.shape[1]):
+                valid = np.isfinite(pos_all[:, p]) & (
+                    aff_all[:, p] >= float(min_affinity)
+                )
+                support.append(int(np.sum(valid)))
+            resolved_path_id = int(np.argmax(np.asarray(support)))
+    else:
+        resolved_path_id = int(path_id)
+
+    if resolved_path_id < 0 or resolved_path_id >= len(path_objs):
+        raise IndexError(
+            f"path_id {path_id} resolved to {resolved_path_id}, out of bounds for "
+            f"{len(path_objs)} paths in '{paths_key}'."
+        )
+
+    positions = np.asarray(
+        model.adata.obsm[pos_key][:, int(resolved_path_id)], dtype=float
+    )
+    affinities = np.asarray(
+        model.adata.obsm[aff_key][:, int(resolved_path_id)], dtype=float
+    )
+    affinities = np.clip(affinities, 0.0, 1.0)
+    mask_main = np.isfinite(positions) & (affinities >= float(min_affinity))
+
+    a0, a1 = float(affinity_alpha_range[0]), float(affinity_alpha_range[1])
+    if a0 < 0 or a1 > 1 or a1 < a0:
+        raise ValueError("affinity_alpha_range must satisfy 0 <= min <= max <= 1.")
+
+    def _plot_one(_ax: plt.Axes, subset_mask: np.ndarray, title: str) -> None:
+        if show_background:
+            _ax.scatter(
+                emb[:, 0],
+                emb[:, 1],
+                s=float(point_size),
+                c=background_color,
+                alpha=float(background_alpha),
+                linewidths=0,
+                rasterized=True,
+            )
+        mask = mask_main & subset_mask
+        if np.any(mask):
+            alpha = a0 + (a1 - a0) * affinities[mask]
+            rgba = plt.get_cmap(cmap)(np.clip(positions[mask], 0.0, 1.0))
+            rgba[:, 3] = alpha
+            _ax.scatter(
+                emb[mask, 0],
+                emb[mask, 1],
+                s=float(point_size),
+                c=rgba,
+                linewidths=0,
+                rasterized=True,
+            )
+        _ax.set_title(title)
+        _ax.set_xlabel(f"{basis}_1")
+        _ax.set_ylabel(f"{basis}_2")
+        _ax.set_xticks([])
+        _ax.set_yticks([])
+        for spine in _ax.spines.values():
+            spine.set_visible(False)
+
+    pobj = path_objs[int(resolved_path_id)]
+    nodes = " -> ".join(pobj.get("nodes", []))
+
+    if obs_key is None:
+        if ax is None:
+            fig, ax = plt.subplots(1, 1, figsize=(6, 5))
+        else:
+            fig = None
+        _plot_one(
+            ax,
+            np.ones(model.adata.n_obs, dtype=bool),
+            f"{paths_key}[{resolved_path_id}]  {nodes}",
+        )
+        cbar = plt.colorbar(
+            mpl.cm.ScalarMappable(norm=mpl.colors.Normalize(0, 1), cmap=cmap),
+            ax=ax,
+            fraction=0.046,
+            pad=0.04,
+        )
+        cbar.set_label("Path position")
+    else:
+        if obs_key not in model.adata.obs.columns:
+            raise KeyError(f"{obs_key} not found in adata.obs.")
+        if ax is not None:
+            raise ValueError("ax cannot be provided when obs_key faceting is enabled.")
+        obs_vals = model.adata.obs[obs_key].astype(str).to_numpy()
+        if obs_order is None:
+            values = list(pd.unique(obs_vals))
+        else:
+            values = [str(v) for v in obs_order]
+            missing = [v for v in values if v not in set(obs_vals)]
+            if len(missing) > 0:
+                raise ValueError(
+                    f"obs_order values not present in obs['{obs_key}']: {missing}"
+                )
+        if int(ncols) <= 0:
+            raise ValueError("ncols must be > 0.")
+        n_panels = len(values)
+        ncols_i = min(int(ncols), max(1, n_panels))
+        nrows_i = int(np.ceil(n_panels / ncols_i))
+        fig, axes = plt.subplots(
+            nrows_i,
+            ncols_i,
+            figsize=(5.5 * ncols_i, 4.8 * nrows_i),
+            squeeze=False,
+        )
+        flat_axes = axes.ravel()
+        for i, value in enumerate(values):
+            m = obs_vals == value
+            _plot_one(
+                flat_axes[i],
+                m,
+                f"{value} (n={int(np.sum(m))})",
+            )
+        for j in range(n_panels, len(flat_axes)):
+            flat_axes[j].axis("off")
+        fig.suptitle(f"{paths_key}[{resolved_path_id}]  {nodes}", y=0.995)
+        cbar = fig.colorbar(
+            mpl.cm.ScalarMappable(norm=mpl.colors.Normalize(0, 1), cmap=cmap),
+            ax=[axes[r, c] for r in range(nrows_i) for c in range(ncols_i)],
+            fraction=0.02,
+            pad=0.01,
+        )
+        cbar.set_label("Path position")
+        fig.tight_layout()
+
+    if show:
+        plt.show()
+        return None
+    return fig

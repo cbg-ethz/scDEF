@@ -17,7 +17,7 @@ from .factors import (
     factor_gini,
     factor_gene_uncertainty_boxplot,
 )
-from .trajectory import multilevel_paga, plot_trajectory_heatmap
+from .trajectory import multilevel_paga, plot_trajectory_heatmap, path_embedding
 from .qc import (
     qc,
     scales,
@@ -35,6 +35,7 @@ __all__ = [
     "obs_factor_dotplot",
     "multilevel_paga",
     "plot_trajectory_heatmap",
+    "path_embedding",
     "layers_obs",
     "pathway_scores",
     "signatures_scores",

@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from unittest.mock import patch
 import os
+import matplotlib.pyplot as plt
 
 
 def test_scdef():
@@ -542,6 +543,116 @@ def test_scdef_assign_confident():
     best_conf_hi = model.adata.obs["cf_hi_best_confidence"].to_numpy()
     assert np.all(best_layer_hi == top_layer_name)
     np.testing.assert_allclose(best_conf_hi, 1.0)
+
+
+def test_scdef_path_pipeline_and_plotting():
+    adata = sc.datasets.pbmc3k()
+    np.random.seed(23)
+    sc.pp.filter_cells(adata, min_genes=200)
+    sc.pp.filter_genes(adata, min_cells=3)
+    adata = adata[np.random.randint(adata.shape[0], size=100)]
+    adata.var["mt"] = adata.var_names.str.startswith("MT-")
+    sc.pp.calculate_qc_metrics(
+        adata, qc_vars=["mt"], percent_top=None, log1p=False, inplace=True
+    )
+    adata = adata[adata.obs.n_genes_by_counts < 2500, :]
+    adata = adata[adata.obs.pct_counts_mt < 5, :]
+    adata.raw = adata
+    raw_adata = adata.raw.to_adata()
+    raw_adata.X = raw_adata.X.toarray()
+    adata.X = adata.X.toarray()
+    sc.pp.normalize_total(adata, target_sum=1e4)
+    sc.pp.log1p(adata)
+    sc.pp.highly_variable_genes(
+        adata, min_mean=0.0125, max_mean=3, min_disp=0.5, n_top_genes=200
+    )
+    raw_adata = raw_adata[:, adata.var.highly_variable]
+
+    model = scd.scDEF(
+        raw_adata,
+        layer_sizes=[8, 4, 1],
+        seed=1,
+    )
+    model.fit(n_epoch=3)
+
+    # Add a simple condition label to exercise faceting in path_embedding.
+    rng = np.random.default_rng(23)
+    model.adata.obs["condition"] = pd.Categorical(
+        rng.choice(["untreated", "treated", "pseudo_escape"], size=model.adata.n_obs)
+    )
+
+    # Build a multilayer embedding for path visualization.
+    scd.tl.multilayer_umap(model, key_added="multilayer", normalize_per_layer=True)
+
+    # Transition paths (de novo) + path scores.
+    tpaths = scd.tl.build_transition_paths(
+        model,
+        rel_parent_weight=0.2,
+        max_path_len=5,
+        max_paths_per_pair=3,
+    )
+    assert isinstance(tpaths, list)
+    assert "transition_paths" in model.adata.uns
+    scd.tl.score_paths(
+        model,
+        paths_key="transition_paths",
+        key_added="transition_paths",
+        min_affinity=0.05,
+    )
+
+    tpos = np.asarray(model.adata.obsm["transition_paths_positions"])
+    taff = np.asarray(model.adata.obsm["transition_paths_affinities"])
+    assert tpos.shape[0] == model.adata.n_obs
+    assert taff.shape == tpos.shape
+    assert np.all((taff >= 0.0) & (taff <= 1.0))
+    if tpos.shape[1] > 0:
+        assert np.all(np.isnan(tpos) | ((tpos >= 0.0) & (tpos <= 1.0)))
+
+    # Differentiation paths + path scores.
+    dpaths = scd.tl.build_differentiation_paths(model, rel_parent_weight=0.25)
+    assert isinstance(dpaths, list)
+    assert "differentiation_paths" in model.adata.uns
+    scd.tl.score_paths(
+        model,
+        paths_key="differentiation_paths",
+        key_added="differentiation_paths",
+        min_affinity=0.05,
+    )
+    dpos = np.asarray(model.adata.obsm["differentiation_paths_positions"])
+    daff = np.asarray(model.adata.obsm["differentiation_paths_affinities"])
+    assert dpos.shape[0] == model.adata.n_obs
+    assert daff.shape == dpos.shape
+    assert np.all((daff >= 0.0) & (daff <= 1.0))
+    if dpos.shape[1] > 0:
+        assert np.all(np.isnan(dpos) | ((dpos >= 0.0) & (dpos <= 1.0)))
+
+    # Plotting helper: auto path-id selection and faceting by condition.
+    if tpos.shape[1] > 0:
+        fig = scd.pl.path_embedding(
+            model,
+            path_id="auto",
+            paths_key="transition_paths",
+            score_key="transition_paths",
+            basis="umap_multilayer",
+            obs_key="condition",
+            obs_order=["untreated", "treated", "pseudo_escape"],
+            ncols=2,
+            show=False,
+        )
+        assert fig is not None
+        plt.close(fig)
+
+    if dpos.shape[1] > 0:
+        fig = scd.pl.path_embedding(
+            model,
+            path_id="auto",
+            paths_key="differentiation_paths",
+            score_key="differentiation_paths",
+            basis="umap_multilayer",
+            show=False,
+        )
+        assert fig is not None
+        plt.close(fig)
 
 
 def test_scdef_load_and_plotting_pipeline():

@@ -26,7 +26,12 @@ from .factor import (
     umap,
     multilayer_umap,
 )
-from .trajectory import multilevel_paga
+from .trajectory import (
+    multilevel_paga,
+    build_differentiation_paths,
+    build_transition_paths,
+    score_paths,
+)
 
 __all__ = [
     "assign_confident",
@@ -50,5 +55,8 @@ __all__ = [
     "gsea",
     "compute_hierarchy_scores",
     "umap",
+    "build_differentiation_paths",
+    "build_transition_paths",
+    "score_paths",
     "multilevel_paga",
 ]
