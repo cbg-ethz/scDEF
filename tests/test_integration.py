@@ -6,9 +6,9 @@ import pandas as pd
 import scdef.plotting.graph as graph_plot
 from pathlib import Path
 import pytest
-from unittest.mock import patch
 import os
 import matplotlib.pyplot as plt
+from unittest.mock import patch
 
 
 def test_scdef():
@@ -324,12 +324,12 @@ def test_iscdef_refit_after_filtering():
         )
 
 
-def test_scdef_alpha_annealing_fit():
+def test_scdef_entropy_annealing_updates():
     adata = sc.datasets.pbmc3k()
-    np.random.seed(13)
+    np.random.seed(31)
     sc.pp.filter_cells(adata, min_genes=200)
     sc.pp.filter_genes(adata, min_cells=3)
-    adata = adata[np.random.randint(adata.shape[0], size=120)]
+    adata = adata[np.random.randint(adata.shape[0], size=80)]
     adata.var["mt"] = adata.var_names.str.startswith("MT-")
     sc.pp.calculate_qc_metrics(
         adata, qc_vars=["mt"], percent_top=None, log1p=False, inplace=True
@@ -343,35 +343,47 @@ def test_scdef_alpha_annealing_fit():
     sc.pp.normalize_total(adata, target_sum=1e4)
     sc.pp.log1p(adata)
     sc.pp.highly_variable_genes(
-        adata, min_mean=0.0125, max_mean=3, min_disp=0.5, n_top_genes=200
+        adata, min_mean=0.0125, max_mean=3, min_disp=0.5, n_top_genes=150
     )
     raw_adata = raw_adata[:, adata.var.highly_variable]
 
     model = scd.scDEF(
         raw_adata,
-        layer_sizes=[8, 4, 2],
+        layer_sizes=[6, 3, 1],
         seed=1,
     )
-    alpha_before = float(model.alpha)
-    with patch.object(
-        model, "_compute_median_parents", return_value=(3.0, 3)
-    ) as mocked:
-        model.fit(
-            n_epoch=3,
-            anneal_alpha=True,
-            alpha_burn_in=2,
-            check_every=1,
-            target_parents=1.5,
-            max_elbo_drop=1.0,
-            damping=0.5,
-        )
 
-    assert model.alpha > alpha_before
-    assert mocked.call_count == 1
-    expected_anneal_passes = 1 + int(getattr(model, "root_epochs", 0) > 0)
-    assert len(model.elbos) == expected_anneal_passes
-    assert "L0" in model.adata.obs.columns
-    assert "n_eff_parents_trace" in model.adata.uns
+    model.fit(
+        n_epoch=20,
+        root_epochs=0,
+        annealing=1.0,
+        entropy_anneal=True,
+        entropy_window=5,
+        entropy_check_every=1,
+        # Force frequent increases (relative_change is always < huge threshold),
+        # so this test is deterministic and does not depend on loss dynamics.
+        entropy_rel_change_low=1e9,
+        entropy_rel_change_high=1e10,
+        entropy_increase_factor=1.2,
+        entropy_decrease_factor=0.9,
+        entropy_max_annealing=3.0,
+        entropy_min_annealing=1.0,
+        entropy_optimizer_reset_threshold=0.05,
+    )
+
+    trace = np.asarray(model.adata.uns["entropy_annealing_trace"])
+    trace_epochs = np.asarray(model.adata.uns["entropy_annealing_trace_epochs"])
+    assert trace.shape[0] == trace_epochs.shape[0]
+    assert trace.shape[0] == len(model.elbos[0])
+    assert np.all(trace >= 1.0)
+    assert np.all(trace <= 3.0 + 1e-9)
+    # Should have increased at least once from the initial value.
+    assert np.max(trace) > 1.0
+
+    # QC plot should include available annealing traces without error.
+    fig = scd.pl.qc(model, show=False)
+    assert fig is not None
+    plt.close(fig)
 
 
 def test_scdef_assign_confident():
@@ -734,10 +746,6 @@ def test_scdef_load_and_plotting_pipeline():
         )
 
 
-@pytest.mark.skipif(
-    os.getenv("GITHUB_ACTIONS") == "true",
-    reason="Network-dependent enrichment test is skipped on GitHub Actions.",
-)
 def test_scdef_gsea_and_graph_enrichments():
     pytest.importorskip("gseapy")
     adata = sc.datasets.pbmc3k()
@@ -769,9 +777,15 @@ def test_scdef_gsea_and_graph_enrichments():
     )
     model.fit(n_epoch=3)
     scd.tl.set_confident_signatures(model)
+    # Keep this test offline and deterministic (no Enrichr network dependency).
+    custom_gene_sets = {
+        "Mock_Pathway_A": list(model.adata.var_names[:80]),
+        "Mock_Pathway_B": list(model.adata.var_names[40:120]),
+    }
     enr = scd.tl.gsea(
         model,
-        libs=["KEGG_2019_Human"],
+        libs=[],
+        custom_gene_sets=custom_gene_sets,
         layers=[0],
         top_genes=50,
         cutoff=0.05,

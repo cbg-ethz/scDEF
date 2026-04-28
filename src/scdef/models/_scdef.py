@@ -120,7 +120,7 @@ class scDEF(object):
         batch_cpal: Optional[str] = "Dark2",
         layer_cpal: Optional[str] = "tab10",
         lightness_mult: Optional[float] = 0.15,
-        set_alpha_from_cov: Optional[bool] = False,
+        set_alpha_from_cov: Optional[bool] = True,
         marginalize_alpha: Optional[bool] = False,
     ):
         self.n_cells, self.n_genes = adata.shape
@@ -530,11 +530,11 @@ class scDEF(object):
 
     def update_model_priors(self):
         if self.use_brd:
-            self.factor_shapes = [1.0] + [
+            self.factor_shapes = [1.] + [
                 self.factor_shape * self.layer_sizes[layer_idx] / self.layer_sizes[0]
                 for layer_idx in range(1, self.n_layers)
             ]
-        else:
+        else:            
             self.factor_shapes = [
                 self.factor_shape * self.layer_sizes[layer_idx] / self.layer_sizes[0]
                 for layer_idx in range(self.n_layers)
@@ -658,6 +658,7 @@ class scDEF(object):
         **kwargs,
     ):
         rngs = random.split(random.PRNGKey(self.seed), self.n_layers)
+        init_z_provided = init_z is not None
 
         def _get_layer_init(init_value, layer_idx):
             if init_value is None:
@@ -707,14 +708,14 @@ class scDEF(object):
             self.local_params = [self.local_params[0]]
             self.global_params = [self.global_params[0]]
         # BRD
-        m_brd = tfd.Gamma(100.0, 100.0 / self.brd_mean * 0.1).sample(
+        m_brd = tfd.Gamma(100.0, 100.0 / (self.brd_mean * 0.1)).sample(
             seed=rngs[0],
             sample_shape=[self.layer_sizes[0], 1],
         )  # self.brd_mean
-        v_brd = m_brd / 100.0
+        v_brd = m_brd**2 / 100.0
         if init_brd is not None:
             m_brd = init_brd
-            v_brd = m_brd / 10.0
+            v_brd = m_brd**2 / 10.0
         self.global_params.append(
             jnp.array(
                 (
@@ -754,6 +755,21 @@ class scDEF(object):
             z_init_layer = _get_layer_init(init_z, layer_idx)
             if z_init_layer is not None and not nmf_init:
                 m = z_init_layer.astype(jnp.float32)
+            elif (
+                nmf_init
+                and (not init_z_provided)
+                and layer_idx == 0
+                and z_init_layer is not None
+                and z_init_layer.shape[1] == self.layer_sizes[layer_idx]
+                and z_init_layer.shape[0] == self.n_cells
+            ):
+                # Use NMF L0 z pattern, but keep balanced per-cell mass and prior scale.
+                iz = z_init_layer.astype(np.float32)
+                iz = np.clip(iz, 1e-8, None)
+                # Prevent single-factor domination by normalizing each cell across factors.
+                iz = iz / np.maximum(np.max(iz, axis=1, keepdims=True), 1e-8)
+                # iz = iz * float(self.layer_sizes[layer_idx])  # prior mean ~1 per factor
+                m = jnp.asarray(np.clip(iz, max(1e-3, clip), 1e1), dtype=jnp.float32)
             else:
                 m = jnp.clip(
                     tfd.Gamma(a, a / 1.0).sample(
@@ -765,9 +781,10 @@ class scDEF(object):
                 )
                 rng_cnt += 1
 
-            v = m  # / 100.0
+            v = m
+
             if layer_idx > 0:
-                v = m  # / 100.0
+                v = m
             z_shape = jnp.log(m**2 / jnp.sqrt(m**2 + v)) * jnp.ones(
                 (self.n_cells, self.layer_sizes[layer_idx])
             )
@@ -829,12 +846,12 @@ class scDEF(object):
 
         # Gamma(1e3, 1e3/m)
         m = (
-            self.shrinkage_shape
+            self.shrinkage_shape / self.shrinkage_rate
         )  # self.shrinkage_mean * self.shrinkage_shape  / self.shrinkage_rate
-        v = m / 10.0
+        v = m**2 / 10.0
         if init_ard is not None:
             m = init_ard
-            v = m / 10.0
+            v = m**2 / 10.0
 
         self.global_params.append(
             jnp.array(
@@ -851,7 +868,7 @@ class scDEF(object):
             m = self.alpha  # + 0. * np.array(self.gene_ratio_init)
         else:
             m = self.pmeans["alpha"]  # + 0. * np.array(self.gene_ratio_init)
-        v = m / 10.0
+        v = m**2 / 10.0
 
         self.global_params.append(
             jnp.array(
@@ -863,31 +880,25 @@ class scDEF(object):
         )
 
     def get_nmf_init(self, max_cells=None):
-        """Use NMF on the data to initialize the first layer and then recursively for the other layers.
-
-        Args:
-            max_cells: maximum number of cells to use for NMF initialization
-
-        Returns:
-            tuple of (init_z, init_W) initialization values
-        """
+        from sklearn.decomposition import NMF
+        
+        X_full = self.X
+        X_norm = X_full / np.maximum(np.sum(X_full, axis=1, keepdims=True), 1e-8) * 10_000
+        
+        if max_cells is not None and max_cells < X_full.shape[0]:
+            key = jax.random.PRNGKey(self.seed)
+            idx = np.array(jax.random.choice(
+                key, X_full.shape[0], replace=False, shape=(max_cells,)
+            ))
+        else:
+            idx = np.arange(X_full.shape[0])
+        
         init_z = []
         init_W = []
-        from sklearn.decomposition import NMF
-
-        X = self.X
-        if max_cells is not None:
-            if max_cells < X.shape[0]:
-                key = jax.random.PRNGKey(self.seed)
-                cells = jax.random.choice(
-                    key, X.shape[0], replace=False, shape=(max_cells,)
-                )
-                X = X[cells]
-        X = X.copy()
-        lib = np.sum(X, axis=1, keepdims=True)
-        X /= lib
-        X *= 10_000
-        # X = np.log(X + 1)
+        
+        X_fit = X_norm[idx]      # subset for NMF
+        X_proj = X_norm          # full data for projection
+        
         for layer_idx in range(self.n_layers):
             model = NMF(
                 n_components=self.layer_sizes[layer_idx],
@@ -895,12 +906,20 @@ class scDEF(object):
                 beta_loss="kullback-leibler",
                 solver="mu",
             )
-            z = model.fit_transform(X)
+            z_subset = model.fit_transform(X_fit)
             W = model.components_
-            X = z
-            init_z.append(z)
+            
+            # Project full data through learned W
+            WtW_inv = np.linalg.pinv(W @ W.T)
+            z_full = np.clip(X_proj @ W.T @ WtW_inv, 1e-8, None)
+            
+            init_z.append(z_full)
             init_W.append(W)
-
+            
+            # For next layer: subset and full-data versions of z
+            X_fit = z_subset
+            X_proj = z_full
+        
         return init_z, init_W
 
     def identify_mixture_factors(
@@ -962,6 +981,13 @@ class scDEF(object):
         min_rate=jnp.log(1e-10),
         max_rate=jnp.log(1e10),
     ):
+        # Only anneal the entropy of factor-related variables
+        annealing_z = annealing_parameter  # for z
+        annealing_w = annealing_parameter  # for W
+        annealing_brd = 1.0  # fixed
+        annealing_ard = 1.0  # fixed
+        annealing_scales = 1.0  # fixed
+
         # Single-sample Monte Carlo estimate of the variational lower bound.
         batch_indices_onehot = self.batch_indices_onehot[indices]
 
@@ -1066,7 +1092,7 @@ class scDEF(object):
             self.gene_scale_shape,
             self.gene_scale_shape * self.gene_ratio,
         )
-        global_en = lognormal_entropy(gene_budget_shape, gene_budget_rate)
+        global_en = annealing_scales * lognormal_entropy(gene_budget_shape, gene_budget_rate)
         # exposure = (self.batch_lib_sizes)[:, None]
         # local_pl = 0.0
         # local_en = 0.0
@@ -1078,7 +1104,7 @@ class scDEF(object):
             self.cell_scale_shape,
             self.cell_scale_shape * self.batch_lib_ratio[indices],
         )
-        local_en = lognormal_entropy(cell_budget_shape, cell_budget_rate)
+        local_en = annealing_scales * lognormal_entropy(cell_budget_shape, cell_budget_rate)
 
         # Optional alpha marginalization via variational posterior q(alpha).
         alpha_value = alpha
@@ -1087,21 +1113,21 @@ class scDEF(object):
             alpha_value = jnp.squeeze(s_sample)
             global_pl += gamma_logpdf(
                 s_sample,
-                1.0,
-                1.0 / jnp.maximum(jnp.asarray(alpha), 1e-8),
+                2.0,
+                2.0 / jnp.maximum(jnp.asarray(alpha), 1e-8),
             )
             global_en += lognormal_entropy(s_shape, s_rate)
         if self.use_brd:
             global_pl += gamma_logpdf(
                 fscale_samples, self.brd, self.brd / self.brd_mean
             )
-            global_en += lognormal_entropy(fscale_shapes, fscale_rates)
+            global_en += annealing_brd * lognormal_entropy(fscale_shapes, fscale_rates)
 
             global_pl += gamma_logpdf(
                 _wm_sample, self.shrinkage_shape, self.shrinkage_rate
             )
 
-            global_en += lognormal_entropy(wm_shape, wm_rate)
+            global_en += annealing_ard * lognormal_entropy(wm_shape, wm_rate)
 
         z_mean = 1.0
         for idx in list(np.arange(0, self.n_layers)[::-1]):
@@ -1156,7 +1182,7 @@ class scDEF(object):
                         self.w_priors[idx][0],
                         self.w_priors[idx][1] * self.layer_sizes[idx],
                     )
-            global_en += lognormal_entropy(_w_shape, _w_rate)
+            global_en += annealing_w * lognormal_entropy(_w_shape, _w_rate)
 
             # z
             _z_shape = z_shapes[:, start:end]
@@ -1188,7 +1214,7 @@ class scDEF(object):
                 ),
             )
 
-            local_en += lognormal_entropy(_z_shape, _z_rate)
+            local_en += annealing_z * lognormal_entropy(_z_shape, _z_rate)
 
             z_mean = jnp.einsum("nk,kp->np", _z_sample, _w_sample)
 
@@ -1235,8 +1261,8 @@ class scDEF(object):
         )
 
         # Anneal the entropy
-        global_en *= annealing_parameter
-        local_en *= annealing_parameter
+        # global_en *= annealing_parameter
+        # local_en *= annealing_parameter
 
         return (
             (ll + local_pl + local_en) * (self.X.shape[0] / indices.shape[0])
@@ -1451,7 +1477,6 @@ class scDEF(object):
         pretraining: bool = False,
         force_decay_factor: bool = True,
         root_epochs: int = 10,
-        reset_alpha_update_variances: bool = False,
         **kwargs: Any,
     ) -> None:
         """Fit scDEF, warm-starting from a previous fit when available.
@@ -1464,8 +1489,6 @@ class scDEF(object):
             force_decay_factor: on refit, whether to clip upper-layer sizes to respect
                 ``decay_factor``. If False, preserves learned per-layer dimensions and
                 initializes all layers from previous posterior means.
-            reset_alpha_update_variances: if True and ``anneal_alpha=True``, reset
-                variational variances for BRD and ARD after each alpha update.
             **kwargs: additional keyword arguments.
 
             On the first call, parameters are initialized from priors (or NMF if enabled).
@@ -1523,12 +1546,14 @@ class scDEF(object):
                     else:
                         col_keep = np.array(old_factor_lists[layer_idx - 1], dtype=int)
                         init_w.append(w[np.ix_(row_keep, col_keep)])
-                init_brd = np.array(self.pmeans["brd"])[
-                    np.array(old_factor_lists[0], dtype=int)
-                ]
-                init_ard = np.array(self.pmeans["factor_means"])[
-                    np.array(old_factor_lists[0], dtype=int)
-                ]
+                # init_brd = np.array(self.pmeans["brd"])[
+                #     np.array(old_factor_lists[0], dtype=int)
+                # ]
+                # init_ard = np.array(self.pmeans["factor_means"])[
+                #     np.array(old_factor_lists[0], dtype=int)
+                # ]
+                init_brd = None
+                init_ard = None
         else:
             init_budgets = True
             init_alpha = True
@@ -1566,7 +1591,6 @@ class scDEF(object):
             self.pretrain(
                 n_epoch=pretraining_n_epoch,
                 prune_alpha=pretraining_prune_alpha,
-                reset_alpha_update_variances=reset_alpha_update_variances,
                 **pretrain_kwargs,
             )
 
@@ -1579,25 +1603,15 @@ class scDEF(object):
         self._learn(
             n_rounds=n_rounds,
             optimize_layers=optimize_layers,
-            reset_alpha_update_variances=reset_alpha_update_variances,
             **kwargs,
         )
         self.qc_elbos = [np.asarray(x).copy() for x in self.elbos]
         preserved_traces = {
-            "alpha_trace": np.asarray(
-                getattr(self, "alpha_trace", np.array([]))
+            "entropy_annealing_trace": np.asarray(
+                getattr(self, "entropy_annealing_trace", np.array([]))
             ).copy(),
-            "alpha_trace_epochs": np.asarray(
-                getattr(self, "alpha_trace_epochs", np.array([]))
-            ).copy(),
-            "n_eff_parents_trace": np.asarray(
-                getattr(self, "n_eff_parents_trace", np.array([]))
-            ).copy(),
-            "n_eff_parents_trace_epochs": np.asarray(
-                getattr(self, "n_eff_parents_trace_epochs", np.array([]))
-            ).copy(),
-            "active_l0_factor_counts_trace": np.asarray(
-                getattr(self, "active_l0_factor_counts_trace", np.array([]))
+            "entropy_annealing_trace_epochs": np.asarray(
+                getattr(self, "entropy_annealing_trace_epochs", np.array([]))
             ).copy(),
         }
 
@@ -1605,35 +1619,40 @@ class scDEF(object):
             # Update with unfrozen root
             root_kwargs = dict(kwargs)
             root_kwargs["n_epoch"] = root_epochs
-            root_kwargs["anneal_alpha"] = False
+            # Root-only refinement should always run with baseline entropy
+            # temperature, independent of the main fit entropy adaptation.
+            root_kwargs["annealing"] = 1.0
+            root_kwargs["entropy_anneal"] = False
             self._learn(
                 n_rounds=1,
                 optimize_layers=[self.n_layers - 1],
-                reset_alpha_update_variances=reset_alpha_update_variances,
                 **root_kwargs,
             )
             # Keep QC focused on the main optimization pass, not root-only updates.
-            self.alpha_trace = preserved_traces["alpha_trace"].copy()
-            self.alpha_trace_epochs = preserved_traces["alpha_trace_epochs"].copy()
-            self.n_eff_parents_trace = preserved_traces["n_eff_parents_trace"].copy()
-            self.n_eff_parents_trace_epochs = preserved_traces[
-                "n_eff_parents_trace_epochs"
+            self.entropy_annealing_trace = preserved_traces[
+                "entropy_annealing_trace"
             ].copy()
-            self.active_l0_factor_counts_trace = preserved_traces[
-                "active_l0_factor_counts_trace"
+            self.entropy_annealing_trace_epochs = preserved_traces[
+                "entropy_annealing_trace_epochs"
             ].copy()
-            self.adata.uns["alpha_trace"] = self.alpha_trace.copy()
-            self.adata.uns["alpha_trace_epochs"] = self.alpha_trace_epochs.copy()
-            self.adata.uns["n_eff_parents_trace"] = self.n_eff_parents_trace.copy()
-            self.adata.uns[
-                "n_eff_parents_trace_epochs"
-            ] = self.n_eff_parents_trace_epochs.copy()
-            if len(self.active_l0_factor_counts_trace) > 0:
-                self.adata.uns[
-                    "active_l0_factor_counts_trace"
-                ] = self.active_l0_factor_counts_trace.copy()
+            self.adata.uns.pop("alpha_trace", None)
+            self.adata.uns.pop("alpha_trace_epochs", None)
+            self.adata.uns.pop("n_eff_parents_trace", None)
+            self.adata.uns.pop("n_eff_parents_trace_epochs", None)
+            self.adata.uns.pop("active_l0_factor_counts_trace", None)
+            self.adata.uns.pop("alpha_schedule_alphas", None)
+            self.adata.uns.pop("alpha_schedule_losses", None)
+            self.adata.uns.pop("alpha_schedule_epochs", None)
+            if len(self.entropy_annealing_trace) > 0:
+                self.adata.uns["entropy_annealing_trace"] = (
+                    self.entropy_annealing_trace.copy()
+                )
+                self.adata.uns["entropy_annealing_trace_epochs"] = (
+                    self.entropy_annealing_trace_epochs.copy()
+                )
             else:
-                self.adata.uns.pop("active_l0_factor_counts_trace", None)
+                self.adata.uns.pop("entropy_annealing_trace", None)
+                self.adata.uns.pop("entropy_annealing_trace_epochs", None)
         self.clear_runtime_cache(clear_jax_cache=False)
         self._has_fit = True
         self._fit_revision += 1
@@ -1642,7 +1661,6 @@ class scDEF(object):
         self,
         n_epoch: int = 200,
         prune_alpha: Optional[float] = None,
-        reset_alpha_update_variances: bool = False,
         **kwargs: Any,
     ) -> None:
         """Run two-pass alpha pretraining without the final full fit pass.
@@ -1665,10 +1683,6 @@ class scDEF(object):
         pretrain_kwargs["n_epoch"] = int(n_epoch)
         pretrain_kwargs["filter"] = False
         pretrain_kwargs["annotate"] = False
-        pretrain_kwargs["reset_alpha_update_variances"] = bool(
-            reset_alpha_update_variances
-        )
-
         self.logger.info(
             "Starting two-pass alpha pretraining (n_epoch=%s, prune_alpha=%.4f).",
             int(n_epoch),
@@ -1843,20 +1857,25 @@ class scDEF(object):
         update_globals=True,
         stop_cell_budgets=0,
         stop_gene_budgets=0,
+        stop_gene_budgets_after_burnin=False,
         opt_layer=None,
         optimize_layers=None,
         filter=True,
         annotate=True,
-        anneal_alpha=True,
-        alpha_burn_in=20,
-        check_every=20,
-        target_parents=1.05,
-        max_elbo_drop=0.1,
-        alpha_max=None,
-        damping=1.0,
-        reset_alpha_update_variances=False,
+        entropy_anneal=False,
+        entropy_window=50,
+        entropy_check_every=10,
+        entropy_rel_change_low=1e-3,
+        entropy_rel_change_high=1e-2,
+        entropy_increase_factor=1.2,
+        entropy_decrease_factor=0.9,
+        entropy_min_annealing=1.0,
+        entropy_max_annealing=5.0,
+        entropy_optimizer_reset_threshold=0.25,
         **kwargs,
     ):
+        """Fit the model.
+        """
         if "n_epochs" in kwargs:
             n_epoch = kwargs.pop("n_epochs")
         if len(kwargs) > 0:
@@ -1868,17 +1887,15 @@ class scDEF(object):
             for r in range(total_rounds):
                 round_lr = lr if layerwise else lr * (0.5**r)
                 round_local_lr = local_lr if layerwise else local_lr * (0.5**r)
-                round_anneal_alpha = bool(anneal_alpha) and (r == 0)
                 is_last_round = r == (total_rounds - 1)
                 round_filter = bool(filter) and is_last_round
                 round_annotate = bool(annotate) and is_last_round
                 self.logger.info(
-                    "Starting learning round %s/%s (lr=%.5g, local_lr=%.5g, anneal_alpha=%s, filter=%s, annotate=%s).",
+                    "Starting learning round %s/%s (lr=%.5g, local_lr=%.5g, filter=%s, annotate=%s).",
                     r + 1,
                     total_rounds,
                     round_lr,
                     round_local_lr,
-                    round_anneal_alpha,
                     round_filter,
                     round_annotate,
                 )
@@ -1898,18 +1915,21 @@ class scDEF(object):
                     update_globals=update_globals,
                     stop_cell_budgets=stop_cell_budgets,
                     stop_gene_budgets=stop_gene_budgets,
+                    stop_gene_budgets_after_burnin=stop_gene_budgets_after_burnin,
                     opt_layer=opt_layer,
                     optimize_layers=optimize_layers,
                     filter=round_filter,
                     annotate=round_annotate,
-                    anneal_alpha=round_anneal_alpha,
-                    alpha_burn_in=alpha_burn_in,
-                    check_every=check_every,
-                    target_parents=target_parents,
-                    max_elbo_drop=max_elbo_drop,
-                    alpha_max=alpha_max,
-                    damping=damping,
-                    reset_alpha_update_variances=reset_alpha_update_variances,
+                    entropy_anneal=entropy_anneal,
+                    entropy_window=entropy_window,
+                    entropy_check_every=entropy_check_every,
+                    entropy_rel_change_low=entropy_rel_change_low,
+                    entropy_rel_change_high=entropy_rel_change_high,
+                    entropy_increase_factor=entropy_increase_factor,
+                    entropy_decrease_factor=entropy_decrease_factor,
+                    entropy_min_annealing=entropy_min_annealing,
+                    entropy_max_annealing=entropy_max_annealing,
+                    entropy_optimizer_reset_threshold=entropy_optimizer_reset_threshold,
                     **kwargs,
                 )
             return
@@ -1933,28 +1953,6 @@ class scDEF(object):
                     params[i].at[1].set(jnp.clip(params[i][1], min_logstd, max_logstd))
                 )
             return params
-
-        def reset_selected_variances(
-            local_params,
-            global_params,
-            log_std: float = 0.0,
-            decay: float = 0.5,
-        ):
-            """Reset only BRD and ARD log-std terms."""
-            target = jnp.asarray(log_std, dtype=jnp.float32)
-
-            # Decay mean toward prior
-            prior_mu = jnp.log(self.brd_mean)  # prior log-mean
-            current_mu = global_params[1][0]
-            new_mu = current_mu * decay + prior_mu * (1 - decay)
-
-            # Broaden variance
-            new_logstd = jnp.maximum(global_params[1][1], jnp.log(0.5))
-
-            global_params[1] = global_params[1].at[0].set(new_mu)
-            global_params[1] = global_params[1].at[1].set(new_logstd)
-
-            return local_params, global_params
 
         local_loss_grad, global_loss_grad = self._get_or_build_learn_grad_fns(
             num_samples=num_samples
@@ -2076,28 +2074,52 @@ class scDEF(object):
 
         all_losses = []
         total_epochs = 0
-        epochs_since_alpha_change = 0
         min_loss = np.inf
         early_stop_counter = 0
-        alpha_trace = []
-        alpha_trace_epochs = []
-        n_eff_parents_trace = []
-        trace_epoch = []
-        active_l0_factor_counts_trace = []
-        best_elbo = None
-        alpha_updates_enabled = True
         stop_message = None
         interrupted = False
-        if anneal_alpha and int(check_every) <= 0:
-            raise ValueError("check_every must be > 0 when anneal_alpha=True.")
-        alpha_burn_in = int(alpha_burn_in)
-        if alpha_burn_in < 0:
-            raise ValueError("alpha_burn_in must be >= 0.")
+        if int(entropy_window) <= 0:
+            raise ValueError("entropy_window must be > 0.")
+        if int(entropy_check_every) <= 0:
+            raise ValueError("entropy_check_every must be > 0.")
+        if float(entropy_rel_change_low) < 0.0 or float(entropy_rel_change_high) < 0.0:
+            raise ValueError("entropy relative-change thresholds must be >= 0.")
+        if float(entropy_rel_change_low) > float(entropy_rel_change_high):
+            raise ValueError(
+                "entropy_rel_change_low must be <= entropy_rel_change_high."
+            )
+        if float(entropy_increase_factor) <= 1.0:
+            raise ValueError("entropy_increase_factor must be > 1.0.")
+        if not (0.0 < float(entropy_decrease_factor) < 1.0):
+            raise ValueError("entropy_decrease_factor must be in (0, 1).")
+        if float(entropy_min_annealing) <= 0.0:
+            raise ValueError("entropy_min_annealing must be > 0.")
+        if float(entropy_max_annealing) < float(entropy_min_annealing):
+            raise ValueError(
+                "entropy_max_annealing must be >= entropy_min_annealing."
+            )
+        if float(entropy_optimizer_reset_threshold) < 0.0:
+            raise ValueError("entropy_optimizer_reset_threshold must be >= 0.")
+        entropy_annealing_trace: List[float] = []
+        entropy_annealing_trace_epochs: List[int] = []
+        gene_budgets_frozen = bool(float(stop_gene_budgets) >= 1.0)
 
         pbar = tqdm(range(n_epoch))
         try:
             for epoch in pbar:
                 epoch_losses = []
+
+                if (
+                    stop_gene_budgets_after_burnin
+                    and not gene_budgets_frozen
+                    and total_epochs >= min_epochs
+                ):
+                    stop_gene_budgets = jnp.array(1.0)
+                    gene_budgets_frozen = True
+                    self.logger.info(
+                        f"Freezing gene budgets at epoch {total_epochs} "
+                        "(post burn-in)."
+                    )
 
                 for it in range(num_batches):
                     rng, rng_input = random.split(rng)
@@ -2137,12 +2159,64 @@ class scDEF(object):
                 current_loss = np.mean(epoch_losses)
                 all_losses.append(current_loss)
                 total_epochs += 1
-                epochs_since_alpha_change += 1
-                alpha_trace.append(float(self.alpha))
-                alpha_trace_epochs.append(int(total_epochs))
+                entropy_annealing_trace.append(float(annealing_parameter))
+                entropy_annealing_trace_epochs.append(int(total_epochs))
+
+                if (
+                    bool(entropy_anneal)
+                    and (int(total_epochs) % int(entropy_check_every) == 0)
+                ):
+                    entropy_loss_buffer = all_losses
+                    if len(entropy_loss_buffer) < int(entropy_window):
+                        entropy_loss_buffer = []
+                    if len(entropy_loss_buffer) == 0:
+                        recent = None
+                    else:
+                        recent = np.asarray(
+                            entropy_loss_buffer[-int(entropy_window) :], dtype=float
+                        )
+                else:
+                    recent = None
+
+                if recent is not None:
+                    recent_mean = float(np.mean(recent))
+                    denom = max(abs(recent_mean), 1e-12)
+                    relative_change = float(
+                        (np.max(recent) - np.min(recent)) / denom
+                    )
+                    old_annealing = float(annealing_parameter)
+                    new_annealing = old_annealing
+                    if relative_change < float(entropy_rel_change_low):
+                        new_annealing = min(
+                            old_annealing * float(entropy_increase_factor),
+                            float(entropy_max_annealing),
+                        )
+                    elif relative_change > float(entropy_rel_change_high):
+                        new_annealing = max(
+                            old_annealing * float(entropy_decrease_factor),
+                            float(entropy_min_annealing),
+                        )
+                    if abs(new_annealing - old_annealing) > 0.0:
+                        annealing_parameter = jnp.asarray(
+                            new_annealing, dtype=annealing_parameter.dtype
+                        )
+                        rel_step = abs(new_annealing - old_annealing) / max(
+                            abs(old_annealing), 1e-12
+                        )
+                        if rel_step >= float(entropy_optimizer_reset_threshold):
+                            local_opt_state = local_optimizer.init(local_params)
+                            global_opt_state = global_optimizer.init(global_params)
+                        self.logger.info(
+                            "Entropy annealing update at epoch %s: %.4f -> %.4f "
+                            "(relative_change=%.6g).",
+                            int(total_epochs),
+                            float(old_annealing),
+                            float(new_annealing),
+                            float(relative_change),
+                        )
 
                 relative_improvement = np.nan
-                if epochs_since_alpha_change >= min_epochs:
+                if total_epochs >= min_epochs:
                     if min_loss == np.inf:
                         min_loss = current_loss
                     relative_improvement = (min_loss - current_loss) / np.abs(min_loss)
@@ -2152,110 +2226,17 @@ class scDEF(object):
                     else:
                         early_stop_counter = 0
 
-                if not anneal_alpha:
-                    postfix = {"Loss": current_loss}
-                    if epochs_since_alpha_change >= min_epochs:
-                        postfix["Rel. impr."] = relative_improvement
-                    pbar.set_postfix(postfix)
-                    if (
-                        epochs_since_alpha_change >= min_epochs
-                        and early_stop_counter >= patience
-                    ):
-                        stop_message = (
-                            f"Converged at epoch {total_epochs}, alpha={self.alpha:.2f}"
-                        )
-                        break
-                else:
-                    postfix = {"Loss": current_loss, "alpha": float(self.alpha)}
-                    if epochs_since_alpha_change >= min_epochs:
-                        postfix["Rel. impr."] = relative_improvement
-                    if len(n_eff_parents_trace) > 0:
-                        postfix["n_eff"] = float(n_eff_parents_trace[-1])
-                    if len(active_l0_factor_counts_trace) > 0:
-                        postfix["active_L0"] = int(active_l0_factor_counts_trace[-1])
-                    pbar.set_postfix(postfix)
-
-                    if (
-                        (not alpha_updates_enabled)
-                        and epochs_since_alpha_change >= min_epochs
-                        and early_stop_counter >= patience
-                    ):
-                        stop_message = (
-                            f"Converged at epoch {total_epochs}, alpha={self.alpha:.2f}"
-                        )
-                        break
-
-                    anneal_epochs = total_epochs - alpha_burn_in
-                    if anneal_epochs > 0 and (anneal_epochs % int(check_every)) == 0:
-                        median_parents, active_l0_count = self._compute_median_parents(
-                            local_params=local_params,
-                            global_params=global_params,
-                            return_active_l0_count=True,
-                        )
-                        trace_epoch.append(int(total_epochs))
-                        n_eff_parents_trace.append(float(median_parents))
-                        active_l0_factor_counts_trace.append(int(active_l0_count))
-                        pbar.set_postfix(
-                            {
-                                "Loss": current_loss,
-                                "Rel. impr.": relative_improvement,
-                                "alpha": float(self.alpha),
-                                "n_eff": float(median_parents),
-                                "active_L0": int(active_l0_count),
-                            }
-                        )
-
-                        if alpha_updates_enabled and median_parents <= target_parents:
-                            alpha_updates_enabled = False
-                            local_opt_state = local_optimizer.init(local_params)
-                            global_opt_state = global_optimizer.init(global_params)
-                            epochs_since_alpha_change = 0
-                            min_loss = np.inf
-                            early_stop_counter = 0
-
-                        if alpha_updates_enabled:
-                            if best_elbo is None:
-                                best_elbo = current_loss
-                            relative_drop = (current_loss - best_elbo) / abs(best_elbo)
-                            if relative_drop > max_elbo_drop:
-                                stop_message = (
-                                    "Stopping annealed learning: ELBO drop exceeded threshold "
-                                    f"at epoch {total_epochs} (drop={float(relative_drop):.4f} "
-                                    f"> {float(max_elbo_drop):.4f}, alpha={float(self.alpha):.4f})."
-                                )
-                                break
-                            best_elbo = min(best_elbo, current_loss)
-
-                            alpha_mult = jnp.asarray(
-                                (median_parents / target_parents) ** damping,
-                                dtype=alpha_jnp.dtype,
-                            )
-                            alpha_jnp = alpha_jnp * alpha_mult
-                            if alpha_max is not None and float(alpha_jnp) >= float(
-                                alpha_max
-                            ):
-                                alpha_jnp = jnp.minimum(
-                                    alpha_jnp,
-                                    jnp.asarray(alpha_max, dtype=alpha_jnp.dtype),
-                                )
-                                self.alpha = float(alpha_jnp)
-                                stop_message = (
-                                    "Stopping annealed learning: reached alpha_max at epoch "
-                                    f"{total_epochs} (alpha={float(self.alpha):.4f}, "
-                                    f"n_eff_parents={float(median_parents):.3f})."
-                                )
-                                break
-
-                            self.alpha = float(alpha_jnp)
-                            if reset_alpha_update_variances:
-                                local_params, global_params = reset_selected_variances(
-                                    local_params, global_params
-                                )
-                                local_opt_state = local_optimizer.init(local_params)
-                                global_opt_state = global_optimizer.init(global_params)
-                                epochs_since_alpha_change = 0
-                                min_loss = np.inf
-                                early_stop_counter = 0
+                postfix = {"Loss": current_loss}
+                if bool(entropy_anneal):
+                    postfix["anneal"] = float(annealing_parameter)
+                if total_epochs >= min_epochs:
+                    postfix["Rel. impr."] = relative_improvement
+                pbar.set_postfix(postfix)
+                if total_epochs >= min_epochs and early_stop_counter >= patience:
+                    stop_message = (
+                        f"Converged at epoch {total_epochs}, alpha={self.alpha:.2f}"
+                    )
+                    break
 
         except KeyboardInterrupt:
             interrupted = True
@@ -2264,16 +2245,10 @@ class scDEF(object):
             pbar.close()
 
         if stop_message is None and not interrupted:
-            if anneal_alpha:
-                stop_message = (
-                    "Stopping annealed learning: reached max epochs "
-                    f"(n_epoch={int(n_epoch)}, alpha={float(self.alpha):.4f})."
-                )
-            else:
-                stop_message = (
-                    f"Stopping learning: reached max epochs (n_epoch={int(n_epoch)}, "
-                    f"alpha={float(self.alpha):.2f})."
-                )
+            stop_message = (
+                f"Stopping learning: reached max epochs (n_epoch={int(n_epoch)}, "
+                f"alpha={float(self.alpha):.2f})."
+            )
         if stop_message is not None:
             self.logger.info(stop_message)
 
@@ -2281,25 +2256,22 @@ class scDEF(object):
         self.global_params = global_params
         self.elbos.append(all_losses)
         self.step_sizes.append(lr)
-        self.alpha_trace = np.asarray(alpha_trace, dtype=float)
-        self.alpha_trace_epochs = np.asarray(alpha_trace_epochs, dtype=int)
-        self.adata.uns["alpha_trace"] = self.alpha_trace.copy()
-        self.adata.uns["alpha_trace_epochs"] = self.alpha_trace_epochs.copy()
-        self.n_eff_parents_trace = np.asarray(n_eff_parents_trace, dtype=float)
-        self.n_eff_parents_trace_epochs = np.asarray(trace_epoch, dtype=int)
-        self.adata.uns["n_eff_parents_trace"] = self.n_eff_parents_trace.copy()
-        self.adata.uns[
-            "n_eff_parents_trace_epochs"
-        ] = self.n_eff_parents_trace_epochs.copy()
-        if anneal_alpha:
-            self.active_l0_factor_counts_trace = np.asarray(
-                active_l0_factor_counts_trace, dtype=int
-            )
-            self.adata.uns[
-                "active_l0_factor_counts_trace"
-            ] = self.active_l0_factor_counts_trace.copy()
-        else:
-            self.adata.uns.pop("active_l0_factor_counts_trace", None)
+        self.adata.uns.pop("alpha_trace", None)
+        self.adata.uns.pop("alpha_trace_epochs", None)
+        self.adata.uns.pop("n_eff_parents_trace", None)
+        self.adata.uns.pop("n_eff_parents_trace_epochs", None)
+        self.adata.uns.pop("active_l0_factor_counts_trace", None)
+        self.adata.uns.pop("alpha_schedule_alphas", None)
+        self.adata.uns.pop("alpha_schedule_losses", None)
+        self.adata.uns.pop("alpha_schedule_epochs", None)
+        self.entropy_annealing_trace = np.asarray(entropy_annealing_trace, dtype=float)
+        self.entropy_annealing_trace_epochs = np.asarray(
+            entropy_annealing_trace_epochs, dtype=int
+        )
+        self.adata.uns["entropy_annealing_trace"] = self.entropy_annealing_trace.copy()
+        self.adata.uns["entropy_annealing_trace_epochs"] = (
+            self.entropy_annealing_trace_epochs.copy()
+        )
 
         self.set_posterior_means()
         self.set_posterior_variances()

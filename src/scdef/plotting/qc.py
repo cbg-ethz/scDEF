@@ -389,8 +389,8 @@ def qc(
 
     Plots include: loss over epochs, BRD vs Gini coefficient, learned vs observed
     cell scales, learned vs observed gene scales, and biological relevance determination.
-    If alpha-annealing traces are available (``alpha_trace`` and
-    ``n_eff_parents_trace``), a trace-oriented layout is used.
+    If trace diagnostics are available (e.g. ``entropy_annealing_trace``), a
+    trace-oriented layout is used.
 
     Args:
         model: scDEF model instance
@@ -400,9 +400,6 @@ def qc(
         Figure object if show is False, None otherwise
     """
 
-    has_alpha_trace = (
-        "alpha_trace" in model.adata.uns and len(model.adata.uns["alpha_trace"]) > 0
-    )
     has_neff_trace = (
         "n_eff_parents_trace" in model.adata.uns
         and len(model.adata.uns["n_eff_parents_trace"]) > 0
@@ -411,45 +408,59 @@ def qc(
         "n_eff_parents_trace_epochs" in model.adata.uns
         and len(model.adata.uns["n_eff_parents_trace_epochs"]) > 0
     )
-    has_alpha_trace_epochs = (
-        "alpha_trace_epochs" in model.adata.uns
-        and len(model.adata.uns["alpha_trace_epochs"]) > 0
+    has_entropy_trace = (
+        "entropy_annealing_trace" in model.adata.uns
+        and len(model.adata.uns["entropy_annealing_trace"]) > 0
+    )
+    has_entropy_trace_epochs = (
+        "entropy_annealing_trace_epochs" in model.adata.uns
+        and len(model.adata.uns["entropy_annealing_trace_epochs"]) > 0
     )
 
-    if model.use_brd and has_alpha_trace and has_neff_trace:
+    use_trace_layout = bool(has_entropy_trace) or bool(has_neff_trace)
+
+    if model.use_brd and use_trace_layout:
         fig = plt.figure(figsize=figsize)
         outer = fig.add_gridspec(
             4, 1, height_ratios=[1.0, 1.0, 0.85, 0.85], hspace=0.35
         )
-        top = outer[0].subgridspec(1, 3, wspace=0.35)
+        n_top_cols = 1 + int(has_neff_trace) + int(has_entropy_trace)
+        top = outer[0].subgridspec(1, n_top_cols, wspace=0.35)
         middle = outer[1].subgridspec(1, 3, wspace=0.35)
 
-        # First row: ELBO, n_eff_parents trace, alpha trace
-        loss(model, ax=fig.add_subplot(top[0, 0]), show=False)
-        neff = np.asarray(model.adata.uns["n_eff_parents_trace"], dtype=float)
-        neff_epochs = (
-            np.asarray(model.adata.uns["n_eff_parents_trace_epochs"], dtype=int)
-            if has_trace_epochs
-            else None
-        )
-        _trace_plot(
-            neff,
-            ax=fig.add_subplot(top[0, 1]),
-            ylabel="n_eff_parents",
-            x_values=neff_epochs,
-        )
-        alpha_trace = np.asarray(model.adata.uns["alpha_trace"], dtype=float)
-        alpha_epochs = (
-            np.asarray(model.adata.uns["alpha_trace_epochs"], dtype=int)
-            if has_alpha_trace_epochs
-            else np.arange(1, len(alpha_trace) + 1)
-        )
-        _trace_plot(
-            alpha_trace,
-            ax=fig.add_subplot(top[0, 2]),
-            ylabel=r"$\alpha$",
-            x_values=alpha_epochs,
-        )
+        # First row: ELBO + available traces.
+        col = 0
+        loss(model, ax=fig.add_subplot(top[0, col]), show=False)
+        col += 1
+        if has_neff_trace:
+            neff = np.asarray(model.adata.uns["n_eff_parents_trace"], dtype=float)
+            neff_epochs = (
+                np.asarray(model.adata.uns["n_eff_parents_trace_epochs"], dtype=int)
+                if has_trace_epochs
+                else None
+            )
+            _trace_plot(
+                neff,
+                ax=fig.add_subplot(top[0, col]),
+                ylabel="n_eff_parents",
+                x_values=neff_epochs,
+            )
+            col += 1
+        if has_entropy_trace:
+            entropy_trace = np.asarray(
+                model.adata.uns["entropy_annealing_trace"], dtype=float
+            )
+            entropy_epochs = (
+                np.asarray(model.adata.uns["entropy_annealing_trace_epochs"], dtype=int)
+                if has_entropy_trace_epochs
+                else np.arange(1, len(entropy_trace) + 1)
+            )
+            _trace_plot(
+                entropy_trace,
+                ax=fig.add_subplot(top[0, col]),
+                ylabel="Entropy annealing",
+                x_values=entropy_epochs,
+            )
 
         # Second row: BRD vs Gini, cell scale, gene scale
         gini_brd(model, ax=fig.add_subplot(middle[0, 0]), show=False)
