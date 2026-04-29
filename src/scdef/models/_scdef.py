@@ -654,7 +654,7 @@ class scDEF(object):
         init_brd=None,
         init_ard=None,
         nmf_init=False,
-        z_init_concentration=1.0,
+        z_init_concentration=0.5,
         **kwargs,
     ):
         rngs = random.split(random.PRNGKey(self.seed), self.n_layers)
@@ -740,7 +740,7 @@ class scDEF(object):
         ):  # we go from layer 0 (bottom) to layer L (top)
             # Init z
             a = z_init_concentration
-            clip = 1e-6  # alpha=1 and clip=1e-6 allows for many factors to be learned, but leads to BRD becoming kind of big
+            clip = 1e-4  # alpha=1 and clip=1e-6 allows for many factors to be learned, but leads to BRD becoming kind of big
 
             if (
                 layer_idx > 0
@@ -765,11 +765,19 @@ class scDEF(object):
             ):
                 # Use NMF L0 z pattern, but keep balanced per-cell mass and prior scale.
                 iz = z_init_layer.astype(np.float32)
-                iz = np.clip(iz, 1e-8, None)
                 # Prevent single-factor domination by normalizing each cell across factors.
                 iz = iz / np.maximum(np.max(iz, axis=1, keepdims=True), 1e-8)
+                iz = iz + 1.0 #/ self.layer_sizes[layer_idx]
                 # iz = iz * float(self.layer_sizes[layer_idx])  # prior mean ~1 per factor
                 m = jnp.asarray(np.clip(iz, max(1e-3, clip), 1e1), dtype=jnp.float32)
+                m = jnp.clip(
+                    tfd.Gamma(1., 1. / m).sample(
+                        seed=rngs[rng_cnt],
+                    ),
+                    clip,
+                    1e1,
+                )                
+                rng_cnt += 1
             else:
                 m = jnp.clip(
                     tfd.Gamma(a, a / 1.0).sample(
@@ -777,7 +785,7 @@ class scDEF(object):
                         sample_shape=[self.n_cells, self.layer_sizes[layer_idx]],
                     ),
                     clip,
-                    1e1,
+                    3.0,
                 )
                 rng_cnt += 1
 
@@ -819,21 +827,21 @@ class scDEF(object):
                     m = tfd.Gamma(100.0, 100.0 / (m)).sample(seed=rngs[rng_cnt])
                 rng_cnt += 1
                 v = m / 100.0
-            if nmf_init and layer_idx == 0:
-                iw = init_w[layer_idx].astype(jnp.float32)
-                # Rescale
-                iw = 1.0 * iw + 1.0
-                # iw = 10. * 100.**iw/100. + 1.
-                iw = iw
-                iw = iw  # * self.w_priors[layer_idx][0] / self.w_priors[layer_idx][1]
-                iw = (
-                    iw / np.sum(iw, axis=1, keepdims=True)
-                    + 1.0 / self.layer_sizes[layer_idx]
-                )
-                iw = jnp.clip(iw, 1e-6, 1e2)  # need to set scales to avoid huge BRDs...
-                m = tfd.Gamma(100.0, 100.0 / (iw)).sample(seed=rngs[rng_cnt])
-                rng_cnt += 1
-                v = m / 100.0
+            # if nmf_init and layer_idx == 0:
+            #     iw = init_w[layer_idx].astype(jnp.float32)
+            #     # Rescale
+            #     iw = 1.0 * iw + 1.0
+            #     # iw = 10. * 100.**iw/100. + 1.
+            #     iw = iw
+            #     iw = iw  # * self.w_priors[layer_idx][0] / self.w_priors[layer_idx][1]
+            #     iw = (
+            #         iw / np.sum(iw, axis=1, keepdims=True)
+            #         + 1.0 / self.layer_sizes[layer_idx]
+            #     )
+            #     iw = jnp.clip(iw, 1e-6, 1e2)  # need to set scales to avoid huge BRDs...
+            #     m = tfd.Gamma(100.0, 100.0 / (iw)).sample(seed=rngs[rng_cnt])
+            #     rng_cnt += 1
+            #     v = m / 100.0
 
             w_shape = jnp.log(m**2 / jnp.sqrt(m**2 + v)) * jnp.ones(
                 (in_layer, out_layer)
@@ -1470,9 +1478,9 @@ class scDEF(object):
 
     def fit(
         self,
-        nmf_init: bool = True,
+        nmf_init: bool = False,
         max_cells_init: int = 5000,
-        z_init_concentration: float = 1.0,
+        z_init_concentration: float = 0.5,
         n_rounds: int = 1,
         pretraining: bool = False,
         force_decay_factor: bool = True,
@@ -1684,9 +1692,8 @@ class scDEF(object):
         pretrain_kwargs["filter"] = False
         pretrain_kwargs["annotate"] = False
         self.logger.info(
-            "Starting two-pass alpha pretraining (n_epoch=%s, prune_alpha=%.4f).",
+            "Starting two-pass pretraining (n_epoch=%s).",
             int(n_epoch),
-            float(prune_alpha),
         )
         prev_marginalize_alpha = bool(self.marginalize_alpha)
         self.marginalize_alpha = False
@@ -2233,9 +2240,7 @@ class scDEF(object):
                     postfix["Rel. impr."] = relative_improvement
                 pbar.set_postfix(postfix)
                 if total_epochs >= min_epochs and early_stop_counter >= patience:
-                    stop_message = (
-                        f"Converged at epoch {total_epochs}, alpha={self.alpha:.2f}"
-                    )
+                    stop_message = f"Converged at epoch {total_epochs}."
                     break
 
         except KeyboardInterrupt:
@@ -2245,10 +2250,7 @@ class scDEF(object):
             pbar.close()
 
         if stop_message is None and not interrupted:
-            stop_message = (
-                f"Stopping learning: reached max epochs (n_epoch={int(n_epoch)}, "
-                f"alpha={float(self.alpha):.2f})."
-            )
+            stop_message = f"Stopping learning: reached max epochs (n_epoch={int(n_epoch)})."
         if stop_message is not None:
             self.logger.info(stop_message)
 
