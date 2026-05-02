@@ -645,11 +645,7 @@ class scDEF(object):
                 ]
                 avg_neff = np.full(self.layer_sizes[0], np.nan, dtype=float)
                 avg_neff[original_idx_f] = avg_vals
-                valid = (
-                    np.isfinite(brd)
-                    & np.isfinite(ard)
-                    & np.isfinite(avg_neff)
-                )
+                valid = np.isfinite(brd) & np.isfinite(ard) & np.isfinite(avg_neff)
                 tree_ok = avg_neff < float(n_eff_parents_max)
             else:
                 clarity_vals = factor_obs_l0["clarity_score_01"].to_numpy(dtype=float)[
