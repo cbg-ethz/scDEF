@@ -7,6 +7,7 @@ from .hierarchy import (
     make_biological_hierarchy,
     make_technical_hierarchy,
     compute_hierarchy_scores,
+    add_l0_lineage_aggregate_scores,
 )
 from .factor import (
     assign_confident,
@@ -54,6 +55,7 @@ __all__ = [
     "get_biological_signature",
     "gsea",
     "compute_hierarchy_scores",
+    "add_l0_lineage_aggregate_scores",
     "umap",
     "build_differentiation_paths",
     "build_transition_paths",

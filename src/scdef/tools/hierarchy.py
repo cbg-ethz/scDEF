@@ -1,10 +1,83 @@
 import numpy as np
 import pandas as pd
 import scdef.utils.hierarchy_utils as hierarchy_utils
-from typing import Optional, Sequence, Dict, Any, Union, TYPE_CHECKING
+from typing import Optional, Sequence, Dict, Any, Union, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from scdef.models._scdef import scDEF
+
+
+def add_l0_lineage_aggregate_scores(
+    per_factor: pd.DataFrame,
+    layer_names: Sequence[str],
+) -> pd.DataFrame:
+    """Add lineage-averaged clarity and effective parents for layer-0 factors only.
+
+    For each L0 factor, follows ``best_parent`` upward through layers L1 … L{n-2},
+    collecting ``clarity_score_01`` and ``n_eff_parents`` from each factor along the
+    path (same definitions as :func:`compute_hierarchy_scores`). Stores the mean
+    over those positions in ``avg_clarity`` and ``avg_n_eff_parents`` on the L0 row
+    only; other rows get NaN.
+
+    This is called automatically from :func:`compute_hierarchy_scores`; it remains
+    public for advanced use on a pre-built ``per_factor`` frame.
+
+    This captures cases where an L0 factor maps cleanly to one L1 parent (low local
+    ``n_eff_parents``) while that parent is ambiguous relative to L2, by letting
+    lineage averages reflect uncertainty higher in the hierarchy.
+
+    Args:
+        per_factor: per-factor scores from :func:`compute_hierarchy_scores`. Factor
+            identity for lookups uses **row index labels** (not the ``child_factor``
+            column when present).
+        layer_names: ordered model layer names (``model.layer_names``). The walk
+            length is ``len(layer_names) - 1`` (one score per child layer, L0 through
+            L{n-2}); layer order is not inferred from strings in the frame so
+            non-lexicographic names stay correct.
+
+    Returns:
+        Copy of ``per_factor`` with two additional float columns.
+    """
+    out = per_factor.copy()
+    out["avg_clarity"] = np.nan
+    out["avg_n_eff_parents"] = np.nan
+
+    n_layers = len(layer_names)
+    if n_layers < 2 or len(out) == 0:
+        return out
+
+    l0_name = layer_names[0]
+    lookup: Dict[Tuple[str, str], int] = {}
+    for idx in range(len(out)):
+        key = (str(out.iloc[idx]["child_layer"]), str(out.index[idx]))
+        lookup[key] = idx
+
+    expected_steps = n_layers - 1
+    cl_series = out["child_layer"]
+    l0_mask = cl_series == l0_name
+    l0_positions = np.flatnonzero(l0_mask.to_numpy())
+
+    for pos in l0_positions:
+        cur_name = str(out.index[pos])
+        clarities: list[float] = []
+        neffs: list[float] = []
+        for step in range(expected_steps):
+            cur_layer_idx = step
+            key = (layer_names[cur_layer_idx], cur_name)
+            if key not in lookup:
+                clarities = []
+                break
+            ridx = lookup[key]
+            clarities.append(float(out.iloc[ridx]["clarity_score_01"]))
+            neffs.append(float(out.iloc[ridx]["n_eff_parents"]))
+            cur_name = str(out.iloc[ridx]["best_parent"])
+        if len(clarities) == expected_steps:
+            out.iat[pos, out.columns.get_loc("avg_clarity")] = float(np.mean(clarities))
+            out.iat[pos, out.columns.get_loc("avg_n_eff_parents")] = float(
+                np.mean(neffs)
+            )
+
+    return out
 
 
 def compute_hierarchy_scores(
@@ -25,7 +98,9 @@ def compute_hierarchy_scores(
         eps: small epsilon value for numerical stability
 
     Returns:
-        dict containing per_factor DataFrame, per_transition DataFrame, global_score, and global_ambiguity
+        dict containing ``per_factor`` (index = child factor name, ``child_factor``
+        column retained; includes ``avg_clarity`` and ``avg_n_eff_parents`` for L0),
+        ``per_transition``, ``global_score``, and ``global_ambiguity``.
     """
 
     def _col_normalize(W):
@@ -158,6 +233,11 @@ def compute_hierarchy_scores(
         global_score = float(
             np.sum(scores_concat * weights_concat) / (np.sum(weights_concat) + eps)
         )
+
+    if len(per_factor) > 0 and "child_factor" in per_factor.columns:
+        per_factor = per_factor.set_index("child_factor", drop=True)
+        per_factor.index.name = "child_factor"
+    per_factor = add_l0_lineage_aggregate_scores(per_factor, model.layer_names)
 
     return {
         "per_factor": per_factor,

@@ -488,22 +488,29 @@ def factor_diagnostics(
     brd_min: float = 1.0,
     ard_min: float = 0.001,
     clarity_min: float = 0.5,
+    n_eff_parents_max: float = 1.5,
     figsize: tuple = (6, 4),
     ax: Optional[Axes] = None,
     annotate_factors: bool = False,
     annotation_fontsize: int = 8,
     annotation_alpha: float = 0.8,
     all_factors: bool = False,
+    local_l0_scores: bool = False,
     show: bool = True,
 ) -> Optional[Axes]:
     """
-    Diagnostic scatter plot of factors: BRD vs Effective parents colored by ARD.
+    Diagnostic scatter plot of factors: BRD vs effective parents colored by ARD.
 
     Args:
         model: scDEF model instance
         brd_min: minimum BRD filter threshold
         ard_min: minimum ARD filter threshold (fraction of total ARD)
-        clarity: clarity threshold for effective parents calculation
+        clarity_min: when ``local_l0_scores`` is False, clarity threshold used with
+            each factor's ``K_parents`` to draw the horizontal cutoff via
+            :func:`effective_parents_from_clarity` (ignored when ``local_l0_scores``
+            is True).
+        n_eff_parents_max: when ``local_l0_scores`` is True, horizontal cutoff on
+            layer-0 ``n_eff_parents`` (default ``1.5``). Ignored for lineage plots.
         figsize: Figure size (if ax is None)
         ax: matplotlib Axes to plot on
         annotate_factors: whether to annotate each point with its factor label
@@ -514,6 +521,9 @@ def factor_diagnostics(
             factors that were filtered out). Default (False) plots the current
             view ``model.adata.uns['factor_obs']``, which after
             ``model.filter_factors()`` contains only kept factors.
+        local_l0_scores: if True, plot layer-0-only ``n_eff_parents`` on the y-axis.
+            If False (default), plot lineage-averaged ``avg_n_eff_parents`` when
+            present in ``factor_obs``, otherwise fall back to ``n_eff_parents``.
         show: whether to show the plot
 
     Returns:
@@ -565,16 +575,31 @@ def factor_diagnostics(
             if slot is not None:
                 labels[i] = current_names_l0[slot]
     x = factor_obs_l0["BRD"].to_numpy(dtype=float)
-    y = factor_obs_l0["n_eff_parents"].to_numpy(dtype=float)
+    if local_l0_scores:
+        y_col = "n_eff_parents"
+        y_label = "Effective number of parents (L0)"
+    else:
+        if "avg_n_eff_parents" in factor_obs_l0.columns:
+            y_col = "avg_n_eff_parents"
+            y_label = "Avg. effective parents (lineage)"
+        else:
+            y_col = "n_eff_parents"
+            y_label = "Effective number of parents (L0)"
+    y = factor_obs_l0[y_col].to_numpy(dtype=float)
     z = factor_obs_l0["ARD"].to_numpy(dtype=float)
-    k_parents = factor_obs_l0["K_parents"].to_numpy(dtype=float)
-    finite_k = k_parents[np.isfinite(k_parents)]
-    if len(finite_k) == 0:
-        raise ValueError("No valid K_parents values found in factor_obs for layer 0.")
-    k_for_threshold = int(finite_k[0])
-    neffective_parents_max = float(
-        effective_parents_from_clarity(clarity_min, k_for_threshold)
-    )
+    if local_l0_scores:
+        neffective_parents_max = float(n_eff_parents_max)
+    else:
+        k_parents = factor_obs_l0["K_parents"].to_numpy(dtype=float)
+        finite_k = k_parents[np.isfinite(k_parents)]
+        if len(finite_k) == 0:
+            raise ValueError(
+                "No valid K_parents values found in factor_obs for layer 0."
+            )
+        k_for_threshold = int(finite_k[0])
+        neffective_parents_max = float(
+            effective_parents_from_clarity(clarity_min, k_for_threshold)
+        )
 
     ard_total = np.nansum(z)
     factors_pass = np.where(
@@ -608,7 +633,7 @@ def factor_diagnostics(
             label="Keep",
         )
     ax.set_xlabel("BRD")
-    ax.set_ylabel("Effective number of parents")
+    ax.set_ylabel(y_label)
     ax.axvline(
         brd_min,
         linestyle="--",

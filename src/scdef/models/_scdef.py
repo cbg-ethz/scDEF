@@ -530,11 +530,11 @@ class scDEF(object):
 
     def update_model_priors(self):
         if self.use_brd:
-            self.factor_shapes = [1.] + [
+            self.factor_shapes = [1.0] + [
                 self.factor_shape * self.layer_sizes[layer_idx] / self.layer_sizes[0]
                 for layer_idx in range(1, self.n_layers)
             ]
-        else:            
+        else:
             self.factor_shapes = [
                 self.factor_shape * self.layer_sizes[layer_idx] / self.layer_sizes[0]
                 for layer_idx in range(self.n_layers)
@@ -568,6 +568,8 @@ class scDEF(object):
         brd_min: Optional[float] = 1.0,
         ard_min: Optional[float] = 0.001,
         clarity_min: Optional[float] = 0.5,
+        n_eff_parents_max: float = 1.5,
+        local_l0_scores: bool = False,
         min_cells: Optional[float] = 0.001,
     ):
         layer_name = self.layer_names[0]
@@ -589,7 +591,7 @@ class scDEF(object):
 
         keep = np.array(range(self.layer_sizes[0]))[np.where(counts >= min_cells)[0]]
         if self.use_brd:
-            required_cols = {"BRD", "ARD", "clarity_score_01", "original_factor_idx"}
+            required_cols = {"BRD", "ARD", "original_factor_idx"}
 
             def _has_required(key):
                 return key in self.adata.uns and required_cols.issubset(
@@ -614,32 +616,62 @@ class scDEF(object):
             else:
                 factor_obs_l0 = factor_obs
 
-            brd = np.full(self.layer_sizes[0], np.nan, dtype=float)
-            ard = np.full(self.layer_sizes[0], np.nan, dtype=float)
-            clarity = np.full(self.layer_sizes[0], np.nan, dtype=float)
-
             original_idx = factor_obs_l0["original_factor_idx"].to_numpy(dtype=int)
             brd_vals = factor_obs_l0["BRD"].to_numpy(dtype=float)
             ard_vals = factor_obs_l0["ARD"].to_numpy(dtype=float)
-            clarity_vals = factor_obs_l0["clarity_score_01"].to_numpy(dtype=float)
 
             valid_idx = (original_idx >= 0) & (original_idx < self.layer_sizes[0])
-            original_idx = original_idx[valid_idx]
+            original_idx_f = original_idx[valid_idx]
             brd_vals = brd_vals[valid_idx]
             ard_vals = ard_vals[valid_idx]
-            clarity_vals = clarity_vals[valid_idx]
 
-            brd[original_idx] = brd_vals
-            ard[original_idx] = ard_vals
-            clarity[original_idx] = clarity_vals
-
-            valid = np.isfinite(brd) & np.isfinite(ard) & np.isfinite(clarity)
+            brd = np.full(self.layer_sizes[0], np.nan, dtype=float)
+            ard = np.full(self.layer_sizes[0], np.nan, dtype=float)
+            brd[original_idx_f] = brd_vals
+            ard[original_idx_f] = ard_vals
             ard_sum = np.nansum(ard)
+
+            if local_l0_scores:
+                neff_vals = factor_obs_l0["n_eff_parents"].to_numpy(dtype=float)[
+                    valid_idx
+                ]
+                neff = np.full(self.layer_sizes[0], np.nan, dtype=float)
+                neff[original_idx_f] = neff_vals
+                valid = np.isfinite(brd) & np.isfinite(ard) & np.isfinite(neff)
+                tree_ok = neff < float(n_eff_parents_max)
+            elif "avg_n_eff_parents" in factor_obs_l0.columns:
+                from scdef.tools.hierarchy import effective_parents_from_clarity
+
+                avg_vals = factor_obs_l0["avg_n_eff_parents"].to_numpy(dtype=float)[
+                    valid_idx
+                ]
+                k_vals = factor_obs_l0["K_parents"].to_numpy(dtype=float)[valid_idx]
+                avg_neff = np.full(self.layer_sizes[0], np.nan, dtype=float)
+                neff_thresh = np.full(self.layer_sizes[0], np.nan, dtype=float)
+                for o, a, k in zip(original_idx_f, avg_vals, k_vals):
+                    avg_neff[o] = a
+                    if np.isfinite(k) and int(k) >= 1:
+                        neff_thresh[o] = effective_parents_from_clarity(
+                            float(clarity_min), int(k)
+                        )
+                valid = (
+                    np.isfinite(brd)
+                    & np.isfinite(ard)
+                    & np.isfinite(avg_neff)
+                    & np.isfinite(neff_thresh)
+                )
+                tree_ok = avg_neff < neff_thresh
+            else:
+                clarity_vals = factor_obs_l0["clarity_score_01"].to_numpy(dtype=float)[
+                    valid_idx
+                ]
+                clarity = np.full(self.layer_sizes[0], np.nan, dtype=float)
+                clarity[original_idx_f] = clarity_vals
+                valid = np.isfinite(brd) & np.isfinite(ard) & np.isfinite(clarity)
+                tree_ok = clarity >= float(clarity_min)
+
             brd_keep = np.where(
-                valid
-                & (brd >= brd_min)
-                & (clarity >= clarity_min)
-                & (ard >= ard_min * ard_sum)
+                valid & (brd >= brd_min) & tree_ok & (ard >= ard_min * ard_sum)
             )[0]
             keep = np.unique(list(set(brd_keep).intersection(keep)))
 
@@ -767,16 +799,16 @@ class scDEF(object):
                 iz = z_init_layer.astype(np.float32)
                 # Prevent single-factor domination by normalizing each cell across factors.
                 iz = iz / np.maximum(np.max(iz, axis=1, keepdims=True), 1e-8)
-                iz = iz + 1.0 #/ self.layer_sizes[layer_idx]
+                iz = iz + 1.0  # / self.layer_sizes[layer_idx]
                 # iz = iz * float(self.layer_sizes[layer_idx])  # prior mean ~1 per factor
                 m = jnp.asarray(np.clip(iz, max(1e-3, clip), 1e1), dtype=jnp.float32)
                 m = jnp.clip(
-                    tfd.Gamma(1., 1. / m).sample(
+                    tfd.Gamma(1.0, 1.0 / m).sample(
                         seed=rngs[rng_cnt],
                     ),
                     clip,
                     1e1,
-                )                
+                )
                 rng_cnt += 1
             else:
                 m = jnp.clip(
@@ -793,10 +825,10 @@ class scDEF(object):
                 #     seed=rngs[rng_cnt],
                 #     sample_shape=[self.n_cells, self.layer_sizes[layer_idx]],
                 # )
-                # m = jnp.clip(m, clip, 1e1)                
+                # m = jnp.clip(m, clip, 1e1)
                 # rng_cnt += 1
 
-            v = m / 100.
+            v = m / 100.0
 
             if layer_idx > 0:
                 v = m
@@ -826,7 +858,7 @@ class scDEF(object):
             w_init_layer = _get_layer_init(init_w, layer_idx)
             if w_init_layer is not None and not nmf_init:
                 m = w_init_layer.astype(jnp.float32) + 1e-6
-                v = m / 100.0
+                v = m  # / 100.0
             else:
                 m = 1.0 / self.layer_sizes[layer_idx] * jnp.ones((in_layer, out_layer))
                 m = m * self.w_priors[layer_idx][0] / self.w_priors[layer_idx][1]
@@ -849,7 +881,9 @@ class scDEF(object):
             #     m = tfd.Gamma(100.0, 100.0 / (iw)).sample(seed=rngs[rng_cnt])
             #     rng_cnt += 1
             #     v = m / 100.0
-
+            v = m / 100.0
+            if layer_idx > 0:
+                v = m
             w_shape = jnp.log(m**2 / jnp.sqrt(m**2 + v)) * jnp.ones(
                 (in_layer, out_layer)
             )
@@ -896,24 +930,28 @@ class scDEF(object):
 
     def get_nmf_init(self, max_cells=None):
         from sklearn.decomposition import NMF
-        
+
         X_full = self.X
-        X_norm = X_full / np.maximum(np.sum(X_full, axis=1, keepdims=True), 1e-8) * 10_000
-        
+        X_norm = (
+            X_full / np.maximum(np.sum(X_full, axis=1, keepdims=True), 1e-8) * 10_000
+        )
+
         if max_cells is not None and max_cells < X_full.shape[0]:
             key = jax.random.PRNGKey(self.seed)
-            idx = np.array(jax.random.choice(
-                key, X_full.shape[0], replace=False, shape=(max_cells,)
-            ))
+            idx = np.array(
+                jax.random.choice(
+                    key, X_full.shape[0], replace=False, shape=(max_cells,)
+                )
+            )
         else:
             idx = np.arange(X_full.shape[0])
-        
+
         init_z = []
         init_W = []
-        
-        X_fit = X_norm[idx]      # subset for NMF
-        X_proj = X_norm          # full data for projection
-        
+
+        X_fit = X_norm[idx]  # subset for NMF
+        X_proj = X_norm  # full data for projection
+
         for layer_idx in range(self.n_layers):
             model = NMF(
                 n_components=self.layer_sizes[layer_idx],
@@ -923,18 +961,18 @@ class scDEF(object):
             )
             z_subset = model.fit_transform(X_fit)
             W = model.components_
-            
+
             # Project full data through learned W
             WtW_inv = np.linalg.pinv(W @ W.T)
             z_full = np.clip(X_proj @ W.T @ WtW_inv, 1e-8, None)
-            
+
             init_z.append(z_full)
             init_W.append(W)
-            
+
             # For next layer: subset and full-data versions of z
             X_fit = z_subset
             X_proj = z_full
-        
+
         return init_z, init_W
 
     def identify_mixture_factors(
@@ -1107,7 +1145,9 @@ class scDEF(object):
             self.gene_scale_shape,
             self.gene_scale_shape * self.gene_ratio,
         )
-        global_en = annealing_scales * lognormal_entropy(gene_budget_shape, gene_budget_rate)
+        global_en = annealing_scales * lognormal_entropy(
+            gene_budget_shape, gene_budget_rate
+        )
         # exposure = (self.batch_lib_sizes)[:, None]
         # local_pl = 0.0
         # local_en = 0.0
@@ -1119,7 +1159,9 @@ class scDEF(object):
             self.cell_scale_shape,
             self.cell_scale_shape * self.batch_lib_ratio[indices],
         )
-        local_en = annealing_scales * lognormal_entropy(cell_budget_shape, cell_budget_rate)
+        local_en = annealing_scales * lognormal_entropy(
+            cell_budget_shape, cell_budget_rate
+        )
 
         # Optional alpha marginalization via variational posterior q(alpha).
         alpha_value = alpha
@@ -1659,12 +1701,12 @@ class scDEF(object):
             self.adata.uns.pop("alpha_schedule_losses", None)
             self.adata.uns.pop("alpha_schedule_epochs", None)
             if len(self.entropy_annealing_trace) > 0:
-                self.adata.uns["entropy_annealing_trace"] = (
-                    self.entropy_annealing_trace.copy()
-                )
-                self.adata.uns["entropy_annealing_trace_epochs"] = (
-                    self.entropy_annealing_trace_epochs.copy()
-                )
+                self.adata.uns[
+                    "entropy_annealing_trace"
+                ] = self.entropy_annealing_trace.copy()
+                self.adata.uns[
+                    "entropy_annealing_trace_epochs"
+                ] = self.entropy_annealing_trace_epochs.copy()
             else:
                 self.adata.uns.pop("entropy_annealing_trace", None)
                 self.adata.uns.pop("entropy_annealing_trace_epochs", None)
@@ -1888,8 +1930,7 @@ class scDEF(object):
         entropy_optimizer_reset_threshold=0.25,
         **kwargs,
     ):
-        """Fit the model.
-        """
+        """Fit the model."""
         if "n_epochs" in kwargs:
             n_epoch = kwargs.pop("n_epochs")
         if len(kwargs) > 0:
@@ -2109,9 +2150,7 @@ class scDEF(object):
         if float(entropy_min_annealing) <= 0.0:
             raise ValueError("entropy_min_annealing must be > 0.")
         if float(entropy_max_annealing) < float(entropy_min_annealing):
-            raise ValueError(
-                "entropy_max_annealing must be >= entropy_min_annealing."
-            )
+            raise ValueError("entropy_max_annealing must be >= entropy_min_annealing.")
         if float(entropy_optimizer_reset_threshold) < 0.0:
             raise ValueError("entropy_optimizer_reset_threshold must be >= 0.")
         entropy_annealing_trace: List[float] = []
@@ -2176,9 +2215,8 @@ class scDEF(object):
                 entropy_annealing_trace.append(float(annealing_parameter))
                 entropy_annealing_trace_epochs.append(int(total_epochs))
 
-                if (
-                    bool(entropy_anneal)
-                    and (int(total_epochs) % int(entropy_check_every) == 0)
+                if bool(entropy_anneal) and (
+                    int(total_epochs) % int(entropy_check_every) == 0
                 ):
                     entropy_loss_buffer = all_losses
                     if len(entropy_loss_buffer) < int(entropy_window):
@@ -2195,9 +2233,7 @@ class scDEF(object):
                 if recent is not None:
                     recent_mean = float(np.mean(recent))
                     denom = max(abs(recent_mean), 1e-12)
-                    relative_change = float(
-                        (np.max(recent) - np.min(recent)) / denom
-                    )
+                    relative_change = float((np.max(recent) - np.min(recent)) / denom)
                     old_annealing = float(annealing_parameter)
                     new_annealing = old_annealing
                     if relative_change < float(entropy_rel_change_low):
@@ -2257,7 +2293,9 @@ class scDEF(object):
             pbar.close()
 
         if stop_message is None and not interrupted:
-            stop_message = f"Stopping learning: reached max epochs (n_epoch={int(n_epoch)})."
+            stop_message = (
+                f"Stopping learning: reached max epochs (n_epoch={int(n_epoch)})."
+            )
         if stop_message is not None:
             self.logger.info(stop_message)
 
@@ -2278,9 +2316,9 @@ class scDEF(object):
             entropy_annealing_trace_epochs, dtype=int
         )
         self.adata.uns["entropy_annealing_trace"] = self.entropy_annealing_trace.copy()
-        self.adata.uns["entropy_annealing_trace_epochs"] = (
-            self.entropy_annealing_trace_epochs.copy()
-        )
+        self.adata.uns[
+            "entropy_annealing_trace_epochs"
+        ] = self.entropy_annealing_trace_epochs.copy()
 
         self.set_posterior_means()
         self.set_posterior_variances()
@@ -2381,21 +2419,31 @@ class scDEF(object):
         brd_min: Optional[float] = 1.0,
         ard_min: Optional[float] = 0.001,
         clarity_min: Optional[float] = 0.5,
+        n_eff_parents_max: float = 1.5,
+        local_l0_scores: bool = False,
         min_cells_upper: Optional[float] = 0.001,
         min_cells_lower: Optional[float] = 0.0,
         filter_up: Optional[bool] = True,
         annotate: Optional[bool] = True,
         upper_only: Optional[bool] = False,
     ):
-        """Filter our irrelevant factors based on the BRD posterior or the cell attachments.
+        """Filter irrelevant factors using BRD/ARD and hierarchy diagnostics.
 
         Args:
-            thres: minimum factor BRD value
-            iqr_mult: multiplier of the difference between the third quartile and the median BRD values to set the threshold
-            min_cells_upper: minimum number of cells that each factor in upper layers must have attached to it for it to be kept. If between 0 and 1, fraction. Otherwise, absolute value
-            min_cells_lower: minimum number of cells that each factor in layer 0 must have attached to it for it to be kept. If between 0 and 1, fraction. Otherwise, absolute value
-            filter_up: whether to remove factors in upper layers via inter-layer attachments
-            upper_only: whether to only filter factors in upper layers
+            brd_min: minimum factor BRD value for layer 0 when ``use_brd``.
+            ard_min: minimum ARD fraction of total ARD for layer 0.
+            clarity_min: when ``local_l0_scores`` is False, passed to
+                ``get_effective_factors`` for lineage ``avg_n_eff_parents`` vs
+                clarity-derived cutoff, or L0 clarity when lineage columns are absent.
+            n_eff_parents_max: when ``local_l0_scores`` is True, fixed cutoff on L0
+                ``n_eff_parents`` (default ``1.5``).
+            local_l0_scores: if True, layer-0 filtering uses ``n_eff_parents`` and
+                ``n_eff_parents_max`` instead of lineage averages / ``clarity_min``.
+            min_cells_upper: minimum cells attached to upper-layer factors (fraction if <1).
+            min_cells_lower: minimum cells attached to layer-0 factors (fraction if <1).
+            filter_up: whether to prune upper layers via inter-layer attachments.
+            annotate: whether to run ``annotate_adata`` after filtering.
+            upper_only: if True, only adjust upper layers (layer 0 unchanged).
         """
         if min_cells_upper != 0:
             if min_cells_upper < 1.0:
@@ -2414,6 +2462,8 @@ class scDEF(object):
                         brd_min=brd_min,
                         ard_min=ard_min,
                         clarity_min=clarity_min,
+                        n_eff_parents_max=n_eff_parents_max,
+                        local_l0_scores=local_l0_scores,
                         min_cells=min_cells_lower,
                     )
             else:

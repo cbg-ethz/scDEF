@@ -268,7 +268,7 @@ def factor_diagnostics(model: "scDEF", recompute: bool = False) -> None:
         model.factor_lists = old_factor_lists
         if old_factor_names is not None:
             model.factor_names = old_factor_names
-    model.adata.uns["factor_obs"] = res["per_factor"].set_index("child_factor")
+    model.adata.uns["factor_obs"] = res["per_factor"]
     model.adata.uns["factor_obs"]["ARD"] = np.array(
         [np.nan] * len(model.adata.uns["factor_obs"])
     )
@@ -1245,6 +1245,8 @@ def set_technical_factors(
     brd_min: Optional[float] = 1.0,
     ard_min: Optional[float] = 0.001,
     clarity_min: Optional[float] = 0.5,
+    n_eff_parents_max: float = 1.5,
+    local_l0_scores: bool = False,
     min_cells_lower: Optional[float] = 0.0,
 ) -> None:
     """Set the technical factors of the model.
@@ -1262,8 +1264,14 @@ def set_technical_factors(
             when ``factors`` is None.
         ard_min: minimum ARD fraction threshold for keeping biological layer-0
             factors when ``factors`` is None.
-        clarity_min: minimum clarity threshold for keeping biological layer-0
-            factors when ``factors`` is None.
+        clarity_min: minimum clarity threshold when ``local_l0_scores`` is False and
+            lineage ``avg_n_eff_parents`` is available (same mapping as
+            ``scd.pl.factor_diagnostics``); otherwise minimum L0 clarity when only
+            legacy columns exist.
+        n_eff_parents_max: when ``local_l0_scores`` is True, ceiling on layer-0
+            ``n_eff_parents`` (default ``1.5``; same semantics as ``scd.pl.factor_diagnostics``).
+        local_l0_scores: if True, biological factors are chosen using ``n_eff_parents``
+            and ``n_eff_parents_max`` instead of lineage averages / ``clarity_min``.
         min_cells_lower: minimum cell-count criterion for keeping biological
             layer-0 factors when ``factors`` is None. Same semantics as
             ``scDEF.filter_factors(..., min_cells_lower=...)``.
@@ -1300,6 +1308,8 @@ def set_technical_factors(
                 brd_min=brd_min,
                 ard_min=ard_min,
                 clarity_min=clarity_min,
+                n_eff_parents_max=n_eff_parents_max,
+                local_l0_scores=local_l0_scores,
                 min_cells=min_cells_lower,
             )
         )
