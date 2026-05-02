@@ -1264,12 +1264,9 @@ def set_technical_factors(
             when ``factors`` is None.
         ard_min: minimum ARD fraction threshold for keeping biological layer-0
             factors when ``factors`` is None.
-        clarity_min: minimum clarity threshold when ``local_l0_scores`` is False and
-            lineage ``avg_n_eff_parents`` is available (same mapping as
-            ``scd.pl.factor_diagnostics``); otherwise minimum L0 clarity when only
-            legacy columns exist.
-        n_eff_parents_max: when ``local_l0_scores`` is True, ceiling on layer-0
-            ``n_eff_parents`` (default ``1.5``; same semantics as ``scd.pl.factor_diagnostics``).
+        clarity_min: minimum L0 clarity when not using lineage ``avg_n_eff_parents``.
+        n_eff_parents_max: only for lineage diagnostics: ceiling on ``avg_n_eff_parents``
+            (default ``1.5``; matches ``scd.pl.factor_diagnostics``).
         local_l0_scores: if True, biological factors are chosen using ``n_eff_parents``
             and ``n_eff_parents_max`` instead of lineage averages / ``clarity_min``.
         min_cells_lower: minimum cell-count criterion for keeping biological

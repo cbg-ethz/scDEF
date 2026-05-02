@@ -9,6 +9,7 @@ from matplotlib.gridspec import GridSpec
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from typing import Optional, Tuple, Literal, Any, TYPE_CHECKING
+
 from scdef.tools.hierarchy import effective_parents_from_clarity
 
 if TYPE_CHECKING:
@@ -505,12 +506,12 @@ def factor_diagnostics(
         model: scDEF model instance
         brd_min: minimum BRD filter threshold
         ard_min: minimum ARD filter threshold (fraction of total ARD)
-        clarity_min: when ``local_l0_scores`` is False, clarity threshold used with
-            each factor's ``K_parents`` to draw the horizontal cutoff via
-            :func:`effective_parents_from_clarity` (ignored when ``local_l0_scores``
-            is True).
-        n_eff_parents_max: when ``local_l0_scores`` is True, horizontal cutoff on
-            layer-0 ``n_eff_parents`` (default ``1.5``). Ignored for lineage plots.
+        clarity_min: used for the horizontal cutoff when **not** plotting lineage
+            ``avg_n_eff_parents`` (local-L0 mode or fallback to L0 ``n_eff_parents``):
+            cutoff is ``effective_parents_from_clarity(clarity_min, K_parents)``.
+        n_eff_parents_max: used **only** when the y-axis is lineage
+            ``avg_n_eff_parents`` (``local_l0_scores=False`` and column present): dashed
+            line at this value and pass rule ``y < n_eff_parents_max`` (default ``1.5``).
         figsize: Figure size (if ax is None)
         ax: matplotlib Axes to plot on
         annotate_factors: whether to annotate each point with its factor label
@@ -587,7 +588,10 @@ def factor_diagnostics(
             y_label = "Effective number of parents (L0)"
     y = factor_obs_l0[y_col].to_numpy(dtype=float)
     z = factor_obs_l0["ARD"].to_numpy(dtype=float)
-    if local_l0_scores:
+    lineage_plot = (not local_l0_scores) and (
+        "avg_n_eff_parents" in factor_obs_l0.columns
+    )
+    if lineage_plot:
         neffective_parents_max = float(n_eff_parents_max)
     else:
         k_parents = factor_obs_l0["K_parents"].to_numpy(dtype=float)
