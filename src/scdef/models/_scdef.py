@@ -740,7 +740,7 @@ class scDEF(object):
         ):  # we go from layer 0 (bottom) to layer L (top)
             # Init z
             a = z_init_concentration
-            clip = 1e-4  # alpha=1 and clip=1e-6 allows for many factors to be learned, but leads to BRD becoming kind of big
+            clip = 1e-3  # alpha=1 and clip=1e-6 allows for many factors to be learned, but leads to BRD becoming kind of big
 
             if (
                 layer_idx > 0
@@ -785,11 +785,18 @@ class scDEF(object):
                         sample_shape=[self.n_cells, self.layer_sizes[layer_idx]],
                     ),
                     clip,
-                    3.0,
+                    4.0,
                 )
-                rng_cnt += 1
+                # sd = 2.0  # tunable
+                # Lognormal with mean = 1 (corrected via -sd²/2 shift in log space)
+                # m = tfd.LogNormal(loc=-sd**2 / 2, scale=sd).sample(
+                #     seed=rngs[rng_cnt],
+                #     sample_shape=[self.n_cells, self.layer_sizes[layer_idx]],
+                # )
+                # m = jnp.clip(m, clip, 1e1)                
+                # rng_cnt += 1
 
-            v = m
+            v = m / 100.
 
             if layer_idx > 0:
                 v = m
@@ -1483,7 +1490,7 @@ class scDEF(object):
         z_init_concentration: float = 0.5,
         n_rounds: int = 1,
         pretraining: bool = False,
-        force_decay_factor: bool = True,
+        force_decay_factor: bool = False,
         root_epochs: int = 10,
         **kwargs: Any,
     ) -> None:
