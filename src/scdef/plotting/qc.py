@@ -389,7 +389,7 @@ def qc(
 
     Plots include: loss over epochs, BRD vs Gini coefficient, learned vs observed
     cell scales, learned vs observed gene scales, and biological relevance determination.
-    If trace diagnostics are available (e.g. ``entropy_annealing_trace``), a
+    If trace diagnostics are available (e.g. ``n_eff_parents_trace``), a
     trace-oriented layout is used.
 
     Args:
@@ -408,23 +408,14 @@ def qc(
         "n_eff_parents_trace_epochs" in model.adata.uns
         and len(model.adata.uns["n_eff_parents_trace_epochs"]) > 0
     )
-    has_entropy_trace = (
-        "entropy_annealing_trace" in model.adata.uns
-        and len(model.adata.uns["entropy_annealing_trace"]) > 0
-    )
-    has_entropy_trace_epochs = (
-        "entropy_annealing_trace_epochs" in model.adata.uns
-        and len(model.adata.uns["entropy_annealing_trace_epochs"]) > 0
-    )
-
-    use_trace_layout = bool(has_entropy_trace) or bool(has_neff_trace)
+    use_trace_layout = bool(has_neff_trace)
 
     if model.use_brd and use_trace_layout:
         fig = plt.figure(figsize=figsize)
         outer = fig.add_gridspec(
             4, 1, height_ratios=[1.0, 1.0, 0.85, 0.85], hspace=0.35
         )
-        n_top_cols = 1 + int(has_neff_trace) + int(has_entropy_trace)
+        n_top_cols = 1 + int(has_neff_trace)
         top = outer[0].subgridspec(1, n_top_cols, wspace=0.35)
         middle = outer[1].subgridspec(1, 3, wspace=0.35)
 
@@ -446,22 +437,6 @@ def qc(
                 x_values=neff_epochs,
             )
             col += 1
-        if has_entropy_trace:
-            entropy_trace = np.asarray(
-                model.adata.uns["entropy_annealing_trace"], dtype=float
-            )
-            entropy_epochs = (
-                np.asarray(model.adata.uns["entropy_annealing_trace_epochs"], dtype=int)
-                if has_entropy_trace_epochs
-                else np.arange(1, len(entropy_trace) + 1)
-            )
-            _trace_plot(
-                entropy_trace,
-                ax=fig.add_subplot(top[0, col]),
-                ylabel="Entropy annealing",
-                x_values=entropy_epochs,
-            )
-
         # Second row: BRD vs Gini, cell scale, gene scale
         gini_brd(model, ax=fig.add_subplot(middle[0, 0]), show=False)
         scale(model, "cell", ax=fig.add_subplot(middle[0, 1]), show=False)
