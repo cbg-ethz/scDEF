@@ -68,6 +68,44 @@ def get_weight_scores(model, obs_key, obs_vals, top_layer=None):
     return mats
 
 
+def get_prob_scores(model, obs_key, obs_vals):
+    """Mean per-cell factor probability per observation category.
+
+    Uses ``adata.obsm['X_<layer_name>_probs']`` (from :meth:`annotate_adata` /
+    :meth:`normalize_cellscores`). Rows of each matrix are cells, columns align
+    with ``model.factor_names[layer]``.
+    """
+    n_obs = len(obs_vals)
+    mats = [
+        np.zeros((n_obs, len(model.factor_names[idx]))) for idx in range(model.n_layers)
+    ]
+    for layer_idx in range(model.n_layers):
+        layer_name = model.layer_names[layer_idx]
+        key = f"X_{layer_name}_probs"
+        if key not in model.adata.obsm:
+            raise KeyError(
+                f"Missing {key} in adata.obsm. Run model.annotate_adata() (or "
+                "model.fit with annotate=True) so per-cell factor probabilities exist."
+            )
+        arr = np.asarray(model.adata.obsm[key], dtype=float)
+        n_fac = len(model.factor_names[layer_idx])
+        if arr.shape[1] != n_fac:
+            raise ValueError(
+                f"{key} has {arr.shape[1]} columns but layer {layer_idx} has {n_fac} factors."
+            )
+
+    obs_arr = model.adata.obs[obs_key].to_numpy()
+    for i, obs_val in enumerate(obs_vals):
+        mask = obs_arr == obs_val
+        if not np.any(mask):
+            continue
+        for layer_idx in range(model.n_layers):
+            layer_name = model.layer_names[layer_idx]
+            probs = np.asarray(model.adata.obsm[f"X_{layer_name}_probs"], dtype=float)
+            mats[layer_idx][i, :] = np.mean(probs[mask], axis=0)
+    return mats
+
+
 def get_signature_scores(model, obs_key, obs_vals, markers, top_genes=10):
     """Get signature scores for observations and factors."""
     from ..tools.factor import get_stored_confident_signatures
@@ -161,7 +199,7 @@ def prepare_obs_factor_scores(
 def cache_obs_factor_scores(
     model,
     obs_keys: Sequence[str],
-    mode: Literal["f1", "fracs", "weights"],
+    mode: Literal["f1", "fracs", "weights", "prob"],
     obs_mats: Dict[str, list],
     obs_clusters: Dict[str, np.ndarray],
     obs_vals_dict: Dict[str, list],

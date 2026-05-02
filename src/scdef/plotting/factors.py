@@ -520,7 +520,7 @@ def obs_scores(
     model: "scDEF",
     obs_keys: Sequence[str],
     hierarchy: Optional[Dict[str, Sequence[str]]] = None,
-    mode: Literal["f1", "fracs", "weights"] = "fracs",
+    mode: Literal["f1", "fracs", "weights", "prob"] = "fracs",
     vmax: Optional[float] = None,
     vmin: Optional[float] = None,
     **kwargs: Any,
@@ -531,7 +531,9 @@ def obs_scores(
         model: scDEF model instance
         obs_keys: the keys in model.adata.obs to use
         hierarchy: the polytree to restrict the associations to
-        mode: whether to compute scores based on assignments or weights
+        mode: assignment F1 (``f1``), assignment fractions (``fracs``), usage
+            weights (``weights``), or mean per-cell factor probabilities (``prob``;
+            requires ``annotate_adata`` / ``X_<layer>_probs``).
         **kwargs: plotting keyword arguments
     """
     if mode == "f1":
@@ -540,8 +542,10 @@ def obs_scores(
         f = data_utils.get_assignment_fracs
     elif mode == "weights":
         f = data_utils.get_weight_scores
+    elif mode == "prob":
+        f = data_utils.get_prob_scores
     else:
-        raise ValueError("`mode` must be one of ['f1', 'fracs', 'weights']")
+        raise ValueError("`mode` must be one of ['f1', 'fracs', 'weights', 'prob']")
 
     obs_mats, obs_clusters, obs_vals_dict = data_utils.prepare_obs_factor_scores(
         model,
@@ -558,7 +562,7 @@ def obs_scores(
         obs_vals_dict=obs_vals_dict,
     )
 
-    if mode == "f1" or mode == "fracs":
+    if mode in ("f1", "fracs", "prob"):
         vmax = 1.0
         vmin = 0.0
 

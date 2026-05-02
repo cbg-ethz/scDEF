@@ -149,7 +149,7 @@ def test_scdef():
         assert ranked_terms[factor_idx] == expected_terms[factor_name]
         assert np.allclose(ranked_scores[factor_idx], expected_scores[factor_name])
 
-    for mode in ["f1", "fracs", "weights"]:
+    for mode in ["f1", "fracs", "weights", "prob"]:
         scd.pl.obs_scores(
             model,
             ["celltypes", "celltypes_coarse"],
@@ -159,6 +159,7 @@ def test_scdef():
         )
     assert "obs_scores" in model.adata.uns
     assert "fracs" in model.adata.uns["obs_scores"]
+    assert "prob" in model.adata.uns["obs_scores"]
     ranked = scd.tl.get_obs_score_rankings(
         model,
         layer=0,

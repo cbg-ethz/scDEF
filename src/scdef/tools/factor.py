@@ -326,7 +326,7 @@ def get_obs_score_rankings(
     layer: Union[int, str],
     obs_key: str,
     obs_values: Union[str, Sequence[str]],
-    score_model: Literal["f1", "fracs", "weights"] = "fracs",
+    score_model: Literal["f1", "fracs", "weights", "prob"] = "fracs",
     ascending: bool = False,
     recompute: bool = False,
 ) -> pd.DataFrame:
@@ -369,8 +369,12 @@ def get_obs_score_rankings(
             score_func = data_utils.get_assignment_fracs
         elif score_model == "weights":
             score_func = data_utils.get_weight_scores
+        elif score_model == "prob":
+            score_func = data_utils.get_prob_scores
         else:
-            raise ValueError("score_model must be one of ['f1', 'fracs', 'weights'].")
+            raise ValueError(
+                "score_model must be one of ['f1', 'fracs', 'weights', 'prob']."
+            )
 
         obs_mats, obs_clusters, obs_vals_dict = data_utils.prepare_obs_factor_scores(
             model,
@@ -435,7 +439,7 @@ def get_obs_value_specific_factors(
     layer: Union[int, str],
     obs_key: str,
     obs_values: Union[str, Sequence[str]],
-    score_model: Literal["f1", "fracs", "weights"] = "fracs",
+    score_model: Literal["f1", "fracs", "weights", "prob"] = "fracs",
     min_specificity: float = 0.0,
     top_n: Optional[int] = None,
     recompute: bool = False,
