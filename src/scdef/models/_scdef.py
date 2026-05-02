@@ -632,35 +632,25 @@ class scDEF(object):
             ard_sum = np.nansum(ard)
 
             if local_l0_scores:
-                neff_vals = factor_obs_l0["n_eff_parents"].to_numpy(dtype=float)[
+                clarity_vals = factor_obs_l0["clarity_score_01"].to_numpy(dtype=float)[
                     valid_idx
                 ]
-                neff = np.full(self.layer_sizes[0], np.nan, dtype=float)
-                neff[original_idx_f] = neff_vals
-                valid = np.isfinite(brd) & np.isfinite(ard) & np.isfinite(neff)
-                tree_ok = neff < float(n_eff_parents_max)
+                clarity = np.full(self.layer_sizes[0], np.nan, dtype=float)
+                clarity[original_idx_f] = clarity_vals
+                valid = np.isfinite(brd) & np.isfinite(ard) & np.isfinite(clarity)
+                tree_ok = clarity >= float(clarity_min)
             elif "avg_n_eff_parents" in factor_obs_l0.columns:
-                from scdef.tools.hierarchy import effective_parents_from_clarity
-
                 avg_vals = factor_obs_l0["avg_n_eff_parents"].to_numpy(dtype=float)[
                     valid_idx
                 ]
-                k_vals = factor_obs_l0["K_parents"].to_numpy(dtype=float)[valid_idx]
                 avg_neff = np.full(self.layer_sizes[0], np.nan, dtype=float)
-                neff_thresh = np.full(self.layer_sizes[0], np.nan, dtype=float)
-                for o, a, k in zip(original_idx_f, avg_vals, k_vals):
-                    avg_neff[o] = a
-                    if np.isfinite(k) and int(k) >= 1:
-                        neff_thresh[o] = effective_parents_from_clarity(
-                            float(clarity_min), int(k)
-                        )
+                avg_neff[original_idx_f] = avg_vals
                 valid = (
                     np.isfinite(brd)
                     & np.isfinite(ard)
                     & np.isfinite(avg_neff)
-                    & np.isfinite(neff_thresh)
                 )
-                tree_ok = avg_neff < neff_thresh
+                tree_ok = avg_neff < float(n_eff_parents_max)
             else:
                 clarity_vals = factor_obs_l0["clarity_score_01"].to_numpy(dtype=float)[
                     valid_idx
@@ -1603,14 +1593,14 @@ class scDEF(object):
                     else:
                         col_keep = np.array(old_factor_lists[layer_idx - 1], dtype=int)
                         init_w.append(w[np.ix_(row_keep, col_keep)])
-                # init_brd = np.array(self.pmeans["brd"])[
-                #     np.array(old_factor_lists[0], dtype=int)
-                # ]
-                # init_ard = np.array(self.pmeans["factor_means"])[
-                #     np.array(old_factor_lists[0], dtype=int)
-                # ]
-                init_brd = None
-                init_ard = None
+                init_brd = np.array(self.pmeans["brd"])[
+                    np.array(old_factor_lists[0], dtype=int)
+                ]
+                init_ard = np.array(self.pmeans["factor_means"])[
+                    np.array(old_factor_lists[0], dtype=int)
+                ]
+                # init_brd = None
+                # init_ard = None
         else:
             init_budgets = True
             init_alpha = True
@@ -2432,13 +2422,13 @@ class scDEF(object):
         Args:
             brd_min: minimum factor BRD value for layer 0 when ``use_brd``.
             ard_min: minimum ARD fraction of total ARD for layer 0.
-            clarity_min: when ``local_l0_scores`` is False, passed to
-                ``get_effective_factors`` for lineage ``avg_n_eff_parents`` vs
-                clarity-derived cutoff, or L0 clarity when lineage columns are absent.
-            n_eff_parents_max: when ``local_l0_scores`` is True, fixed cutoff on L0
-                ``n_eff_parents`` (default ``1.5``).
-            local_l0_scores: if True, layer-0 filtering uses ``n_eff_parents`` and
-                ``n_eff_parents_max`` instead of lineage averages / ``clarity_min``.
+            clarity_min: minimum L0 ``clarity_score_01`` when not using lineage
+                ``avg_n_eff_parents`` (``local_l0_scores`` or missing lineage columns).
+            n_eff_parents_max: only when ``avg_n_eff_parents`` is present and
+                ``local_l0_scores`` is False: cutoff ``avg_n_eff_parents < n_eff_parents_max``
+                (default ``1.5``). Ignored for local-L0 / clarity-only filtering.
+            local_l0_scores: if True, filter by ``clarity_score_01 >= clarity_min``; if
+                False and ``avg_n_eff_parents`` exists, filter by ``n_eff_parents_max``.
             min_cells_upper: minimum cells attached to upper-layer factors (fraction if <1).
             min_cells_lower: minimum cells attached to layer-0 factors (fraction if <1).
             filter_up: whether to prune upper layers via inter-layer attachments.
