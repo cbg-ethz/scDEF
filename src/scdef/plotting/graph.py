@@ -495,6 +495,22 @@ def _add_signature_to_label(
     return label
 
 
+def _cells_for_graph_factor(
+    model: "scDEF",
+    layer_name: str,
+    assignment_factor_name: str,
+    confident_assignments: bool,
+    confident_key: str,
+) -> np.ndarray:
+    """Indices of cells assigned to ``assignment_factor_name`` for graph sizing."""
+    if confident_assignments:
+        col = f"{confident_key}_factor"
+    else:
+        col = str(layer_name)
+    obs_vals = model.adata.obs[col].astype(str).to_numpy()
+    return np.where(obs_vals == str(assignment_factor_name))[0]
+
+
 def _compute_node_size(
     model,
     layer_idx,
@@ -506,6 +522,8 @@ def _compute_node_size(
     scale_level,
     show_all,
     layer_name,
+    confident_assignments: bool = False,
+    confident_key: str = "confident",
 ):
     """Compute node size and fixedsize flag."""
     size = node_size_min
@@ -514,7 +532,11 @@ def _compute_node_size(
     if n_cells:
         max_cells = model.n_cells
         if scale_level:
-            max_cells = model.adata.obs[f"{layer_name}"].value_counts().max()
+            if confident_assignments:
+                cc = f"{confident_key}_factor"
+                max_cells = model.adata.obs[cc].astype(str).value_counts().max()
+            else:
+                max_cells = model.adata.obs[f"{layer_name}"].value_counts().max()
         size = np.maximum(
             node_size_max * np.sqrt((node_num_cells / max_cells)),
             node_size_min,
@@ -736,6 +758,8 @@ def make_graph(
     path: Optional[Union[Sequence[str], Dict[str, Any]]] = None,
     path_color: str = "red",
     path_node_penwidth: float = 2.5,
+    confident_assignments: bool = False,
+    confident_key: str = "confident",
     shell: Optional[bool] = False,
     r: Optional[float] = 2.0,
     r_decay: Optional[float] = 0.8,
@@ -786,6 +810,10 @@ def make_graph(
         path_node_penwidth: Graphviz ``penwidth`` for nodes on ``path`` (border
             thickness). Ignored when ``path`` is not set. Default ``2.5``; use ``1.0``
             for the usual thin border (no emphasis).
+        confident_assignments: if True, attach cells using ``adata.obs[f"{confident_key}_factor"]``
+            (cross-layer assignment from :func:`~scdef.tools.factor.assign_confident`) instead of
+            per-layer ``adata.obs[layer_name]``. Requires that column to exist.
+        confident_key: ``key_added`` prefix used with ``assign_confident`` (default ``"confident"``).
         shell: whether to use shell layout
         r: radius parameter for shell layout
         r_decay: radius decay parameter for shell layout
@@ -794,6 +822,13 @@ def make_graph(
     Returns:
         Graphviz Graph object
     """
+    if confident_assignments:
+        cf_col = f"{confident_key}_factor"
+        if cf_col not in model.adata.obs.columns:
+            raise KeyError(
+                f"Column {cf_col!r} not found in model.adata.obs; run "
+                f"scd.tl.assign_confident(model, key_added={confident_key!r}) first."
+            )
     # Validate and normalize inputs
     top_genes = _validate_top_genes(top_genes, model.n_layers)
     gene_cmap = matplotlib.colormaps[gene_cmap]
@@ -901,8 +936,18 @@ def make_graph(
             if hierarchy is not None and factor_name not in hierarchy_nodes:
                 continue
 
-            # Get cells attached to this factor
-            cells = np.where(model.adata.obs[f"{layer_name}"] == factor_name)[0]
+            assignment_factor_name = (
+                str(model.factor_names[layer_idx][int(factor_idx)])
+                if confident_assignments
+                else str(factor_name)
+            )
+            cells = _cells_for_graph_factor(
+                model,
+                layer_name,
+                assignment_factor_name,
+                confident_assignments,
+                confident_key,
+            )
             node_num_cells = len(cells)
 
             # Build label
@@ -992,6 +1037,8 @@ def make_graph(
                 scale_level,
                 show_all,
                 layer_name,
+                confident_assignments=confident_assignments,
+                confident_key=confident_key,
             )
 
             # Handle special cases for show_all
@@ -1121,6 +1168,8 @@ def make_technical_hierarchy_graph(
     show_label: Optional[bool] = True,
     gene_score: Optional[str] = None,
     gene_cmap: Optional[str] = "viridis",
+    confident_assignments: bool = False,
+    confident_key: str = "confident",
     shell: Optional[bool] = False,
     r: Optional[float] = 2.0,
     r_decay: Optional[float] = 0.8,
@@ -1155,6 +1204,8 @@ def make_technical_hierarchy_graph(
         show_label: whether to show labels on nodes
         gene_score: color the nodes by the score they attribute to a gene, normalized by layer. Overrides filled and wedged
         gene_cmap: colormap to use for gene_score
+        confident_assignments: same as :func:`make_graph`.
+        confident_key: same as :func:`make_graph`.
         shell: whether to use shell layout
         r: radius parameter for shell layout
         r_decay: radius decay parameter for shell layout
@@ -1163,6 +1214,13 @@ def make_technical_hierarchy_graph(
     Returns:
         Graphviz Graph object
     """
+    if confident_assignments:
+        cf_col = f"{confident_key}_factor"
+        if cf_col not in model.adata.obs.columns:
+            raise KeyError(
+                f"Column {cf_col!r} not found in model.adata.obs; run "
+                f"scd.tl.assign_confident(model, key_added={confident_key!r}) first."
+            )
     # Validate and normalize inputs
     top_genes = _validate_top_genes(top_genes, model.n_layers)
     gene_cmap = matplotlib.colormaps[gene_cmap]
@@ -1253,8 +1311,18 @@ def make_technical_hierarchy_graph(
             if layer_idx == model.n_layers - 1:
                 cells = np.array([])
             else:
-                # Get cells attached to this factor
-                cells = np.where(model.adata.obs[f"{layer_name}"] == factor_name)[0]
+                assignment_factor_name = (
+                    str(model.factor_names[layer_idx][int(factor_idx)])
+                    if confident_assignments
+                    else str(factor_name)
+                )
+                cells = _cells_for_graph_factor(
+                    model,
+                    layer_name,
+                    assignment_factor_name,
+                    confident_assignments,
+                    confident_key,
+                )
             node_num_cells = len(cells)
 
             # Build label
@@ -1347,6 +1415,8 @@ def make_technical_hierarchy_graph(
                 scale_level,
                 False,
                 layer_name,
+                confident_assignments=confident_assignments,
+                confident_key=confident_key,
             )
 
             # Finalize label

@@ -590,6 +590,21 @@ def test_scdef_assign_confident():
     assert list(meta["layer_names"]) == list(model.layer_names)
     assert "depth_score" in meta
 
+    g_conf = scd.pl.make_graph(
+        model,
+        confident_assignments=True,
+        show_signatures=False,
+        show_label=False,
+    )
+    assert g_conf is not None
+    with pytest.raises(KeyError, match="missing_prefix_factor"):
+        scd.pl.make_graph(
+            model,
+            confident_assignments=True,
+            confident_key="missing_prefix",
+            show_signatures=False,
+        )
+
     # Fallback semantics: with tau = 1.0, NO multi-factor layer can
     # clear the bar (the gap is strictly < 1 whenever K_k >= 2, since
     # the runner-up has some positive mass), so every cell must fall
@@ -606,6 +621,15 @@ def test_scdef_assign_confident():
     assert np.all(idx_hi == n_layers - 1)
     np.testing.assert_allclose(best_conf_hi, 1.0)
     np.testing.assert_allclose(depth_hi, 1.0)
+
+    g_cf_hi_graph = scd.pl.make_graph(
+        model,
+        confident_assignments=True,
+        confident_key="cf_hi",
+        show_signatures=False,
+        show_label=False,
+    )
+    assert g_cf_hi_graph is not None
 
 
 def test_scdef_path_pipeline_and_plotting():
