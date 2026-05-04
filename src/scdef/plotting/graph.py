@@ -310,7 +310,7 @@ def _compute_filled_fillcolor(
         if len(cells) > 0:
             # cells in this factor that belong to each obs
             prevs = [
-                np.count_nonzero(model.adata.obs[filled][cells] == b)
+                np.count_nonzero(model.adata.obs[filled].iloc[cells] == b)
                 / len(np.where(model.adata.obs[filled] == b)[0])
                 for b in model.adata.obs[filled].cat.categories
             ]
@@ -339,7 +339,7 @@ def _compute_wedged_fillcolor(model, wedged, cells):
     # normalized by total num of cells in each obs
     prevs = np.array(
         [
-            np.count_nonzero(model.adata.obs[wedged][cells] == b)
+            np.count_nonzero(model.adata.obs[wedged].iloc[cells] == b)
             / len(np.where(model.adata.obs[wedged] == b)[0])
             for b in model.adata.obs[wedged].cat.categories
         ],
