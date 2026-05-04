@@ -736,6 +736,7 @@ def test_scdef_path_pipeline_and_plotting():
             paths_key="differentiation_paths",
             score_key="differentiation_paths",
             genes=[g1, g2],
+            normalize=False,
             show=False,
         )
         assert fig_pg is not None

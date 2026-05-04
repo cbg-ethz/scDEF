@@ -11,6 +11,14 @@ from scipy.ndimage import uniform_filter1d
 from sklearn.preprocessing import minmax_scale
 
 from ..tools.trajectory import multilevel_paga as compute_multilevel_paga
+
+
+def _gene_row_values(expr_vals: np.ndarray, *, normalize: bool) -> np.ndarray:
+    """Per-cell gene expression row for heatmap: optional min–max to ``[0, 1]``."""
+    v = np.asarray(expr_vals, dtype=float).ravel()
+    if normalize:
+        return np.asarray(minmax_scale(v), dtype=float)
+    return v
 from ..tools.factor import get_stored_confident_signatures
 
 
@@ -148,6 +156,7 @@ def plot_trajectory_heatmap(
     factor_heatmap_cmap: str = "viridis",
     colorbar_gap: float = 0.16,
     xlabel: str = "Cells",
+    normalize: bool = True,
     save: Optional[str] = None,
     show: bool = True,
 ):
@@ -168,6 +177,10 @@ def plot_trajectory_heatmap(
         computed on layer 0 probabilities instead. If that yields near-zero total
         path weight for all selected cells, sorting falls back to the
         ``layer_idx`` path probabilities.
+
+    ``normalize`` (default True): min–max scale each **gene** row to ``[0, 1]``
+    after smoothing; if False, use smoothed raw expression. Factor score rows
+    are always min–max scaled.
     """
     layer_name = model.layer_names[layer_idx]
     kept_names = list(model.factor_names[layer_idx])
@@ -292,7 +305,7 @@ def plot_trajectory_heatmap(
             expr_vals = uniform_filter1d(
                 np.asarray(expr, dtype=float).ravel(), size=smoothing
             )
-            block_rows.append(minmax_scale(expr_vals))
+            block_rows.append(_gene_row_values(expr_vals, normalize=normalize))
             labels.append(f"  {gene}")
             kinds.append("gene")
 
@@ -431,10 +444,13 @@ def plot_trajectory_heatmap(
 
     ax_hm_cb_gene = fig.add_subplot(gs[hm_row_start:, 1])
     ax_hm_cb_factor = fig.add_subplot(gs[hm_row_start:, 3])
+    gene_cb_label = (
+        "Smoothed gene expression in path (min–max)"
+        if normalize
+        else "Smoothed gene expression in path (raw)"
+    )
     if any_gene_rows and im_genes_ref is not None:
-        plt.colorbar(
-            im_genes_ref, cax=ax_hm_cb_gene, label="Smoothed gene expression in path"
-        )
+        plt.colorbar(im_genes_ref, cax=ax_hm_cb_gene, label=gene_cb_label)
         ax_hm_cb_gene.yaxis.labelpad = 10
         ax_hm_cb_gene.yaxis.label.set_size(8)
         ax_hm_cb_gene.tick_params(labelsize=7)
@@ -548,6 +564,7 @@ def plot_path_trajectory_heatmap(
     factor_heatmap_cmap: str = "viridis",
     colorbar_gap: float = 0.16,
     xlabel: str = "Cells",
+    normalize: bool = True,
     save: Optional[str] = None,
     show: bool = True,
 ) -> Optional[plt.Figure]:
@@ -589,6 +606,9 @@ def plot_path_trajectory_heatmap(
         path_mass_eps: minimum summed path-node probability mass in fallback mode.
         ytick_prefix_layer: if True, factor row labels are ``'<layer> <name>'``.
         genes: optional list of ``adata.var_names`` entries to plot as rows only.
+        normalize: min–max scale each gene expression row after smoothing (default
+            True); factor score rows are always scaled. Same as
+            :func:`plot_trajectory_heatmap`.
     """
     if paths_key not in model.adata.uns:
         raise KeyError(f"'{paths_key}' not found in model.adata.uns.")
@@ -664,7 +684,7 @@ def plot_path_trajectory_heatmap(
             expr_vals = uniform_filter1d(
                 np.asarray(expr, dtype=float).ravel(), size=smoothing
             )
-            block_rows.append(minmax_scale(expr_vals))
+            block_rows.append(_gene_row_values(expr_vals, normalize=normalize))
             labels.append(gene)
             kinds.append("gene")
         block_arr = np.vstack(block_rows)
@@ -716,7 +736,7 @@ def plot_path_trajectory_heatmap(
                 expr_vals = uniform_filter1d(
                     np.asarray(expr, dtype=float).ravel(), size=smoothing
                 )
-                block_rows_f.append(minmax_scale(expr_vals))
+                block_rows_f.append(_gene_row_values(expr_vals, normalize=normalize))
                 labels_f.append(f"  {gene}")
                 kinds_f.append("gene")
 
@@ -866,10 +886,13 @@ def plot_path_trajectory_heatmap(
 
     ax_hm_cb_gene = fig.add_subplot(gs[hm_row_start:, 1])
     ax_hm_cb_factor = fig.add_subplot(gs[hm_row_start:, 3])
+    gene_cb_label_ph = (
+        "Smoothed gene expression in path (min–max)"
+        if normalize
+        else "Smoothed gene expression in path (raw)"
+    )
     if any_gene_rows and im_genes_ref is not None:
-        plt.colorbar(
-            im_genes_ref, cax=ax_hm_cb_gene, label="Smoothed gene expression in path"
-        )
+        plt.colorbar(im_genes_ref, cax=ax_hm_cb_gene, label=gene_cb_label_ph)
         ax_hm_cb_gene.yaxis.labelpad = 10
         ax_hm_cb_gene.yaxis.label.set_size(8)
         ax_hm_cb_gene.tick_params(labelsize=7)
