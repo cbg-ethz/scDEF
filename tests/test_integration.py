@@ -240,7 +240,9 @@ def test_scdef():
     )
     g = scd.pl.make_graph(model, hierarchy=simplified, factor_annotations=matches)
 
-    roots = [k for k, v in simplified.items() if isinstance(v, (list, tuple)) and len(v) > 0]
+    roots = [
+        k for k, v in simplified.items() if isinstance(v, (list, tuple)) and len(v) > 0
+    ]
     if len(roots) > 0:
         r0 = roots[0]
         c0 = simplified[r0][0]

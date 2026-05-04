@@ -707,9 +707,7 @@ def plot_path_trajectory_heatmap(
             kinds_f.append("factor")
 
             sig_genes = [
-                g
-                for g in confident_sigs.get(factor_name, [])
-                if g in t_path.var_names
+                g for g in confident_sigs.get(factor_name, []) if g in t_path.var_names
             ]
             for gene in sig_genes:
                 expr = t_path[:, [gene]].X
