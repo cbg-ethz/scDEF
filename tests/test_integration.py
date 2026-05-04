@@ -97,7 +97,7 @@ def test_scdef():
         raw_adata,
         layer_sizes=[10, 5, 2],
         seed=1,
-        batch_key="Experiment",
+        batch_key="batches",
     )
     assert hasattr(model, "adata")
 
@@ -108,6 +108,15 @@ def test_scdef():
     model.logger.info(model.factor_lists)
 
     model.fit(n_epoch=10)
+
+    lr_batch = scd.tl.get_batch_specific_genes_from_gene_scale(model)
+    assert lr_batch.shape == (model.adata.n_vars, model.n_batches)
+    assert list(lr_batch.columns) == [str(b) for b in model.batches]
+    assert np.all(np.isfinite(lr_batch.to_numpy(dtype=float)))
+    lr_global = scd.tl.get_batch_specific_genes_from_gene_scale(
+        model, reference="global_mean"
+    )
+    assert lr_global.shape == lr_batch.shape
 
     expected_fit_passes = 1 + int(getattr(model, "root_epochs", 0) > 0)
     assert len(model.elbos) == expected_fit_passes
@@ -630,6 +639,9 @@ def test_scdef_assign_confident():
         show_label=False,
     )
     assert g_cf_hi_graph is not None
+
+    with pytest.raises(ValueError, match="at least two batch rows"):
+        scd.tl.get_batch_specific_genes_from_gene_scale(model)
 
 
 def test_scdef_path_pipeline_and_plotting():

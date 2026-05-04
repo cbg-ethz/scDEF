@@ -33,6 +33,7 @@ from .trajectory import (
     build_transition_paths,
     score_paths,
 )
+from .batch import get_batch_specific_genes_from_gene_scale
 
 __all__ = [
     "assign_confident",
@@ -61,4 +62,5 @@ __all__ = [
     "build_transition_paths",
     "score_paths",
     "multilevel_paga",
+    "get_batch_specific_genes_from_gene_scale",
 ]
