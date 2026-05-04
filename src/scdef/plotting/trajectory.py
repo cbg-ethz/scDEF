@@ -19,6 +19,8 @@ def _gene_row_values(expr_vals: np.ndarray, *, normalize: bool) -> np.ndarray:
     if normalize:
         return np.asarray(minmax_scale(v), dtype=float)
     return v
+
+
 from ..tools.factor import get_stored_confident_signatures
 
 
