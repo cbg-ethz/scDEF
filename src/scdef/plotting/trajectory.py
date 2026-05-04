@@ -13,6 +13,33 @@ from sklearn.preprocessing import minmax_scale
 from ..tools.trajectory import multilevel_paga as compute_multilevel_paga
 from ..tools.factor import get_stored_confident_signatures
 
+
+def _factor_layer_and_slot(model: "scDEF", factor_name: str) -> Tuple[int, int]:
+    """Return (layer_idx, slot_idx) for a filtered factor name."""
+    for li in range(model.n_layers):
+        names = list(model.factor_names[li])
+        if factor_name in names:
+            return int(li), int(names.index(factor_name))
+    raise ValueError(
+        f"Factor '{factor_name}' not found in any layer's factor_names. "
+        "Paths must use current filtered factor names."
+    )
+
+
+def _path_index_in_uns_paths(paths: List[Dict[str, Any]], path_id: int) -> int:
+    """Map user ``path_id`` to the column index in ``score_paths`` matrices."""
+    pid = int(path_id)
+    for i, p in enumerate(paths):
+        if int(p.get("path_id", i)) == pid:
+            return i
+    if 0 <= pid < len(paths):
+        return pid
+    raise IndexError(
+        f"path_id {path_id} not found among {len(paths)} paths "
+        f"(checked path_id fields and list indices)."
+    )
+
+
 if TYPE_CHECKING:
     from scdef.models._scdef import scDEF
 
@@ -393,6 +420,389 @@ def plot_trajectory_heatmap(
 
         if i < len(block_labels) - 1:
             ax_hm.axhline(len(labels) - 0.5, color="white", linewidth=1.0, alpha=0.8)
+
+    ax_hm_cb_gene = fig.add_subplot(gs[hm_row_start:, 1])
+    ax_hm_cb_factor = fig.add_subplot(gs[hm_row_start:, 3])
+    if any_gene_rows and im_genes_ref is not None:
+        plt.colorbar(
+            im_genes_ref, cax=ax_hm_cb_gene, label="Smoothed gene expression in path"
+        )
+        ax_hm_cb_gene.yaxis.labelpad = 10
+        ax_hm_cb_gene.yaxis.label.set_size(8)
+        ax_hm_cb_gene.tick_params(labelsize=7)
+    else:
+        ax_hm_cb_gene.axis("off")
+    if im_factors_ref is not None:
+        plt.colorbar(
+            im_factors_ref, cax=ax_hm_cb_factor, label="Smoothed factor score in path"
+        )
+        ax_hm_cb_factor.yaxis.labelpad = 10
+        ax_hm_cb_factor.yaxis.label.set_size(8)
+        ax_hm_cb_factor.tick_params(labelsize=7)
+    else:
+        ax_hm_cb_factor.axis("off")
+
+    if save:
+        plt.savefig(save, bbox_inches="tight", dpi=150)
+    if show:
+        plt.show()
+        return None
+    return fig
+
+
+def _sorted_cells_for_multilayer_path(
+    model: "scDEF",
+    nodes: List[str],
+    pobj: Dict[str, Any],
+    paths_key: str,
+    p_list_idx: int,
+    score_key: str,
+    min_sort_affinity: float,
+    subset_mask: np.ndarray,
+    path_mass_eps: float,
+) -> np.ndarray:
+    """Order cells along ``nodes`` using score_paths output if available."""
+    adata = model.adata
+    pos_key = f"{score_key}_positions"
+    aff_key = f"{score_key}_affinities"
+
+    if (
+        pos_key in adata.obsm
+        and aff_key in adata.obsm
+        and int(np.asarray(adata.obsm[pos_key]).shape[1]) > p_list_idx
+    ):
+        pos_col = np.asarray(adata.obsm[pos_key][:, p_list_idx], dtype=float)
+        aff_col = np.asarray(adata.obsm[aff_key][:, p_list_idx], dtype=float)
+        scored = (
+            subset_mask & np.isfinite(pos_col) & (aff_col >= float(min_sort_affinity))
+        )
+        if np.count_nonzero(scored) > 0:
+            sel = np.where(scored)[0]
+            return sel[np.argsort(pos_col[sel])]
+
+    l0_name = model.layer_names[0]
+    obs_l0 = adata.obs[l0_name].astype(str).to_numpy()
+    if str(pobj.get("type", "")) == "transition" and pobj.get("source") is not None:
+        src = str(pobj["source"])
+        tgt = str(pobj.get("target", ""))
+        anchor = subset_mask & np.isin(obs_l0, [src, tgt])
+    else:
+        if len(nodes) == 0:
+            raise ValueError("Path has no nodes.")
+        anchor = subset_mask & (obs_l0 == str(nodes[-1]))
+
+    prob_cols: List[np.ndarray] = []
+    for name in nodes:
+        li, si = _factor_layer_and_slot(model, name)
+        lnm = model.layer_names[li]
+        pk = f"X_{lnm}_probs"
+        if pk not in adata.obsm:
+            raise KeyError(
+                f"Missing '{pk}' in adata.obsm. Run `model.annotate_adata()` first."
+            )
+        Xp = np.asarray(adata.obsm[pk], dtype=float)
+        prob_cols.append(Xp[:, si])
+    s_arr = np.stack(prob_cols, axis=1)
+    mass = np.sum(s_arr, axis=1)
+    ranks = np.arange(s_arr.shape[1], dtype=float)
+    denom_mass = np.maximum(mass, float(path_mass_eps))
+    w = s_arr / denom_mass[:, None]
+    prog = np.sum(w * ranks[None, :], axis=1) / max(float(s_arr.shape[1] - 1), 1.0)
+    valid = anchor & (mass > float(path_mass_eps))
+    if np.count_nonzero(valid) == 0:
+        raise ValueError(
+            "No cells after subset/anchor filters. "
+            "Try lowering min_sort_affinity, run score_paths with matching "
+            "paths_key and key_added, or relax subset_obs filters."
+        )
+    sel = np.where(valid)[0]
+    return sel[np.argsort(prog[sel])]
+
+
+def plot_path_trajectory_heatmap(
+    model: "scDEF",
+    path_id: int,
+    paths_key: str = "differentiation_paths",
+    score_key: Optional[str] = None,
+    min_sort_affinity: float = 0.05,
+    path_mass_eps: float = 1e-12,
+    genes_per_factor: Optional[int] = 3,
+    smoothing: int = 50,
+    figwidth: float = 8,
+    gene_height: float = 0.28,
+    block_spacing: int = 1,
+    ytick_prefix_layer: bool = True,
+    annotation_obs_key: Optional[Union[str, Sequence[str]]] = None,
+    subset_obs_key: Optional[str] = None,
+    subset_obs: Optional[Union[str, Sequence[str]]] = None,
+    heatmap_cmap: str = "RdYlBu_r",
+    factor_heatmap_cmap: str = "viridis",
+    colorbar_gap: float = 0.16,
+    xlabel: str = "Cells",
+    save: Optional[str] = None,
+    show: bool = True,
+) -> Optional[plt.Figure]:
+    """Trajectory heatmap along a stored multi-layer path (differentiation or transition).
+
+    Uses ``adata.uns[paths_key]['paths'][path_id]`` factor ``nodes`` (root→leaf
+    for differentiation paths). Per-node factor scores come from
+    ``adata.obs['<factor>_score']`` (requires ``annotate_adata`` / fit). Confident
+    genes require ``scd.tl.set_confident_signatures(model)``.
+
+    Cell order:
+        Prefer ``scd.tl.score_paths`` matrices ``{score_key}_positions`` and
+        ``{score_key}_affinities`` (same column order as ``paths``). Cells must
+        meet ``min_sort_affinity`` and have finite positions. If no such cells
+        remain, falls back to the same logic as :func:`plot_trajectory_heatmap`:
+        anchor cells on the L0 terminus (differentiation) or transition
+        source/target on L0, then sort by probability-weighted index along
+        ``nodes`` using ``X_<layer>_probs``.
+
+    Args:
+        model: fitted scDEF model.
+        path_id: ``path_id`` field stored with the path, or a list index.
+        paths_key: ``adata.uns`` key from ``build_differentiation_paths`` or
+            ``build_transition_paths``.
+        score_key: prefix for ``obsm`` position/affinity matrices from
+            ``score_paths``; defaults to ``paths_key``.
+        min_sort_affinity: when using ``score_paths`` output, minimum affinity
+            along the path for a cell to be included and ordered.
+        path_mass_eps: minimum summed path-node probability mass in fallback mode.
+        ytick_prefix_layer: if True, factor row labels are ``'<layer> <name>'``.
+    """
+    if paths_key not in model.adata.uns:
+        raise KeyError(f"'{paths_key}' not found in model.adata.uns.")
+    paths_raw = model.adata.uns[paths_key].get("paths", [])
+    paths: List[Dict[str, Any]] = list(paths_raw)
+    if len(paths) == 0:
+        raise ValueError(f"No paths in adata.uns['{paths_key}']['paths'].")
+
+    sk = paths_key if score_key is None else str(score_key)
+    p_list_idx = _path_index_in_uns_paths(paths, int(path_id))
+    pobj = paths[p_list_idx]
+    nodes = list(pobj.get("nodes", []))
+    if len(nodes) == 0:
+        raise ValueError(f"Path {path_id} has empty 'nodes'.")
+
+    if block_spacing < 0:
+        raise ValueError("block_spacing must be >= 0.")
+    if colorbar_gap < 0.0:
+        raise ValueError("colorbar_gap must be >= 0.")
+
+    subset_mask = np.ones(model.adata.n_obs, dtype=bool)
+    if subset_obs is not None and subset_obs_key is None:
+        raise ValueError("subset_obs_key must be provided when subset_obs is set.")
+    if subset_obs_key is not None:
+        if subset_obs_key not in model.adata.obs.columns:
+            raise KeyError(f"{subset_obs_key} not found in model.adata.obs.")
+        if subset_obs is None:
+            raise ValueError("subset_obs must be provided when subset_obs_key is set.")
+        if isinstance(subset_obs, str):
+            subset_vals = [subset_obs]
+        else:
+            subset_vals = [str(v) for v in subset_obs]
+        if len(subset_vals) == 0:
+            raise ValueError("subset_obs must contain at least one value.")
+        subset_mask = (
+            model.adata.obs[subset_obs_key].astype(str).isin(subset_vals).values
+        )
+
+    sorted_cells = _sorted_cells_for_multilayer_path(
+        model,
+        nodes,
+        pobj,
+        paths_key,
+        p_list_idx,
+        sk,
+        float(min_sort_affinity),
+        subset_mask,
+        float(path_mass_eps),
+    )
+    t_path = model.adata[sorted_cells].copy()
+
+    block_matrices: List[Tuple[np.ma.MaskedArray, np.ma.MaskedArray]] = []
+    block_labels: List[List[str]] = []
+    block_has_genes: List[bool] = []
+
+    for factor_name in nodes:
+        li, _ = _factor_layer_and_slot(model, factor_name)
+        layer_nm = model.layer_names[li]
+        display_name = (
+            f"{layer_nm} {factor_name}" if ytick_prefix_layer else str(factor_name)
+        )
+        confident_sigs = get_stored_confident_signatures(
+            model, layer_idx=li, max_genes=genes_per_factor
+        )
+        score_col = f"{factor_name}_score"
+        if score_col not in t_path.obs.columns:
+            raise KeyError(
+                f"Column '{score_col}' not found in adata.obs. "
+                "Run `model.annotate_adata()` (or fit with annotation) first."
+            )
+
+        block_rows: List[np.ndarray] = []
+        labels: List[str] = []
+        kinds: List[str] = []
+        score_vals = uniform_filter1d(
+            np.asarray(t_path.obs[score_col].values, dtype=float), size=smoothing
+        )
+        block_rows.append(minmax_scale(score_vals))
+        labels.append(display_name)
+        kinds.append("factor")
+
+        genes = [
+            g for g in confident_sigs.get(factor_name, []) if g in t_path.var_names
+        ]
+        for gene in genes:
+            expr = t_path[:, [gene]].X
+            if hasattr(expr, "toarray"):
+                expr = expr.toarray()
+            expr_vals = uniform_filter1d(
+                np.asarray(expr, dtype=float).ravel(), size=smoothing
+            )
+            block_rows.append(minmax_scale(expr_vals))
+            labels.append(f"  {gene}")
+            kinds.append("gene")
+
+        block_arr = np.vstack(block_rows)
+        factor_rows = np.asarray([k == "factor" for k in kinds], dtype=bool)
+        gene_rows = np.asarray([k == "gene" for k in kinds], dtype=bool)
+
+        genes_masked = np.ma.array(
+            block_arr, mask=np.broadcast_to(~gene_rows[:, None], block_arr.shape)
+        )
+        factors_masked = np.ma.array(
+            block_arr, mask=np.broadcast_to(~factor_rows[:, None], block_arr.shape)
+        )
+
+        block_matrices.append((genes_masked, factors_masked))
+        block_labels.append(labels)
+        block_has_genes.append(bool(np.any(gene_rows)))
+
+    if len(block_matrices) == 0:
+        raise ValueError("No heatmap blocks to plot.")
+
+    obs_keys: List[str] = []
+    if annotation_obs_key is not None:
+        if isinstance(annotation_obs_key, str):
+            obs_keys = [annotation_obs_key]
+        else:
+            obs_keys = [str(k) for k in annotation_obs_key]
+        if len(obs_keys) == 0:
+            raise ValueError(
+                "annotation_obs_key must be a non-empty string or sequence of strings."
+            )
+
+    obs_tracks: List[Dict[str, object]] = []
+    for key in obs_keys:
+        if key not in t_path.obs.columns:
+            raise KeyError(f"{key} not found in t_path.obs.")
+        cat = pd.Categorical(t_path.obs[key])
+        categories = cat.categories.tolist()
+        uns_key = f"{key}_colors"
+        if uns_key in t_path.uns:
+            cat_to_color = dict(
+                zip(
+                    t_path.uns.get(f"{key}_categories", categories),
+                    t_path.uns[uns_key],
+                )
+            )
+        else:
+            cmap_fb = plt.get_cmap("tab10", max(len(categories), 1))
+            cat_to_color = {c: cmap_fb(i) for i, c in enumerate(categories)}
+        rgb = np.array([mpl.colors.to_rgb(cat_to_color[c]) for c in t_path.obs[key]])
+        obs_tracks.append(
+            {
+                "key": key,
+                "categories": categories,
+                "cat_to_color": cat_to_color,
+                "rgb": rgb,
+            }
+        )
+
+    nrows = len(obs_tracks) + len(block_matrices)
+    height_ratios = [0.3] * len(obs_tracks)
+    for labels in block_labels:
+        height_ratios.append(len(labels) * gene_height)
+
+    total_height = sum(height_ratios) + 1.5
+    fig = plt.figure(figsize=(figwidth, total_height))
+    gs = fig.add_gridspec(
+        nrows=nrows,
+        ncols=4,
+        height_ratios=height_ratios,
+        width_ratios=[figwidth - 1.6, 0.22, 0.24, 0.22],
+        hspace=0.05 + 0.08 * block_spacing,
+        wspace=colorbar_gap,
+    )
+
+    row = 0
+    for obs in obs_tracks:
+        ax_obs = fig.add_subplot(gs[row, 0])
+        ax_obs_cb1 = fig.add_subplot(gs[row, 1])
+        ax_obs_cb_gap = fig.add_subplot(gs[row, 2])
+        ax_obs_cb2 = fig.add_subplot(gs[row, 3])
+        ax_obs_cb1.axis("off")
+        ax_obs_cb_gap.axis("off")
+        ax_obs_cb2.axis("off")
+        ax_obs.imshow(
+            obs["rgb"][np.newaxis, :, :], aspect="auto", interpolation="nearest"
+        )
+        ax_obs.set_yticks([0])
+        ax_obs.set_yticklabels([obs["key"]], fontsize=9)
+        ax_obs.set_xticks([])
+        legend_patches = [
+            mpl.patches.Patch(color=obs["cat_to_color"][c], label=c)
+            for c in obs["categories"]
+        ]
+        ax_obs.legend(
+            handles=legend_patches,
+            fontsize=8,
+            frameon=False,
+            loc="lower left",
+            bbox_to_anchor=(0.0, 1.05),
+            ncol=max(1, min(len(obs["categories"]), 8)),
+            borderaxespad=0,
+        )
+        row += 1
+
+    hm_row_start = row
+    im_genes_ref = None
+    im_factors_ref = None
+    any_gene_rows = False
+    path_title = " -> ".join(nodes)
+    for i, labels in enumerate(block_labels):
+        ax_hm = fig.add_subplot(gs[hm_row_start + i, 0])
+        genes_masked, factors_masked = block_matrices[i]
+
+        im_genes = ax_hm.imshow(
+            genes_masked, aspect="auto", cmap=heatmap_cmap, interpolation="nearest"
+        )
+        im_factors = ax_hm.imshow(
+            factors_masked,
+            aspect="auto",
+            cmap=factor_heatmap_cmap,
+            interpolation="nearest",
+        )
+        ax_hm.set_yticks(range(len(labels)))
+        ax_hm.set_yticklabels(labels, fontsize=8)
+        if i == len(block_labels) - 1:
+            ax_hm.set_xlabel(xlabel, fontsize=10)
+        ax_hm.set_xticks([])
+
+        im_factors_ref = im_factors
+        if block_has_genes[i]:
+            im_genes_ref = im_genes
+            any_gene_rows = True
+
+        if i < len(block_labels) - 1:
+            ax_hm.axhline(len(labels) - 0.5, color="white", linewidth=1.0, alpha=0.8)
+
+    fig.suptitle(
+        f"{paths_key}[{pobj.get('path_id', p_list_idx)}]  {path_title}",
+        fontsize=10,
+        y=0.995,
+    )
 
     ax_hm_cb_gene = fig.add_subplot(gs[hm_row_start:, 1])
     ax_hm_cb_factor = fig.add_subplot(gs[hm_row_start:, 3])

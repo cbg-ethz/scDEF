@@ -494,11 +494,13 @@ def test_scdef_assign_confident():
     # Best-layer summaries.
     for col in [
         "confident_best_layer",
+        "confident_best_layer_idx",
         "confident_best_factor_idx",
         "confident_factor",
         "confident_best_effect_size",
         "confident_best_posterior_sd",
         "confident_best_confidence",
+        "confident_depth_score",
     ]:
         assert col in model.adata.obs.columns
 
@@ -518,9 +520,25 @@ def test_scdef_assign_confident():
     # either (a) the finest multi-factor layer with conf >= tau, or
     # (b) the top single-factor fallback layer.
     layer_name_to_idx = {name: i for i, name in enumerate(model.layer_names)}
+    best_layer_idx_obs = np.asarray(
+        model.adata.obs["confident_best_layer_idx"], dtype=int
+    )
+    np.testing.assert_array_equal(
+        best_layer_idx_obs,
+        np.array([layer_name_to_idx[str(x)] for x in best_layer], dtype=int),
+    )
+    depth_obs = np.asarray(model.adata.obs["confident_depth_score"], dtype=float)
+    assert np.all((depth_obs >= 0.0) & (depth_obs <= 1.0))
+    assert not np.any(np.isnan(depth_obs))
     for cell_idx in range(n_cells):
         lname = best_layer[cell_idx]
         chosen_idx = layer_name_to_idx[lname]
+        np.testing.assert_allclose(
+            depth_obs[cell_idx],
+            chosen_idx / float(n_layers - 1),
+            rtol=0.0,
+            atol=0.0,
+        )
         K_chosen = len(model.factor_lists[chosen_idx])
         if K_chosen >= 2:
             assert best_conf[cell_idx] >= tau
@@ -545,6 +563,7 @@ def test_scdef_assign_confident():
     np.testing.assert_allclose(meta["credible_level"], credible_level)
     np.testing.assert_allclose(meta["quantile_level"], 1.0 - credible_level)
     assert list(meta["layer_names"]) == list(model.layer_names)
+    assert "depth_score" in meta
 
     # Fallback semantics: with tau = 1.0, NO multi-factor layer can
     # clear the bar (the gap is strictly < 1 whenever K_k >= 2, since
@@ -552,10 +571,16 @@ def test_scdef_assign_confident():
     # back to the single-factor root.
     scd.tl.assign_confident(model, n_samples=100, tau=1.0, key_added="cf_hi")
     assert "cf_hi_best_layer" in model.adata.obs.columns
+    assert "cf_hi_best_layer_idx" in model.adata.obs.columns
+    assert "cf_hi_depth_score" in model.adata.obs.columns
     best_layer_hi = model.adata.obs["cf_hi_best_layer"].astype(str).to_numpy()
     best_conf_hi = model.adata.obs["cf_hi_best_confidence"].to_numpy()
+    depth_hi = np.asarray(model.adata.obs["cf_hi_depth_score"], dtype=float)
+    idx_hi = np.asarray(model.adata.obs["cf_hi_best_layer_idx"], dtype=int)
     assert np.all(best_layer_hi == top_layer_name)
+    assert np.all(idx_hi == n_layers - 1)
     np.testing.assert_allclose(best_conf_hi, 1.0)
+    np.testing.assert_allclose(depth_hi, 1.0)
 
 
 def test_scdef_path_pipeline_and_plotting():
@@ -666,6 +691,18 @@ def test_scdef_path_pipeline_and_plotting():
         )
         assert fig is not None
         plt.close(fig)
+
+        scd.tl.set_confident_signatures(model)
+        fig_ph = scd.pl.plot_path_trajectory_heatmap(
+            model,
+            path_id=0,
+            paths_key="differentiation_paths",
+            score_key="differentiation_paths",
+            genes_per_factor=2,
+            show=False,
+        )
+        assert fig_ph is not None
+        plt.close(fig_ph)
 
 
 def test_scdef_load_and_plotting_pipeline():

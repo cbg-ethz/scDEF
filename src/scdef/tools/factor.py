@@ -605,6 +605,8 @@ def assign_confident(
     - ``adata.obs[f"{key_added}_confidence_{layer_name}"]`` per layer.
     - ``adata.obs[f"{key_added}_argmax_{layer_name}"]`` per layer (factor name).
     - ``adata.obs[f"{key_added}_best_layer"]`` — layer name of the chosen layer.
+    - ``adata.obs[f"{key_added}_best_layer_idx"]`` — integer index of that layer
+      in ``model.layer_names`` (``0`` = finest). ``-1`` if no layer was chosen.
     - ``adata.obs[f"{key_added}_best_factor_idx"]`` — slot within the best
       layer's filtered factor list.
     - ``adata.obs[f"{key_added}_factor"]`` — factor name at the best layer.
@@ -614,6 +616,11 @@ def assign_confident(
       best layer.
     - ``adata.obs[f"{key_added}_best_confidence"]`` — combined confidence
       at the best layer.
+    - ``adata.obs[f"{key_added}_depth_score"]`` — assignment-centric depth
+      in ``[0, 1]``: ``best_layer_index / (n_layers - 1)``, so ``0`` at the
+      finest layer (L0) and ``1`` at the coarsest layer (root). If
+      ``n_layers == 1``, the score is ``0`` for assigned cells. Cells with
+      no valid layer (``best_layer_index < 0``) get ``NaN``.
     - ``adata.uns[key_added]`` — metadata (layer names, sizes, ``tau``,
       ``n_samples``, ``credible_level``, metric name, fit revision).
 
@@ -848,6 +855,15 @@ def assign_confident(
         )
         best_label[idxs] = label_mat[idxs, sel]
 
+    depth_score = np.full(n_cells, np.nan, dtype=float)
+    if n_layers <= 1:
+        depth_score[best_layer_idx >= 0] = 0.0
+    else:
+        valid_depth = best_layer_idx >= 0
+        depth_score[valid_depth] = best_layer_idx[valid_depth].astype(float) / float(
+            n_layers - 1
+        )
+
     adata = model.adata
     adata.obsm[f"{key_added}_effect_size"] = effect_size_mat
     adata.obsm[f"{key_added}_posterior_sd"] = posterior_sd_mat
@@ -865,11 +881,13 @@ def assign_confident(
         )
 
     adata.obs[f"{key_added}_best_layer"] = pd.Categorical(best_layer_name.astype(str))
+    adata.obs[f"{key_added}_best_layer_idx"] = best_layer_idx
     adata.obs[f"{key_added}_best_factor_idx"] = best_factor_slot
     adata.obs[f"{key_added}_factor"] = pd.Categorical(best_label.astype(str))
     adata.obs[f"{key_added}_best_effect_size"] = best_effect_size
     adata.obs[f"{key_added}_best_posterior_sd"] = best_posterior_sd
     adata.obs[f"{key_added}_best_confidence"] = best_confidence
+    adata.obs[f"{key_added}_depth_score"] = depth_score
 
     adata.uns[key_added] = {
         "layer_names": list(layer_names),
@@ -882,6 +900,7 @@ def assign_confident(
         "quantile_level": float(1.0 - float(credible_level)),
         "metric": "empirical_lower_quantile_winner_runner_up_gap",
         "selection_rule": "finest_layer_clearing_tau",
+        "depth_score": "best_layer_index / max(n_layers - 1, 1); single-layer models use 0",
         "fit_revision": int(getattr(model, "_fit_revision", 0)),
     }
 
