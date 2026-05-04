@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import matplotlib
 from graphviz import Graph
-from typing import Optional, Dict, List, Sequence, Union, Any, TYPE_CHECKING
+from typing import Optional, Dict, List, Sequence, Union, Any, TYPE_CHECKING, Set, Tuple
 from ..tools import get_technical_signature, get_stored_confident_signatures
 from ..utils import hierarchy_utils
 
@@ -69,6 +69,113 @@ def _get_hierarchy_nodes(hierarchy, top_factor):
     else:
         flattened_hierarchy = hierarchy_utils.flatten_hierarchy(hierarchy)
         return flattened_hierarchy[top_factor] + [top_factor]
+
+
+def _all_graph_factor_names(model: "scDEF", show_all: bool) -> Set[str]:
+    """All factor node names that can appear in ``make_graph``."""
+    names: Set[str] = set()
+    for layer_idx in range(model.n_layers):
+        if show_all:
+            for i in range(model.layer_sizes[layer_idx]):
+                names.add(f"{model.layer_names[layer_idx]}{int(i)}")
+        else:
+            for fn in model.factor_names[layer_idx]:
+                names.add(str(fn))
+    return names
+
+
+def _normalize_path_argument(path: Union[Sequence[str], Dict[str, Any]]) -> List[str]:
+    """Normalize ``path`` to an ordered list of factor names."""
+    if isinstance(path, dict):
+        nodes = path.get("nodes")
+        if not nodes:
+            raise ValueError("path dict must include a non-empty 'nodes' sequence.")
+        return [str(n) for n in nodes]
+    return [str(n) for n in path]
+
+
+def _layer_index_for_factor(
+    model: "scDEF", factor_name: str, show_all: bool
+) -> Optional[int]:
+    """Layer index for a plotted factor name, or ``None`` if unknown."""
+    if not show_all:
+        for li in range(model.n_layers):
+            if factor_name in model.factor_names[li]:
+                return int(li)
+        return None
+    for li in range(model.n_layers):
+        ln = str(model.layer_names[li])
+        if not factor_name.startswith(ln):
+            continue
+        rest = factor_name[len(ln) :]
+        if rest.isdigit() and int(rest) < int(model.layer_sizes[li]):
+            return int(li)
+    return None
+
+
+def _path_edge_pairs_along_path(
+    model: "scDEF",
+    path_list: Sequence[str],
+    hierarchy: Optional[dict],
+    show_all: bool,
+) -> Set[Tuple[str, str]]:
+    """Map consecutive path factors to edges actually drawn in ``make_graph``.
+
+    Weight edges are always emitted as **(coarser, finer)**: layer index
+    ``k`` → ``k-1`` (``layer_idx`` decreasing toward L0). Differentiation paths
+    are coarse→fine in that sense; **transition** paths may alternate
+    (e.g. L0→L1→L0) — each hop must be between **adjacent** layers; we map
+    ``(a, b)`` to the single drawn directed edge ``(upper, lower)``.
+
+    When ``hierarchy`` is set, a pair is first accepted if it is a **tree**
+    edge ``a → b`` or ``b → a`` in the dict; otherwise the same layer rule
+    applies so transition hops still highlight on hierarchy plots when the
+    hop is an adjacent-layer link in the model.
+    """
+    pairs: Set[Tuple[str, str]] = set()
+
+    def _hierarchy_children(parent: str) -> List[str]:
+        kids = hierarchy.get(parent, []) if hierarchy is not None else []
+        if isinstance(kids, (list, tuple, set)):
+            return list(kids)
+        if kids is None:
+            return []
+        return list(kids)
+
+    for i in range(len(path_list) - 1):
+        a, b = path_list[i], path_list[i + 1]
+        if hierarchy is not None:
+            if b in _hierarchy_children(a):
+                pairs.add((a, b))
+                continue
+            if a in _hierarchy_children(b):
+                pairs.add((b, a))
+                continue
+
+        la = _layer_index_for_factor(model, a, show_all)
+        lb = _layer_index_for_factor(model, b, show_all)
+        if la is None or lb is None:
+            continue
+        if abs(int(la) - int(lb)) != 1:
+            continue
+        if la > lb:
+            pairs.add((a, b))
+        else:
+            pairs.add((b, a))
+
+    return pairs
+
+
+def _edge_color_with_path(
+    base_color: Optional[str],
+    parent: str,
+    child: str,
+    path_edge_set: Optional[Set[Tuple[str, str]]],
+    path_color: Optional[str],
+) -> Optional[str]:
+    if path_edge_set and path_color and (parent, child) in path_edge_set:
+        return path_color
+    return base_color
 
 
 def _compute_layer_factor_orders(model, show_all):
@@ -454,6 +561,7 @@ def _add_node_to_graph(
     pos,
     ordering,
     fontcolor="black",
+    penwidth: Optional[float] = None,
 ):
     """Add a node to the graph."""
     node_kwargs = {
@@ -467,6 +575,9 @@ def _add_node_to_graph(
         "label": label,
         "fontcolor": fontcolor,
     }
+
+    if penwidth is not None and float(penwidth) > 0:
+        node_kwargs["penwidth"] = str(float(penwidth))
 
     if shell:
         node_kwargs["pos"] = pos
@@ -489,7 +600,15 @@ def _finalize_node_label(label: str, show_label: bool) -> str:
     return label
 
 
-def _add_edges_from_hierarchy(g, model, factor_name, hierarchy, color):
+def _add_edges_from_hierarchy(
+    g,
+    model,
+    factor_name,
+    hierarchy,
+    color,
+    path_edge_set: Optional[Set[Tuple[str, str]]] = None,
+    path_color: Optional[str] = None,
+):
     """Add edges from hierarchy."""
     if factor_name not in hierarchy:
         return
@@ -505,11 +624,14 @@ def _add_edges_from_hierarchy(g, model, factor_name, hierarchy, color):
 
     for lower_factor_idx, lower_factor_name in enumerate(lower_factor_names):
         normalized_weight = normalized_factor_weights[lower_factor_idx]
+        ec = _edge_color_with_path(
+            color, factor_name, lower_factor_name, path_edge_set, path_color
+        )
         g.edge(
             factor_name,
             lower_factor_name,
             penwidth=str(4 * normalized_weight),
-            color=color,
+            color=ec,
         )
 
 
@@ -536,7 +658,16 @@ def _add_technical_edges(g, model, hierarchy, color, factor_name="tech_top"):
 
 
 def _add_edges_from_weights(
-    g, model, factor_name, layer_idx, factor_idx, color, layer_factor_orders, show_all
+    g,
+    model,
+    factor_name,
+    layer_idx,
+    factor_idx,
+    color,
+    layer_factor_orders,
+    show_all,
+    path_edge_set: Optional[Set[Tuple[str, str]]] = None,
+    path_color: Optional[str] = None,
 ):
     """Add edges from weight matrices."""
     if show_all:
@@ -563,11 +694,14 @@ def _add_edges_from_weights(
         ):
             normalized_weight = normalized_weight / 5.0
 
+        ec = _edge_color_with_path(
+            color, factor_name, lower_factor_name, path_edge_set, path_color
+        )
         g.edge(
             factor_name,
             lower_factor_name,
             penwidth=str(4 * normalized_weight),
-            color=color,
+            color=ec,
         )
 
 
@@ -599,6 +733,9 @@ def make_graph(
     show_label: Optional[bool] = True,
     gene_score: Optional[str] = None,
     gene_cmap: Optional[str] = "viridis",
+    path: Optional[Union[Sequence[str], Dict[str, Any]]] = None,
+    path_color: str = "red",
+    path_node_penwidth: float = 2.5,
     shell: Optional[bool] = False,
     r: Optional[float] = 2.0,
     r_decay: Optional[float] = 0.8,
@@ -634,6 +771,21 @@ def make_graph(
         show_label: whether to show labels on nodes
         gene_score: color the nodes by the score they attribute to a gene, normalized by layer. Overrides filled and wedged
         gene_cmap: colormap to use for gene_score
+        path: ordered factor names along a path, or a dict with key ``"nodes"``
+            (e.g. differentiation or transition path ``nodes``). Names outside the
+            hierarchy view are dropped when ``hierarchy`` is set. Edge highlights
+            map each consecutive pair to the **drawn** weight edge (coarser layer
+            → adjacent finer layer), so coarse→fine chains match, and **transition**
+            zigzags (e.g. L0→L1→L0→…) work when each hop is between adjacent layers.
+            If ``hierarchy`` is set, a pair is highlighted when it is a tree edge in
+            either direction; otherwise the same adjacent-layer rule applies.
+            Sets Graphviz ``color`` (node border and edge stroke) to ``path_color``;
+            ``fillcolor`` is unchanged. With ``gene_score`` and ``color_edges``,
+            path edges use ``path_color`` instead of the parent gene-based edge color.
+        path_color: stroke color for highlighted path nodes (border) and edges
+        path_node_penwidth: Graphviz ``penwidth`` for nodes on ``path`` (border
+            thickness). Ignored when ``path`` is not set. Default ``2.5``; use ``1.0``
+            for the usual thin border (no emphasis).
         shell: whether to use shell layout
         r: radius parameter for shell layout
         r_decay: radius decay parameter for shell layout
@@ -650,6 +802,30 @@ def make_graph(
         "filled" if gene_score is not None else _determine_style(filled, wedged, model)
     )
     hierarchy_nodes = _get_hierarchy_nodes(hierarchy, top_factor)
+    path_node_set: Optional[Set[str]] = None
+    path_edge_set: Optional[Set[Tuple[str, str]]] = None
+    path_stroke_hex: Optional[str] = None
+    if path is not None:
+        raw_path = _normalize_path_argument(path)
+        valid_names = _all_graph_factor_names(model, show_all)
+        unknown = [n for n in raw_path if n not in valid_names]
+        if len(unknown) > 0:
+            raise ValueError(
+                f"path contains unknown factor names (not in graph): {unknown[:25]}"
+            )
+        pl = list(raw_path)
+        if hierarchy_nodes is not None:
+            pl = [n for n in pl if n in set(hierarchy_nodes)]
+        if len(pl) == 0:
+            model.logger.warning(
+                "path has no nodes in the current hierarchy view; ignoring path highlight."
+            )
+        else:
+            path_node_set = set(pl)
+            path_edge_set = _path_edge_pairs_along_path(model, pl, hierarchy, show_all)
+            path_stroke_hex = matplotlib.colors.to_hex(
+                matplotlib.colors.to_rgb(path_color)
+            )
     layer_factor_orders = _compute_layer_factor_orders(model, show_all)
     if enrichments is not None:
         show_enrichments = True
@@ -828,6 +1004,17 @@ def make_graph(
                 color = "gray"
                 fillcolor = "gray"
 
+            # Outgoing edge colors follow factor / gene-score convention for children
+            # not on the path; path border override below must not change those edges.
+            edge_color_for_children = color
+
+            if (
+                path_stroke_hex is not None
+                and path_node_set is not None
+                and factor_name in path_node_set
+            ):
+                color = path_stroke_hex
+
             # Finalize label
             label = _finalize_node_label(label, show_label)
             fontcolor = "gray" if factor_name in technical_factors else "black"
@@ -847,6 +1034,15 @@ def make_graph(
                 )
 
             # Add node to graph
+            path_penw: Optional[float] = None
+            if (
+                path is not None
+                and path_node_set is not None
+                and factor_name in path_node_set
+                and float(path_node_penwidth) > 0
+            ):
+                path_penw = float(path_node_penwidth)
+
             _add_node_to_graph(
                 g,
                 factor_name,
@@ -860,15 +1056,25 @@ def make_graph(
                 pos,
                 ordering,
                 fontcolor=fontcolor,
+                penwidth=path_penw,
             )
 
             # Add edges
+            edge_default = edge_color_for_children
             if not color_edges:
-                color = None
+                edge_default = None
 
             if layer_idx > 0:
                 if hierarchy is not None:
-                    _add_edges_from_hierarchy(g, model, factor_name, hierarchy, color)
+                    _add_edges_from_hierarchy(
+                        g,
+                        model,
+                        factor_name,
+                        hierarchy,
+                        edge_default,
+                        path_edge_set=path_edge_set if path_edge_set else None,
+                        path_color=path_stroke_hex,
+                    )
                 else:
                     _add_edges_from_weights(
                         g,
@@ -876,9 +1082,11 @@ def make_graph(
                         factor_name,
                         layer_idx,
                         factor_idx,
-                        color,
+                        edge_default,
                         layer_factor_orders,
                         show_all,
+                        path_edge_set=path_edge_set if path_edge_set else None,
+                        path_color=path_stroke_hex,
                     )
 
     model.graph = g
