@@ -26,6 +26,14 @@ def _factor_layer_and_slot(model: "scDEF", factor_name: str) -> Tuple[int, int]:
     )
 
 
+def _ma_has_any_unmasked(a: np.ma.MaskedArray) -> bool:
+    """True if at least one entry is not masked out."""
+    m = a.mask
+    if m is np.ma.nomask:
+        return True
+    return not bool(np.all(m))
+
+
 def _path_index_in_uns_paths(paths: List[Dict[str, Any]], path_id: int) -> int:
     """Map user ``path_id`` to the column index in ``score_paths`` matrices."""
     pid = int(path_id)
@@ -532,6 +540,7 @@ def plot_path_trajectory_heatmap(
     gene_height: float = 0.28,
     block_spacing: int = 1,
     ytick_prefix_layer: bool = True,
+    genes: Optional[Sequence[str]] = None,
     annotation_obs_key: Optional[Union[str, Sequence[str]]] = None,
     subset_obs_key: Optional[str] = None,
     subset_obs: Optional[Union[str, Sequence[str]]] = None,
@@ -545,9 +554,14 @@ def plot_path_trajectory_heatmap(
     """Trajectory heatmap along a stored multi-layer path (differentiation or transition).
 
     Uses ``adata.uns[paths_key]['paths'][path_id]`` factor ``nodes`` (root→leaf
-    for differentiation paths). Per-node factor scores come from
-    ``adata.obs['<factor>_score']`` (requires ``annotate_adata`` / fit). Confident
-    genes require ``scd.tl.set_confident_signatures(model)``.
+    for differentiation paths) only for **cell ordering** along the path.
+
+    Default mode: per-node factor scores from ``adata.obs['<factor>_score']``
+    (``annotate_adata`` / fit) plus confident genes from
+    ``scd.tl.set_confident_signatures(model)``.
+
+    **Custom genes** (``genes=[...]``): one heatmap block, one row per gene; no
+    factor score rows and no confident-signature cache required.
 
     Cell order:
         Prefer ``scd.tl.score_paths`` matrices ``{score_key}_positions`` and
@@ -557,6 +571,11 @@ def plot_path_trajectory_heatmap(
         anchor cells on the L0 terminus (differentiation) or transition
         source/target on L0, then sort by probability-weighted index along
         ``nodes`` using ``X_<layer>_probs``.
+
+    If ``genes`` is set to a non-empty list of gene names, skips per-factor blocks
+    (no ``<factor>_score`` rows and no confident signatures). Renders a single
+    heatmap block with one row per gene (same path-based cell order). ``genes_per_factor``
+    is ignored in that mode.
 
     Args:
         model: fitted scDEF model.
@@ -569,6 +588,7 @@ def plot_path_trajectory_heatmap(
             along the path for a cell to be included and ordered.
         path_mass_eps: minimum summed path-node probability mass in fallback mode.
         ytick_prefix_layer: if True, factor row labels are ``'<layer> <name>'``.
+        genes: optional list of ``adata.var_names`` entries to plot as rows only.
     """
     if paths_key not in model.adata.uns:
         raise KeyError(f"'{paths_key}' not found in model.adata.uns.")
@@ -624,36 +644,20 @@ def plot_path_trajectory_heatmap(
     block_labels: List[List[str]] = []
     block_has_genes: List[bool] = []
 
-    for factor_name in nodes:
-        li, _ = _factor_layer_and_slot(model, factor_name)
-        layer_nm = model.layer_names[li]
-        display_name = (
-            f"{layer_nm} {factor_name}" if ytick_prefix_layer else str(factor_name)
-        )
-        confident_sigs = get_stored_confident_signatures(
-            model, layer_idx=li, max_genes=genes_per_factor
-        )
-        score_col = f"{factor_name}_score"
-        if score_col not in t_path.obs.columns:
+    if genes is not None:
+        gene_list = [str(g) for g in genes]
+        if len(gene_list) == 0:
+            raise ValueError("genes must be a non-empty sequence when provided.")
+        missing = [g for g in gene_list if g not in t_path.var_names]
+        if len(missing) > 0:
             raise KeyError(
-                f"Column '{score_col}' not found in adata.obs. "
-                "Run `model.annotate_adata()` (or fit with annotation) first."
+                f"Genes not in adata.var_names (subset view): {missing[:25]}"
+                + ("..." if len(missing) > 25 else "")
             )
-
         block_rows: List[np.ndarray] = []
         labels: List[str] = []
         kinds: List[str] = []
-        score_vals = uniform_filter1d(
-            np.asarray(t_path.obs[score_col].values, dtype=float), size=smoothing
-        )
-        block_rows.append(minmax_scale(score_vals))
-        labels.append(display_name)
-        kinds.append("factor")
-
-        genes = [
-            g for g in confident_sigs.get(factor_name, []) if g in t_path.var_names
-        ]
-        for gene in genes:
+        for gene in gene_list:
             expr = t_path[:, [gene]].X
             if hasattr(expr, "toarray"):
                 expr = expr.toarray()
@@ -661,23 +665,79 @@ def plot_path_trajectory_heatmap(
                 np.asarray(expr, dtype=float).ravel(), size=smoothing
             )
             block_rows.append(minmax_scale(expr_vals))
-            labels.append(f"  {gene}")
+            labels.append(gene)
             kinds.append("gene")
-
         block_arr = np.vstack(block_rows)
         factor_rows = np.asarray([k == "factor" for k in kinds], dtype=bool)
         gene_rows = np.asarray([k == "gene" for k in kinds], dtype=bool)
-
         genes_masked = np.ma.array(
             block_arr, mask=np.broadcast_to(~gene_rows[:, None], block_arr.shape)
         )
         factors_masked = np.ma.array(
             block_arr, mask=np.broadcast_to(~factor_rows[:, None], block_arr.shape)
         )
-
         block_matrices.append((genes_masked, factors_masked))
         block_labels.append(labels)
-        block_has_genes.append(bool(np.any(gene_rows)))
+        block_has_genes.append(True)
+    else:
+        for factor_name in nodes:
+            li, _ = _factor_layer_and_slot(model, factor_name)
+            layer_nm = model.layer_names[li]
+            display_name = (
+                f"{layer_nm} {factor_name}" if ytick_prefix_layer else str(factor_name)
+            )
+            confident_sigs = get_stored_confident_signatures(
+                model, layer_idx=li, max_genes=genes_per_factor
+            )
+            score_col = f"{factor_name}_score"
+            if score_col not in t_path.obs.columns:
+                raise KeyError(
+                    f"Column '{score_col}' not found in adata.obs. "
+                    "Run `model.annotate_adata()` (or fit with annotation) first."
+                )
+
+            block_rows_f: List[np.ndarray] = []
+            labels_f: List[str] = []
+            kinds_f: List[str] = []
+            score_vals = uniform_filter1d(
+                np.asarray(t_path.obs[score_col].values, dtype=float), size=smoothing
+            )
+            block_rows_f.append(minmax_scale(score_vals))
+            labels_f.append(display_name)
+            kinds_f.append("factor")
+
+            sig_genes = [
+                g
+                for g in confident_sigs.get(factor_name, [])
+                if g in t_path.var_names
+            ]
+            for gene in sig_genes:
+                expr = t_path[:, [gene]].X
+                if hasattr(expr, "toarray"):
+                    expr = expr.toarray()
+                expr_vals = uniform_filter1d(
+                    np.asarray(expr, dtype=float).ravel(), size=smoothing
+                )
+                block_rows_f.append(minmax_scale(expr_vals))
+                labels_f.append(f"  {gene}")
+                kinds_f.append("gene")
+
+            block_arr_f = np.vstack(block_rows_f)
+            factor_rows_f = np.asarray([k == "factor" for k in kinds_f], dtype=bool)
+            gene_rows_f = np.asarray([k == "gene" for k in kinds_f], dtype=bool)
+
+            genes_masked_f = np.ma.array(
+                block_arr_f,
+                mask=np.broadcast_to(~gene_rows_f[:, None], block_arr_f.shape),
+            )
+            factors_masked_f = np.ma.array(
+                block_arr_f,
+                mask=np.broadcast_to(~factor_rows_f[:, None], block_arr_f.shape),
+            )
+
+            block_matrices.append((genes_masked_f, factors_masked_f))
+            block_labels.append(labels_f)
+            block_has_genes.append(bool(np.any(gene_rows_f)))
 
     if len(block_matrices) == 0:
         raise ValueError("No heatmap blocks to plot.")
@@ -790,7 +850,8 @@ def plot_path_trajectory_heatmap(
             ax_hm.set_xlabel(xlabel, fontsize=10)
         ax_hm.set_xticks([])
 
-        im_factors_ref = im_factors
+        if _ma_has_any_unmasked(factors_masked):
+            im_factors_ref = im_factors
         if block_has_genes[i]:
             im_genes_ref = im_genes
             any_gene_rows = True
@@ -798,8 +859,9 @@ def plot_path_trajectory_heatmap(
         if i < len(block_labels) - 1:
             ax_hm.axhline(len(labels) - 0.5, color="white", linewidth=1.0, alpha=0.8)
 
+    title_extra = " (custom genes)" if genes is not None else ""
     fig.suptitle(
-        f"{paths_key}[{pobj.get('path_id', p_list_idx)}]  {path_title}",
+        f"{paths_key}[{pobj.get('path_id', p_list_idx)}]  {path_title}{title_extra}",
         fontsize=10,
         y=0.995,
     )

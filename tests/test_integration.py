@@ -240,6 +240,29 @@ def test_scdef():
     )
     g = scd.pl.make_graph(model, hierarchy=simplified, factor_annotations=matches)
 
+    roots = [k for k, v in simplified.items() if isinstance(v, (list, tuple)) and len(v) > 0]
+    if len(roots) > 0:
+        r0 = roots[0]
+        c0 = simplified[r0][0]
+        g_path = scd.pl.make_graph(
+            model,
+            hierarchy=simplified,
+            path=[r0, c0],
+            path_color="blue",
+            show_label=False,
+        )
+        assert g_path is not None
+        g_path_gene = scd.pl.make_graph(
+            model,
+            hierarchy=simplified,
+            path={"nodes": [r0, c0]},
+            gene_score=str(model.adata.var_names[0]),
+            color_edges=True,
+            path_color="#ff00aa",
+            show_label=False,
+        )
+        assert g_path_gene is not None
+
     if len(simplified.keys()) > 0:
         k = list(simplified.keys())[0]
         g = scd.pl.make_graph(
@@ -703,6 +726,18 @@ def test_scdef_path_pipeline_and_plotting():
         )
         assert fig_ph is not None
         plt.close(fig_ph)
+
+        g1, g2 = list(model.adata.var_names[:2])
+        fig_pg = scd.pl.plot_path_trajectory_heatmap(
+            model,
+            path_id=0,
+            paths_key="differentiation_paths",
+            score_key="differentiation_paths",
+            genes=[g1, g2],
+            show=False,
+        )
+        assert fig_pg is not None
+        plt.close(fig_pg)
 
 
 def test_scdef_load_and_plotting_pipeline():
