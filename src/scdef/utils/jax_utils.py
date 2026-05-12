@@ -44,3 +44,8 @@ def gamma_logpdf(x, shape, rate):
     return jnp.sum(
         vmap(vmap(_gamma_logpdf, in_axes=(0, 0, 0)), in_axes=(0, 0, 0))(x, shape, rate)
     )
+
+
+def gamma_sample(rng, shape, rate):
+    """Sample from a gamma distribution."""
+    return jnp.clip(tfd.Gamma(shape, rate).sample(seed=rng), 1e-15, 1e15)

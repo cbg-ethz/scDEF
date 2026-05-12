@@ -489,6 +489,7 @@ def factor_diagnostics(
     brd_min: float = 1.0,
     ard_min: float = 0.001,
     clarity_min: float = 0.5,
+    batch_purity_min: Optional[float] = None,
     n_eff_parents_max: float = 1.5,
     figsize: tuple = (6, 4),
     ax: Optional[Axes] = None,
@@ -509,6 +510,10 @@ def factor_diagnostics(
         clarity_min: used for the horizontal cutoff when **not** plotting lineage
             ``avg_n_eff_parents`` (local-L0 mode or fallback to L0 ``n_eff_parents``):
             cutoff is ``effective_parents_from_clarity(clarity_min, K_parents)``.
+        batch_purity_min: optional threshold for batch purity. If provided,
+            an additional panel is shown with ``batch_purity`` on the x-axis and
+            the same y-axis as the default panel. Requires
+            ``scdef.tools.factor_diagnostics(..., batch_key=...)``.
         n_eff_parents_max: used **only** when the y-axis is lineage
             ``avg_n_eff_parents`` (``local_l0_scores=False`` and column present): dashed
             line at this value and pass rule ``y < n_eff_parents_max`` (default ``1.5``).
@@ -588,6 +593,14 @@ def factor_diagnostics(
             y_label = "Effective number of parents (L0)"
     y = factor_obs_l0[y_col].to_numpy(dtype=float)
     z = factor_obs_l0["ARD"].to_numpy(dtype=float)
+    batch_purity = None
+    if batch_purity_min is not None:
+        if "batch_purity" not in factor_obs_l0.columns:
+            raise KeyError(
+                "batch_purity is missing from factor diagnostics. Run "
+                "`scdef.tools.factor_diagnostics(model, batch_key=...)` first."
+            )
+        batch_purity = factor_obs_l0["batch_purity"].to_numpy(dtype=float)
     lineage_plot = (not local_l0_scores) and (
         "avg_n_eff_parents" in factor_obs_l0.columns
     )
@@ -606,13 +619,34 @@ def factor_diagnostics(
         )
 
     ard_total = np.nansum(z)
-    factors_pass = np.where(
+    factors_pass_base = np.where(
         (x > brd_min) & (y < neffective_parents_max) & (z > ard_min * ard_total)
     )[0]
+    if batch_purity is None:
+        factors_pass = factors_pass_base
+    else:
+        factors_pass = np.where(
+            (x > brd_min)
+            & (y < neffective_parents_max)
+            & (z > ard_min * ard_total)
+            & (batch_purity >= float(batch_purity_min))
+        )[0]
 
-    if ax is None:
-        fig, ax = plt.subplots(1, 1, figsize=figsize)
-    im = ax.scatter(x, y, c=z, cmap="viridis")
+    if batch_purity is None:
+        if ax is None:
+            fig, ax = plt.subplots(1, 1, figsize=figsize)
+        im = ax.scatter(x, y, c=z, cmap="viridis")
+        axes = [ax]
+    else:
+        if ax is not None:
+            raise ValueError(
+                "When batch_purity_min is provided, pass ax=None to allow a "
+                "2-panel layout."
+            )
+        fig, axes_arr = plt.subplots(1, 2, figsize=(figsize[0] * 2, figsize[1]))
+        axes = list(np.atleast_1d(axes_arr))
+        ax = axes[0]
+        im = ax.scatter(x, y, c=z, cmap="viridis")
     if annotate_factors:
         for i in range(len(labels)):
             if np.isfinite(x[i]) and np.isfinite(y[i]):
@@ -668,7 +702,50 @@ def factor_diagnostics(
             # label='ARD threshold'
         )
     ax.set_title(f"{len(factors_pass)} factors pass filters")
-    plt.legend()
+    if len(factors_pass) > 0:
+        ax.legend()
+
+    if batch_purity is not None:
+        ax_bp = axes[1]
+        im_bp = ax_bp.scatter(batch_purity, y, c=z, cmap="viridis")
+        if annotate_factors:
+            for i in range(len(labels)):
+                if np.isfinite(batch_purity[i]) and np.isfinite(y[i]):
+                    ax_bp.text(
+                        batch_purity[i],
+                        y[i],
+                        str(labels[i]),
+                        fontsize=annotation_fontsize,
+                        alpha=annotation_alpha,
+                    )
+        if len(factors_pass) > 0:
+            ax_bp.scatter(
+                batch_purity[factors_pass],
+                y[factors_pass],
+                s=80,
+                facecolors="none",
+                edgecolors=plt.rcParams["axes.prop_cycle"].by_key()["color"][0],
+                marker="o",
+                label="Keep",
+            )
+        ax_bp.set_xlabel("Batch purity")
+        ax_bp.set_ylabel(y_label)
+        ax_bp.set_xlim(-0.02, 1.02)
+        ax_bp.axvline(
+            float(batch_purity_min),
+            linestyle="--",
+            color=plt.rcParams["axes.prop_cycle"].by_key()["color"][0],
+        )
+        ax_bp.axhline(
+            neffective_parents_max,
+            linestyle="--",
+            color=plt.rcParams["axes.prop_cycle"].by_key()["color"][0],
+        )
+        ax_bp.set_title("Batch purity diagnostics")
+        if len(factors_pass) > 0:
+            ax_bp.legend()
+        plt.colorbar(im_bp, ax=ax_bp, label="ARD")
+
     if show:
         plt.show()
     else:

@@ -228,7 +228,17 @@ def test_scdef():
         show=False,
     )
 
-    scd.tl.factor_diagnostics(model, recompute=True)
+    scd.tl.factor_diagnostics(model, recompute=True, batch_key="batches")
+    factor_obs = model.adata.uns["factor_obs"]
+    assert "batch_entropy" in factor_obs.columns
+    assert "batch_purity" in factor_obs.columns
+    purity_vals = factor_obs["batch_purity"].to_numpy(dtype=float)
+    finite_purity = purity_vals[np.isfinite(purity_vals)]
+    assert finite_purity.size > 0
+    assert np.all((finite_purity >= 0.0) & (finite_purity <= 1.0))
+    assert "factor_diagnostics" in model.adata.uns
+    assert model.adata.uns["factor_diagnostics"]["batch_key"] == "batches"
+    scd.pl.factor_diagnostics(model, batch_purity_min=0.1, show=False)
     scd.tl.set_technical_factors(model, factors=[model.factor_names[0][0]])
     scd.tl.make_hierarchies(model)
     with patch(

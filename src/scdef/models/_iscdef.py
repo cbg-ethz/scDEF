@@ -82,9 +82,7 @@ class iscDEF(scDEF):
         self.decay_factor = (
             2 if "decay_factor" not in kwargs else kwargs["decay_factor"]
         )
-        self.max_n_layers = (
-            5 if "max_n_layers" not in kwargs else kwargs["max_n_layers"]
-        )
+        self.n_layers_schedule = kwargs.pop("n_layers", 6)
         if markers_layer == 0:
             if "use_brd" not in kwargs:
                 kwargs["use_brd"] = False
@@ -104,8 +102,13 @@ class iscDEF(scDEF):
 
         self.set_layer_sizes()
 
+        kwargs.pop("decay_factor", None)
         super(iscDEF, self).__init__(
-            adata, layer_sizes=self.layer_sizes, layer_names=self.layer_names, **kwargs
+            adata,
+            layer_sizes=self.layer_sizes,
+            layer_names=self.layer_names,
+            n_layers=self.n_layers_schedule,
+            **kwargs,
         )
 
         logginglevel = self.logger.level
@@ -132,7 +135,9 @@ class iscDEF(scDEF):
         layer_sizes = []
         layer_names = []
         if self.markers_layer == 0:
-            self.update_model_size(self.n_markers, self.max_n_layers)
+            self.update_model_size(
+                self.n_markers, self.n_layers_schedule, use_decay_factor_schedule=True
+            )
             layer_names = self.layer_names
             layer_sizes = self.layer_sizes
             layer_names[0] = "marker"
@@ -144,7 +149,7 @@ class iscDEF(scDEF):
             self.n_layers = self.markers_layer + 1
             # Updated so that the layer sizes are exponential in decay_factor:
             # Layer 0 (lowest): self.n_markers * decay_factor**(n_layers-1), then decay_factor**(n_layers-2), ..., final (top) layer is n_markers.
-            if self.max_n_layers == 1:
+            if self.n_layers_schedule == 1:
                 self.n_layers = 1
             if self.n_layers == 1:
                 # special case, all factors flat for each marker

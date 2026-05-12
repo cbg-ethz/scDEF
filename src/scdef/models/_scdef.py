@@ -56,13 +56,21 @@ class scDEF(object):
         batch_key: key in `adata.obs` containing batch annotations; if provided, batch correction is performed.
             If None or not found, no batch correction is used.
         seed: random seed for model initialization and stochastic routines (uses JAX's pseudo-random number generator).
-        n_factors: number of latent factors at the lowest layer (can be overridden by `layer_sizes`).
-        decay_factor: size decay multiplier for the number of factors at each subsequent layer if `layer_sizes` not provided.
-        max_n_layers: maximum number of hierarchical layers in the model.
+        n_factors: number of latent factors at the lowest layer (L0), denoted ``K_0`` in
+            the geometric layer-size schedule when ``layer_sizes`` is None.
+        n_layers: number of layers in the geometric schedule from L0 through the layer of
+            width ``top_factors`` when ``layer_sizes`` is None. A size-``1`` root appended
+            when ``top_factors > 1`` does not count toward ``n_layers``.
+        top_factors: target width at the coarsest non-root layer (default ``1``), used with
+            ``n_factors`` and ``n_layers`` in the geometric ladder
+            ``K_l = K_0 * (K_top / K_0) ** (l / (n_layers - 1))`` for ``l = 0, ..., n_layers - 1``
+            (last rung fixed at ``K_top``). When ``top_factors > 1``, a final root layer of
+            width ``1`` is appended and is not included in ``n_layers``.
         layer_sizes: explicit list of the number of factors in each scDEF layer. If None, layer sizes are set automatically.
         layer_names: list of custom names for the layers. If None, layer names are enumerated as ["L0", "L1", ...].
         logginglevel: verbosity level for the logger.
         alpha: concentration parameter for the Gamma prior on z.
+        kappa: rate scaling for the Gamma prior on z (non-top layers).
         shrinkage_shape: shape parameter for shrinkage prior controlling factor usage.
         shrinkage_rate: rate parameter for shrinkage prior controlling factor usage.
         shrinkage_mean: target prior mean for shrinkage/factor relevance.
@@ -101,12 +109,13 @@ class scDEF(object):
         batch_key: Optional[str] = None,
         seed: Optional[int] = 42,
         n_factors: Optional[int] = 100,
-        decay_factor: Optional[float] = 2.0,
-        max_n_layers: Optional[float] = 5,
+        top_factors: int = 1,
+        n_layers: Optional[float] = 6,
         layer_sizes: Optional[list] = None,
         layer_names: Optional[list] = None,
         logginglevel: Optional[int] = logging.INFO,
         alpha: Optional[float] = 1.0,
+        kappa: Optional[float] = 10.0,
         shrinkage_shape: Optional[float] = 1.0,
         shrinkage_rate: Optional[float] = 1.0,
         shrinkage_mean: Optional[float] = 1.0,
@@ -141,6 +150,7 @@ class scDEF(object):
 
         self.top_alpha = top_alpha
         self.alpha = alpha
+        self.kappa = kappa
         self.factor_shape = factor_shape
         self.brd = brd_strength
         self.brd_mean = brd_mean
@@ -154,15 +164,31 @@ class scDEF(object):
         self.marginalize_alpha = bool(marginalize_alpha)
         self._marginalize_alpha_init = bool(marginalize_alpha)
 
-        self.decay_factor = decay_factor
-        self.n_factors = n_factors
-        self.max_n_layers = max_n_layers
+        if n_layers is None:
+            n_layers = 6.0
+        self.n_layers_schedule = n_layers
+        k0 = int(n_factors if n_factors is not None else 100)
+        if k0 < 1:
+            raise ValueError("n_factors must be >= 1.")
+        self.top_factors = int(top_factors)
+        if self.top_factors < 1:
+            raise ValueError("top_factors must be >= 1.")
+        if self.top_factors > k0:
+            raise ValueError(
+                "top_factors must be <= n_factors (layer sizes are non-increasing "
+                "from L0 toward the top layer)."
+            )
+        self.n_factors = k0
+
         if layer_sizes is not None:
             self.layer_sizes = [int(x) for x in layer_sizes]
             self.n_factors = int(layer_sizes[0])
             self.n_layers = len(self.layer_sizes)
         else:
-            self.update_model_size(n_factors)
+            self.update_model_size(
+                n_layers=int(self.n_layers_schedule),
+                use_decay_factor_schedule=False,
+            )
 
         if layer_names is not None:
             self.layer_names = layer_names
@@ -450,6 +476,9 @@ class scDEF(object):
                     self.gene_ratio_init = np.ones(
                         (self.n_batches, self.adata.shape[1])
                     )
+                    # self.gene_ratio_init = np.tile(
+                    #     (mu_bar / mu)[None, :], (self.n_batches, 1)
+                    # )
                     for i, b in enumerate(batches):
                         cells = np.where(self.adata.obs[batch_key] == b)[0]
                         self.batch_indices_onehot[cells, i] = 1
@@ -472,22 +501,77 @@ class scDEF(object):
         self.batch_lib_ratio = jnp.array(self.batch_lib_ratio)
         self.gene_ratio = jnp.array(self.gene_ratio)
 
+    def _geometric_layer_sizes(self, n_layers: int) -> List[int]:
+        """Layer counts from ``n_factors`` (L0) through the ``top_factors`` layer, optional root.
+
+        ``n_layers`` counts only layers from K0 up to and including the ``top_factors``
+        width; a final root of width ``1`` (when ``top_factors > 1``) is appended and does
+        not count toward ``n_layers``.
+
+        For ``n_layers >= 3``, uses
+        ``K_l = K_0 * (K_top / K_0) ** (l / (n_layers - 1))`` for ``l = 0, ..., n_layers - 2``,
+        with the last geometric layer set to ``top_factors`` exactly, then appends ``1`` if
+        ``top_factors > 1``.
+
+        For ``n_layers == 2``: ``[n_factors, top_factors]``, then appends ``1`` if
+        ``top_factors > 1``.
+        """
+        n_layers = max(2, int(n_layers))
+        min_k = float(self.n_factors)
+        top_k = float(self.top_factors)
+        ratio = top_k / max(min_k, 1.0)
+        add_root = int(self.top_factors) > 1
+        if n_layers == 2:
+            out = [max(1, int(round(min_k))), int(self.top_factors)]
+            if out[0] < out[1]:
+                out[0] = out[1]
+            if add_root:
+                out.append(1)
+            return out
+
+        denom = float(n_layers - 1)
+        out: List[int] = []
+        prev: Optional[int] = None
+        for l in range(n_layers):
+            r = l / denom
+            if l == n_layers - 1:
+                k_i = int(self.top_factors)
+            else:
+                k_f = min_k * (ratio**r)
+                k_i = max(1, int(round(k_f)))
+                if prev is not None and k_i >= prev:
+                    k_i = max(1, prev - 1)
+            out.append(k_i)
+            prev = k_i
+        out[-1] = int(self.top_factors)
+        for i in range(len(out) - 2, -1, -1):
+            if out[i] < out[i + 1]:
+                out[i] = out[i + 1]
+        if add_root:
+            out.append(1)
+        return out
+
     def update_model_size(
         self,
-        max_n_factors,
-        max_n_layers=None,
+        max_n_factors=None,
+        n_layers=None,
         layer_sizes=None,
+        use_decay_factor_schedule: bool = False,
     ):
         """Update latent hierarchy dimensions.
 
         Args:
-            max_n_factors: maximum number of factors when ``layer_sizes`` is not
-                provided.
-            max_n_layers: maximum number of layers when ``layer_sizes`` is not
-                provided.
+            max_n_factors: bottom-layer factor count when ``use_decay_factor_schedule``
+                is True (``iscDEF`` marker layer 0 path).
+            n_layers: target number of geometric layers from K0 through ``top_factors`` (a
+                final root of size ``1`` when ``top_factors > 1`` is not counted), or maximum
+                layers for the decay schedule.
             layer_sizes: explicit per-layer sizes. If provided, sizes are
                 sanitized to be non-increasing and consecutive duplicates are
                 collapsed.
+            use_decay_factor_schedule: if True, use ``decay_factor``-based halving
+                (``iscDEF`` only). If False, use ``n_factors``, ``top_factors``, and
+                ``n_layers_schedule`` on ``self`` for a geometric ladder (``scDEF``).
         """
         if layer_sizes is not None:
             # If two consecutive layers have increasing sizes, clip
@@ -509,21 +593,42 @@ class scDEF(object):
             self.set_factor_names()
             return
 
-        if max_n_layers is None:
-            max_n_layers = self.max_n_layers
-        n_factors = int(max_n_factors)
-        self.layer_sizes = []
-        self.layer_sizes.append(n_factors)
-        if max_n_layers > 1:
-            while len(self.layer_sizes) < max_n_layers:
-                n_factors = int(np.floor(n_factors / self.decay_factor))
-                self.layer_sizes.append(n_factors)
-                if n_factors == 1:
-                    break
-            if self.layer_sizes[-1] > 1:
-                self.layer_sizes[-1] = 1
+        if use_decay_factor_schedule:
+            if n_layers is None:
+                n_layers = self.n_layers_schedule
+            if max_n_factors is None:
+                raise ValueError(
+                    "max_n_factors is required when use_decay_factor_schedule=True."
+                )
+            df = getattr(self, "decay_factor", None)
+            if df is None or float(df) <= 0:
+                raise ValueError(
+                    "decay_factor must be set on the model when use_decay_factor_schedule=True."
+                )
+            n_factors = int(max_n_factors)
+            self.layer_sizes = []
+            self.layer_sizes.append(n_factors)
+            if int(n_layers) > 1:
+                while len(self.layer_sizes) < int(n_layers):
+                    n_factors = int(np.floor(n_factors / float(df)))
+                    self.layer_sizes.append(n_factors)
+                    if n_factors == 1:
+                        break
+                if self.layer_sizes[-1] > 1:
+                    self.layer_sizes[-1] = 1
 
+            self.n_layers = len(self.layer_sizes)
+            self.layer_names = [f"L{i}" for i in range(self.n_layers)]
+            self.factor_lists = [np.arange(size) for size in self.layer_sizes]
+            self.set_factor_names()
+            return
+
+        # scDEF geometric default
+        if n_layers is None:
+            n_layers = self.n_layers_schedule
+        self.layer_sizes = self._geometric_layer_sizes(int(n_layers))
         self.n_layers = len(self.layer_sizes)
+        self.n_factors = int(self.layer_sizes[0])
         self.layer_names = [f"L{i}" for i in range(self.n_layers)]
         self.factor_lists = [np.arange(size) for size in self.layer_sizes]
         self.set_factor_names()
@@ -531,12 +636,12 @@ class scDEF(object):
     def update_model_priors(self):
         if self.use_brd:
             self.factor_shapes = [1.0] + [
-                self.factor_shape * self.layer_sizes[layer_idx] / self.layer_sizes[0]
+                self.factor_shape  # * self.layer_sizes[layer_idx] / self.layer_sizes[0]
                 for layer_idx in range(1, self.n_layers)
             ]
         else:
             self.factor_shapes = [
-                self.factor_shape * self.layer_sizes[layer_idx] / self.layer_sizes[0]
+                self.factor_shape  # * self.layer_sizes[layer_idx] / self.layer_sizes[0]
                 for layer_idx in range(self.n_layers)
             ]
 
@@ -554,14 +659,21 @@ class scDEF(object):
                 prior_rates = (
                     np.ones((self.layer_sizes[idx], self.layer_sizes[idx - 1]))
                     * self.factor_shapes[idx]
+                    * 1.0
+                    / self.kappa
                 )
                 prior_shapes = jnp.clip(jnp.array(prior_shapes), 1e-12, 1e12)
                 prior_rates = jnp.clip(jnp.array(prior_rates), 1e-12, 1e12)
 
             self.w_priors.append([prior_shapes, prior_rates])
 
+        self.cell_alpha_factor = self.batch_lib_sizes / float(
+            np.median(self.batch_lib_sizes)
+        )
         if self.set_alpha_from_cov:
-            self.alpha = float(self.batch_lib_sizes.mean()) / float(self.layer_sizes[0])
+            self.alpha = float(np.median(self.batch_lib_sizes)) / float(
+                self.layer_sizes[0]
+            )
 
     def get_effective_factors(
         self,
@@ -763,7 +875,7 @@ class scDEF(object):
             if (
                 layer_idx > 0
             ):  # If the top layer inits to very small numbers, the loss goes crazy when MC=10...
-                clip = 1e-6
+                clip = 1e-3
                 a = 1.0
 
             if layer_idx == self.n_layers - 1:
@@ -817,7 +929,7 @@ class scDEF(object):
             v = m / 100.0
 
             if layer_idx > 0:
-                v = m
+                v = m / 10.0
             z_shape = jnp.log(m**2 / jnp.sqrt(m**2 + v)) * jnp.ones(
                 (self.n_cells, self.layer_sizes[layer_idx])
             )
@@ -839,17 +951,17 @@ class scDEF(object):
             else:
                 out_layer = self.layer_sizes[layer_idx - 1]
 
-            a = 100.0
+            a = 10.0
 
             w_init_layer = _get_layer_init(init_w, layer_idx)
             if w_init_layer is not None and not nmf_init:
-                m = w_init_layer.astype(jnp.float32) + 1e-6
+                m = w_init_layer.astype(jnp.float32)  # + 1e-6
                 v = m  # / 100.0
             else:
                 m = 1.0 / self.layer_sizes[layer_idx] * jnp.ones((in_layer, out_layer))
                 m = m * self.w_priors[layer_idx][0] / self.w_priors[layer_idx][1]
                 if layer_idx < self.n_layers - 1:
-                    m = tfd.Gamma(100.0, 100.0 / (m)).sample(seed=rngs[rng_cnt])
+                    m = tfd.Gamma(a, a / (m)).sample(seed=rngs[rng_cnt])
                 rng_cnt += 1
                 v = m / 100.0
             # if nmf_init and layer_idx == 0:
@@ -867,9 +979,9 @@ class scDEF(object):
             #     m = tfd.Gamma(100.0, 100.0 / (iw)).sample(seed=rngs[rng_cnt])
             #     rng_cnt += 1
             #     v = m / 100.0
-            v = m / 100.0
+            v = m / 10.0
             if layer_idx > 0:
-                v = m
+                v = m / 10.0
             w_shape = jnp.log(m**2 / jnp.sqrt(m**2 + v)) * jnp.ones(
                 (in_layer, out_layer)
             )
@@ -1246,14 +1358,29 @@ class scDEF(object):
             # if idx == 0 and self.use_brd:
             #     z_mean = z_mean * _wm_sample.T
 
-            alpha_layer = alpha_value  # * self.layer_sizes[0] / self.layer_sizes[idx]
+            alpha_layer = alpha_value  # * (self.layer_sizes[0] / self.layer_sizes[idx])
+            alpha_layer = jnp.maximum(
+                alpha_layer * self.cell_alpha_factor[indices][:, None], 1.0
+            )
+            # Top-layer prior: ``top_alpha`` on the layer that is currently the "active top"
+            # in the optimization schedule (via ``stop_gradients`` on the root).
+            # - Root unfrozen: root ``z`` uses ``top_alpha``; all other layers ``alpha_layer``.
+            # - Root frozen: penultimate ``z`` uses ``top_alpha``; root and other layers
+            #   ``alpha_layer``.
+            root_frozen = stop_gradients[self.n_layers - 1] > 0.5
+            is_root = jnp.asarray(idx == self.n_layers - 1, dtype=jnp.bool_)
+            is_penultimate = jnp.asarray(idx == self.n_layers - 2, dtype=jnp.bool_)
+            use_top_prior = jnp.logical_or(
+                jnp.logical_and(is_root, jnp.logical_not(root_frozen)),
+                jnp.logical_and(is_penultimate, root_frozen),
+            )
             local_pl += jax.lax.cond(
-                idx == self.n_layers - 1,
+                use_top_prior,
                 lambda: gamma_logpdf(_z_sample, self.top_alpha, self.top_alpha),
                 lambda: gamma_logpdf(
                     _z_sample,
                     alpha_layer,
-                    alpha_layer / (z_mean),
+                    alpha_layer * self.kappa / (z_mean),
                 ),
             )
 
@@ -1519,7 +1646,7 @@ class scDEF(object):
         n_rounds: int = 1,
         pretraining: bool = False,
         force_decay_factor: bool = False,
-        root_epochs: int = 10,
+        root_epochs: int = 0,
         **kwargs: Any,
     ) -> None:
         """Fit scDEF, warm-starting from a previous fit when available.
@@ -1529,16 +1656,24 @@ class scDEF(object):
             z_init_concentration: concentration parameter of a Gamma distribution to sample the initial z values from. If high coverage, prefer higher values to avoid overfitting early.
             n_rounds: number of rounds to run the optimization.
             pretraining: whether to run ``pretrain`` before standard fit.
-            force_decay_factor: on refit, whether to clip upper-layer sizes to respect
-                ``decay_factor``. If False, preserves learned per-layer dimensions and
+            force_decay_factor: on refit, whether to clip upper-layer sizes to the
+                geometric template implied by ``n_factors``, ``top_factors``, and
+                ``n_layers_schedule``. If False, preserves learned per-layer dimensions and
                 initializes all layers from previous posterior means.
+            root_epochs: if ``> 0`` (default ``0``), run a first phase with the root layer frozen, then
+                a root-only refinement phase. In ``elbo``, ``top_alpha`` applies to the
+                penultimate layer ``z`` while the root is frozen, and to the root ``z`` when
+                the root is optimized; other layers use ``alpha_layer`` (see
+                ``stop_gradients`` on the root). Factor ``filter`` and ``annotate`` (see
+                ``_learn``) are skipped during the frozen-root phase and run only after the
+                root step, using the ``filter`` / ``annotate`` values passed to ``fit``.
             **kwargs: additional keyword arguments.
 
             On the first call, parameters are initialized from priors (or NMF if enabled).
             On subsequent calls, the model is re-initialized from the current posterior
             quantities and the current `factor_lists`, enabling a fit -> filter -> fit
-            workflow. During refit, upper-layer sizes are clipped to respect
-            ``decay_factor`` before rebuilding the hierarchy.
+            workflow. During refit, upper-layer sizes are clipped to the geometric
+            template when ``force_decay_factor`` is True before rebuilding the hierarchy.
         """
         marginalize_alpha_for_main_fit = bool(self.marginalize_alpha)
         self.root_epochs = int(root_epochs)
@@ -1547,14 +1682,10 @@ class scDEF(object):
             old_factor_lists = [np.array(f).copy() for f in self.factor_lists]
             layer_sizes = [len(self.factor_lists[i]) for i in range(self.n_layers)]
             if force_decay_factor:
-                # Enforce geometric decay on refit so upper layers cannot exceed the
-                # expected size implied by decay_factor.
-                for i in range(1, len(layer_sizes)):
-                    max_allowed = max(
-                        1, int(np.floor(layer_sizes[i - 1] / self.decay_factor))
-                    )
-                    if layer_sizes[i] > max_allowed:
-                        layer_sizes[i] = max_allowed
+                template = self._geometric_layer_sizes(int(self.n_layers_schedule))
+                for i in range(min(len(layer_sizes), len(template))):
+                    if layer_sizes[i] > template[i]:
+                        layer_sizes[i] = template[i]
             self.update_model_size(
                 max_n_factors=max(layer_sizes), layer_sizes=layer_sizes
             )
@@ -1643,10 +1774,20 @@ class scDEF(object):
             # Learn with frozen root
             optimize_layers = list(range(self.n_layers - 1))
 
+        stop_gene_budgets = not init_budgets
+        stop_cell_budgets = not init_budgets
+        main_learn_kwargs = dict(kwargs)
+        if int(root_epochs) > 0:
+            # Defer factor filtering and adata annotation until after root refinement;
+            # the frozen-root phase leaves root z unsettled for downstream summaries.
+            main_learn_kwargs["filter"] = False
+            main_learn_kwargs["annotate"] = False
         self._learn(
             n_rounds=n_rounds,
             optimize_layers=optimize_layers,
-            **kwargs,
+            stop_gene_budgets=stop_gene_budgets,
+            stop_cell_budgets=stop_cell_budgets,
+            **main_learn_kwargs,
         )
         self.qc_elbos = [np.asarray(x).copy() for x in self.elbos]
         preserved_traces = {
@@ -2463,7 +2604,7 @@ class scDEF(object):
                 keep = np.array(range(self.layer_sizes[i]))[
                     np.where(counts >= min_cells_upper)[0]
                 ]
-                if filter_up:
+                if filter_up and len(keep) > 0 and len(new_factor_lists[i - 1]) > 0:
                     mat = self.pmeans[f"{layer_name}W"][keep]
                     assignments = []
                     for factor in new_factor_lists[i - 1]:
@@ -3210,7 +3351,7 @@ class scDEF(object):
                 if len(cells) > 0:
                     # cells in this factor that belong to each obs
                     prevs = [
-                        np.count_nonzero(self.adata.obs[obs_key][cells] == b)
+                        np.count_nonzero(self.adata.obs[obs_key].iloc[cells] == b)
                         / len(np.where(self.adata.obs[obs_key] == b)[0])
                         for b in self.adata.obs[obs_key].cat.categories
                     ]

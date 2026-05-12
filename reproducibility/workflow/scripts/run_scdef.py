@@ -17,7 +17,7 @@ def main():
         brd_strength=float(snakemake.params["tau"]),
         brd_mean=float(snakemake.params["mu"]),
         n_factors=int(snakemake.params["n_factors"]),
-        max_n_layers=int(snakemake.params["n_layers"]),
+        n_layers=int(snakemake.params["n_layers"]),
         decay_factor=float(snakemake.params["decay_factor"]),
         layer_concentration=float(snakemake.params["kappa"]),
     )

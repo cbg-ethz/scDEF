@@ -189,7 +189,11 @@ def set_confident_signatures(
     model.adata.uns["factor_signatures"] = signatures_flat
 
 
-def factor_diagnostics(model: "scDEF", recompute: bool = False) -> None:
+def factor_diagnostics(
+    model: "scDEF",
+    recompute: bool = False,
+    batch_key: Optional[str] = None,
+) -> None:
     """Compute/store factor diagnostics in ``model.adata.uns['factor_obs']``.
 
     Args:
@@ -197,6 +201,11 @@ def factor_diagnostics(model: "scDEF", recompute: bool = False) -> None:
         recompute: if True, force recomputation of the cached fixed upper-layer
             factor subset used for clarity scores, even if the fit revision
             did not change.
+        batch_key: optional key in ``model.adata.obs`` used to compute
+            per-factor batch entropy and batch purity on top-loaded cells.
+            For each layer, cells are assigned to the factor with maximal
+            variational ``z`` loading, and purity is defined as
+            ``1 - batch_entropy / log(n_batches)``.
     """
     # Keep layer 0 unfiltered, but use a fixed filtered subset on upper layers.
     # Cache and reuse upper-layer factor lists so diagnostics remain stable across
@@ -296,6 +305,91 @@ def factor_diagnostics(model: "scDEF", recompute: bool = False) -> None:
     factor_obs.loc[l0_rows, "ARD"] = ard_all[original_idx]
     factor_obs.loc[l0_rows, "BRD"] = brd_all[original_idx]
     factor_obs["technical"] = False
+    factor_obs["batch_entropy"] = np.nan
+    factor_obs["batch_purity"] = np.nan
+
+    if batch_key is not None:
+        if batch_key not in model.adata.obs.columns:
+            raise KeyError(
+                f"batch_key '{batch_key}' not found in model.adata.obs. "
+                f"Available keys: {list(model.adata.obs.columns)}"
+            )
+
+        batch_values = model.adata.obs[batch_key].to_numpy()
+        valid_mask = ~pd.isna(batch_values)
+        unique_batches = np.unique(batch_values[valid_mask])
+        n_batches = int(len(unique_batches))
+
+        if n_batches >= 2:
+            batch_to_idx = {b: i for i, b in enumerate(unique_batches)}
+            batch_idx = np.full(model.n_cells, -1, dtype=int)
+            for i, b in enumerate(batch_values):
+                if not pd.isna(b):
+                    batch_idx[i] = batch_to_idx[b]
+
+            z_means_full = np.asarray(model.local_params[1][0], dtype=float)
+            offsets = np.cumsum([0] + [int(s) for s in model.layer_sizes]).astype(int)
+
+            for factor_name, row in factor_obs.iterrows():
+                if "child_layer" in factor_obs.columns:
+                    layer_name = str(row["child_layer"])
+                    if layer_name not in model.layer_names:
+                        continue
+                    layer_idx = model.layer_names.index(layer_name)
+                else:
+                    if not isinstance(factor_name, str) or "_" not in factor_name:
+                        continue
+                    layer_name = factor_name.rsplit("_", 1)[0]
+                    if layer_name not in model.layer_names:
+                        continue
+                    layer_idx = model.layer_names.index(layer_name)
+
+                if "original_factor_idx" in factor_obs.columns:
+                    original_factor_idx = int(row["original_factor_idx"])
+                else:
+                    try:
+                        original_factor_idx = int(str(factor_name).rsplit("_", 1)[1])
+                    except (ValueError, IndexError):
+                        continue
+                if original_factor_idx < 0 or original_factor_idx >= int(
+                    model.layer_sizes[layer_idx]
+                ):
+                    continue
+
+                start = int(offsets[layer_idx])
+                end = int(offsets[layer_idx + 1])
+                layer_scores = z_means_full[:, start:end]
+                winner = np.argmax(layer_scores, axis=1)
+                selected_cells = np.where(winner == original_factor_idx)[0]
+                if selected_cells.size == 0:
+                    continue
+
+                selected_batches = batch_idx[selected_cells]
+                selected_batches = selected_batches[selected_batches >= 0]
+                if selected_batches.size == 0:
+                    continue
+
+                counts = np.bincount(selected_batches, minlength=n_batches).astype(
+                    float
+                )
+                probs = counts / counts.sum()
+                probs = probs[probs > 0.0]
+                entropy = float(-np.sum(probs * np.log(probs)))
+                max_entropy = float(np.log(n_batches))
+                purity = 1.0 - entropy / max_entropy if max_entropy > 0 else np.nan
+
+                factor_obs.at[row.name, "batch_entropy"] = entropy
+                factor_obs.at[row.name, "batch_purity"] = float(
+                    np.clip(purity, 0.0, 1.0)
+                )
+
+        if "factor_diagnostics" not in model.adata.uns:
+            model.adata.uns["factor_diagnostics"] = {}
+        model.adata.uns["factor_diagnostics"]["batch_key"] = str(batch_key)
+        model.adata.uns["factor_diagnostics"]["n_batches"] = int(n_batches)
+        model.adata.uns["factor_diagnostics"]["batch_values"] = [
+            str(b) for b in unique_batches
+        ]
 
     # Cache a complete snapshot of factor_obs keyed by (child_layer,
     # original_factor_idx). This is the source of truth for filtering

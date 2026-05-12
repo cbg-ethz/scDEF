@@ -53,7 +53,7 @@ def get_weight_scores(model, obs_key, obs_vals, top_layer=None):
     """Get weight scores for observations and factors."""
     signatures_dict = model.get_signatures_dict()  # noqa: F841
     if top_layer is None:
-        top_layer = model.max_n_layers - 1
+        top_layer = model.n_layers - 1
     n_obs = len(obs_vals)
     mats = [
         np.zeros((n_obs, len(model.factor_names[idx]))) for idx in range(model.n_layers)
@@ -137,7 +137,7 @@ def get_signature_scores(model, obs_key, obs_vals, markers, top_genes=10):
 def get_correlations(model, obs_key, top_layer=None):
     """Get correlations between factors and observation values."""
     if top_layer is None:
-        top_layer = model.max_n_layers - 1
+        top_layer = model.n_layers - 1
     mats = [
         np.zeros((1, len(model.factor_names[idx]))) for idx in range(model.n_layers)
     ]
