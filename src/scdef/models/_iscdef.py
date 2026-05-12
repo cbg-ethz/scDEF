@@ -209,9 +209,7 @@ class iscDEF(scDEF):
             + "Layer sizes: "
             + ", ".join([str(len(factors)) for factors in self.factor_lists])
         )
-        out += (
-            "\n\t" + "Layer concentration parameter: " + str(self.alpha)
-        )
+        out += "\n\t" + "Layer concentration parameter: " + str(self.alpha)
         if self.markers_layer == 0:
             out += (
                 "\n\t"

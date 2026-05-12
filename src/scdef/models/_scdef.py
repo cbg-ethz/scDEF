@@ -70,7 +70,6 @@ class scDEF(object):
         layer_names: list of custom names for the layers. If None, layer names are enumerated as ["L0", "L1", ...].
         logginglevel: verbosity level for the logger.
         alpha: concentration parameter for the Gamma prior on z.
-        kappa: rate scaling for the Gamma prior on z (non-top layers).
         shrinkage_shape: shape parameter for shrinkage prior controlling factor usage.
         shrinkage_rate: rate parameter for shrinkage prior controlling factor usage.
         shrinkage_mean: target prior mean for shrinkage/factor relevance.
@@ -115,7 +114,6 @@ class scDEF(object):
         layer_names: Optional[list] = None,
         logginglevel: Optional[int] = logging.INFO,
         alpha: Optional[float] = 1.0,
-        kappa: Optional[float] = 10.0,
         shrinkage_shape: Optional[float] = 1.0,
         shrinkage_rate: Optional[float] = 1.0,
         shrinkage_mean: Optional[float] = 1.0,
@@ -150,7 +148,6 @@ class scDEF(object):
 
         self.top_alpha = top_alpha
         self.alpha = alpha
-        self.kappa = kappa
         self.factor_shape = factor_shape
         self.brd = brd_strength
         self.brd_mean = brd_mean
@@ -660,7 +657,6 @@ class scDEF(object):
                     np.ones((self.layer_sizes[idx], self.layer_sizes[idx - 1]))
                     * self.factor_shapes[idx]
                     * 1.0
-                    / self.kappa
                 )
                 prior_shapes = jnp.clip(jnp.array(prior_shapes), 1e-12, 1e12)
                 prior_rates = jnp.clip(jnp.array(prior_rates), 1e-12, 1e12)
@@ -1380,7 +1376,7 @@ class scDEF(object):
                 lambda: gamma_logpdf(
                     _z_sample,
                     alpha_layer,
-                    alpha_layer * self.kappa / (z_mean),
+                    alpha_layer / (z_mean),
                 ),
             )
 
