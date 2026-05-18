@@ -19,7 +19,6 @@ def main():
         n_factors=int(snakemake.params["n_factors"]),
         n_layers=int(snakemake.params["n_layers"]),
         decay_factor=float(snakemake.params["decay_factor"]),
-        layer_concentration=float(snakemake.params["kappa"]),
     )
     model = scd.scDEF(
         adata,
