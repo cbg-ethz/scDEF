@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import numpy as np
 import logging
 
-from typing import Optional, Sequence, Mapping
+from typing import Any, Dict, List, Optional, Sequence, Mapping
 
 
 class iscDEF(scDEF):
@@ -36,7 +36,9 @@ class iscDEF(scDEF):
         marker_strength: multiplier for the prior strength for marker genes.
         nonmarker_strength: multiplier for non-marker gene prior strength.
         other_strength: prior strength for marker genes belonging to "other" sets.
-        **kwargs: additional arguments passed to the scDEF base model.
+        **kwargs: additional arguments passed to the scDEF base model. ``hierarchy_fraction``
+            defaults to ``0.25`` for iscDEF (coverage-derived ``alpha`` is scaled when
+            ``set_alpha_from_cov`` is True).
     """
 
     def __init__(
@@ -50,13 +52,15 @@ class iscDEF(scDEF):
         cn_small_strength: Optional[float] = 1.0,
         cn_big_strength: Optional[float] = 0.1,
         gs_small_scale: Optional[float] = 1.0,
-        gs_big_scale: Optional[float] = 100.0,
-        marker_strength: Optional[float] = 10.0,
+        gs_big_scale: Optional[float] = 10.0,
+        marker_strength: Optional[float] = 1.0,
         nonmarker_strength: Optional[float] = 0.1,
         other_strength: Optional[float] = 0.1,
+        penalize_other: Optional[bool] = False,
         **kwargs,
     ):
         self.markers_dict = markers_dict
+        self.penalize_other = penalize_other
         self.add_other = add_other
         self.markers_layer = markers_layer
 
@@ -103,6 +107,7 @@ class iscDEF(scDEF):
         self.set_layer_sizes()
 
         kwargs.pop("decay_factor", None)
+        kwargs.setdefault("hierarchy_fraction", 0.25)
         super(iscDEF, self).__init__(
             adata,
             layer_sizes=self.layer_sizes,
@@ -281,36 +286,36 @@ class iscDEF(scDEF):
                         continue
                     upper_row = upper_pos[upper_factor]
                     connectivity_matrix[upper_row, child_positions] = cn_big_mean
-                    strength_matrix[upper_row, child_positions] = (
-                        cn_big_strength * n_upper / self.layer_sizes[0]
-                    )
+                    strength_matrix[
+                        upper_row, child_positions
+                    ] = cn_big_strength  # * n_upper / self.layer_sizes[0]
 
-            # If "other" factors are present in layer 0, connect them weakly to upper layers (or not at all)
-            # (This logic is for "other" in the lowest layer only)
-            if self.add_other > 0 and layer_idx > 0:
-                # "Other" factors are always appended last in each layer
-                # Compute for lower/upper layer sizes
-                n_other_upper = 0  # noqa: F841
-                n_other_lower = 0  # noqa: F841
-                # Only the lowest layer gets extra "other" factors, but we allow for safety at all
-                if layer_idx == 1:
-                    # "other" at layer 0 (lowest)
-                    other_start_lower = (
-                        n_lower - self.add_other * lower_factors_per_marker
-                    )
-                    other_end_lower = n_lower
-                    # All upper factors connect (weakly) to all "other" factors
-                    connectivity_matrix[
-                        :, other_start_lower:other_end_lower
-                    ] = cn_big_mean
-                    strength_matrix[:, other_start_lower:other_end_lower] = (
-                        cn_big_strength * n_upper / self.layer_sizes[0]
-                    )
-                elif layer_idx == self.n_layers - 1:  # top layer can't have "other"
-                    pass
-                else:
-                    # handle recursively if "other" present at each layer, but in current design, only at layer 0.
-                    pass
+            # # If "other" factors are present in layer 0, connect them weakly to upper layers (or not at all)
+            # # (This logic is for "other" in the lowest layer only)
+            # if self.add_other > 0 and layer_idx > 0:
+            #     # "Other" factors are always appended last in each layer
+            #     # Compute for lower/upper layer sizes
+            #     n_other_upper = 0  # noqa: F841
+            #     n_other_lower = 0  # noqa: F841
+            #     # Only the lowest layer gets extra "other" factors, but we allow for safety at all
+            #     if layer_idx == 1:
+            #         # "other" at layer 0 (lowest)
+            #         other_start_lower = (
+            #             n_lower - self.add_other * lower_factors_per_marker
+            #         )
+            #         other_end_lower = n_lower
+            #         # All upper factors connect (weakly) to all "other" factors
+            #         connectivity_matrix[
+            #             :, other_start_lower:other_end_lower
+            #         ] = cn_big_mean
+            #         strength_matrix[:, other_start_lower:other_end_lower] = (
+            #             cn_big_strength #* n_upper / self.layer_sizes[0]
+            #         )
+            #     elif layer_idx == self.n_layers - 1:  # top layer can't have "other"
+            #         pass
+            #     else:
+            #         # handle recursively if "other" present at each layer, but in current design, only at layer 0.
+            #         pass
 
             self.w_priors[layer_idx][0] *= strength_matrix
             self.w_priors[layer_idx][1] *= strength_matrix / np.maximum(
@@ -373,22 +378,23 @@ class iscDEF(scDEF):
                     self.strengths[factors_rows, loc] = marker_strength
 
             # Make it hard for the factors in this group to give weight to genes in another group
-            for group in marker_dict:
-                if group != cellgroup:
-                    for gene in marker_dict[group]:
-                        if "other" not in cellgroup:
-                            if gene not in marker_dict[cellgroup]:
+            if self.penalize_other:
+                for group in marker_dict:
+                    if group != cellgroup:
+                        for gene in marker_dict[group]:
+                            if "other" not in cellgroup:
+                                if gene not in marker_dict[cellgroup]:
+                                    loc = np.where(self.adata.var.index == gene)[0]
+                                    if len(loc) == 0:
+                                        continue
+                                    self.gene_sets[factors_rows, loc] = 1e-6
+                                    self.strengths[factors_rows, loc] = other_strength
+                            else:
                                 loc = np.where(self.adata.var.index == gene)[0]
                                 if len(loc) == 0:
                                     continue
-                                self.gene_sets[factors_rows, loc] = 1e-3
+                                self.gene_sets[factors_rows, loc] = 1e-6
                                 self.strengths[factors_rows, loc] = other_strength
-                        else:
-                            loc = np.where(self.adata.var.index == gene)[0]
-                            if len(loc) == 0:
-                                continue
-                            self.gene_sets[factors_rows, loc] = 1e-3
-                            self.strengths[factors_rows, loc] = other_strength
 
         if self.n_layers == 1:
             self.w_priors = [
@@ -529,11 +535,204 @@ class iscDEF(scDEF):
         if annotate:
             self.annotate_adata()
 
+    def _compute_marker_score_matrix(
+        self,
+        layer: Optional[str] = None,
+        score_genes_kwargs: Optional[Dict[str, Any]] = None,
+    ) -> np.ndarray:
+        """Per-cell Scanpy ``score_genes`` scores for each typed entry in ``markers_dict``."""
+        import scanpy as sc
+
+        score_genes_kwargs = dict(score_genes_kwargs or {})
+        typed_names = list(self.markers_dict.keys())
+        n_cells = self.adata.n_obs
+        scores = np.zeros((n_cells, len(typed_names)), dtype=np.float32)
+        if len(typed_names) == 0:
+            return scores
+
+        score_layer = layer
+        use_adata = self.adata
+        if score_layer is not None:
+            if score_layer not in self.adata.layers:
+                raise ValueError(
+                    f"score_genes layer `{score_layer}` not found in adata.layers."
+                )
+
+        for idx, name in enumerate(typed_names):
+            genes = [g for g in self.markers_dict[name] if g in use_adata.var_names]
+            if len(genes) == 0:
+                self.logger.warning(
+                    f"No marker genes for `{name}` found in var_names; "
+                    "using zero scores for z initialization."
+                )
+                continue
+            score_key = f"_scdef_zinit_{idx}_{name}"
+            score_call_kwargs = dict(score_genes_kwargs)
+            score_call_kwargs.setdefault("score_name", score_key)
+            if score_layer is not None:
+                score_call_kwargs["layer"] = score_layer
+            sc.tl.score_genes(use_adata, gene_list=genes, **score_call_kwargs)
+            scores[:, idx] = np.asarray(
+                use_adata.obs[score_key].values, dtype=np.float32
+            )
+        return scores
+
+    def _hierarchical_block_size(self, layer_idx: int) -> int:
+        """Factors per marker block at ``layer_idx`` when ``markers_layer > 0``."""
+        if self.n_layers == 1:
+            return int(self.n_factors_per_marker)
+        rev_layer = (self.n_layers - 1) - layer_idx
+        return int(self.decay_factor**rev_layer)
+
+    def _typed_props_from_marker_scores(
+        self,
+        temperature: float,
+        layer: Optional[str] = None,
+        score_genes_kwargs: Optional[Dict[str, Any]] = None,
+    ) -> np.ndarray:
+        scores = self._compute_marker_score_matrix(
+            layer=layer, score_genes_kwargs=score_genes_kwargs
+        )
+        temp = max(float(temperature), 1e-8)
+        shifted = scores / temp
+        shifted = shifted - np.max(shifted, axis=1, keepdims=True)
+        exp_s = np.exp(shifted)
+        denom = np.maximum(exp_s.sum(axis=1, keepdims=True), 1e-12)
+        return exp_s / denom
+
+    def _build_z_init_hierarchical_layer(
+        self,
+        typed_props: np.ndarray,
+        layer_idx: int,
+        other_mass: Optional[float] = None,
+    ) -> np.ndarray:
+        """One layer of score-based ``z`` init for ``markers_layer > 0`` layout."""
+        n_cells = self.adata.n_obs
+        k_layer = int(self.layer_sizes[layer_idx])
+        block_size = max(self._hierarchical_block_size(layer_idx), 1)
+        n_typed = len(self.markers_dict)
+        m = np.zeros((n_cells, k_layer), dtype=np.float32)
+        n_other_factors = int(self.add_other * block_size)
+
+        if n_other_factors > 0:
+            if other_mass is None:
+                other_fraction = float(n_other_factors) / float(k_layer)
+            else:
+                other_fraction = float(np.clip(other_mass, 0.0, 0.5))
+            other_per_factor = (other_fraction * k_layer) / float(n_other_factors)
+        else:
+            other_fraction = 0.0
+            other_per_factor = 0.0
+
+        typed_scale = float(k_layer) * (1.0 - other_fraction)
+        typed_per_factor = typed_scale / float(block_size)
+
+        for i in range(n_typed):
+            start = i * block_size
+            end = start + block_size
+            m[:, start:end] = (typed_props[:, i] * typed_per_factor)[:, None]
+        for j in range(self.add_other):
+            start = (n_typed + j) * block_size
+            end = start + block_size
+            m[:, start:end] = other_per_factor
+
+        return np.clip(m, 1e-3, 10.0).astype(np.float32)
+
+    def _build_z_init_all_hierarchical_layers_from_marker_scores(
+        self,
+        temperature: float = 1.0,
+        other_mass: Optional[float] = None,
+        layer: Optional[str] = None,
+        score_genes_kwargs: Optional[Dict[str, Any]] = None,
+    ) -> List[np.ndarray]:
+        typed_props = self._typed_props_from_marker_scores(
+            temperature=temperature,
+            layer=layer,
+            score_genes_kwargs=score_genes_kwargs,
+        )
+        return [
+            self._build_z_init_hierarchical_layer(typed_props, ell, other_mass)
+            for ell in range(self.n_layers)
+        ]
+
+    def _l0_other_factor_count(self) -> int:
+        """Number of L0 factor columns reserved for ``other`` blocks."""
+        if self.add_other <= 0:
+            return 0
+        if self.markers_layer == 0:
+            return int(self.add_other)
+        return int(self.add_other * self.n_factors_per_marker)
+
+    def _build_z_init_l0_from_marker_scores(
+        self,
+        temperature: float = 1.0,
+        other_mass: Optional[float] = None,
+        layer: Optional[str] = None,
+        score_genes_kwargs: Optional[Dict[str, Any]] = None,
+    ) -> np.ndarray:
+        """Build layer-0 ``z`` means from marker scores and optional ``other`` mass.
+
+        Typed groups use a softmax of ``score_genes``. If ``other_mass`` is ``None``,
+        the fraction of mass on ``other`` L0 columns is ``n_other / K0`` (uniform
+        mass per factor). If set explicitly, that value is used as the fraction.
+        When ``markers_layer > 0``, the same block structure as
+        :meth:`_build_z_init_hierarchical_layer` at layer 0 is used.
+        """
+        n_cells = self.adata.n_obs
+        n_typed = len(self.markers_dict)
+        if self.markers_layer != 0:
+            typed_props = self._typed_props_from_marker_scores(
+                temperature=temperature,
+                layer=layer,
+                score_genes_kwargs=score_genes_kwargs,
+            )
+            return self._build_z_init_hierarchical_layer(
+                typed_props, layer_idx=0, other_mass=other_mass
+            )
+
+        scores = self._compute_marker_score_matrix(
+            layer=layer, score_genes_kwargs=score_genes_kwargs
+        )
+        k0 = int(self.layer_sizes[0])
+        m = np.zeros((n_cells, k0), dtype=np.float32)
+        n_other = self._l0_other_factor_count()
+
+        temp = max(float(temperature), 1e-8)
+        shifted = scores / temp
+        shifted = shifted - np.max(shifted, axis=1, keepdims=True)
+        exp_s = np.exp(shifted)
+        denom = np.maximum(exp_s.sum(axis=1, keepdims=True), 1e-12)
+        typed_props = exp_s / denom
+
+        if n_other > 0:
+            if other_mass is None:
+                other_fraction = float(n_other) / float(k0)
+            else:
+                other_fraction = float(np.clip(other_mass, 0.0, 0.5))
+            other_per_factor = (other_fraction * k0) / float(n_other)
+        else:
+            other_fraction = 0.0
+            other_per_factor = 0.0
+
+        typed_scale = float(k0) * (1.0 - other_fraction)
+
+        for i in range(n_typed):
+            m[:, i] = typed_props[:, i] * typed_scale
+        for j in range(self.add_other):
+            m[:, n_typed + j] = other_per_factor
+
+        return np.clip(m, 1e-3, 10.0).astype(np.float32)
+
     def fit(
         self,
-        nmf_init=False,
-        max_cells_init=1024,
-        z_init_concentration=100.0,
+        nmf_init: bool = False,
+        max_cells_init: int = 1024,
+        z_init_concentration: float = 100.0,
+        z_init_from_score_genes: bool = True,
+        z_init_score_temperature: float = 1.0,
+        z_init_other_mass: Optional[float] = None,
+        score_genes_layer: Optional[str] = None,
+        score_genes_kwargs: Optional[Dict[str, Any]] = None,
         **kwargs,
     ):
         """Fit iscDEF, warm-starting from previous fit when available.
@@ -541,7 +740,23 @@ class iscDEF(scDEF):
         On refit, all layers are initialized from the previous posterior means
         (``z`` and ``W``), while BRD/ARD are initialized from layer 0. Existing
         marker-aware names are preserved through the refit path.
+
+        On the first fit, ``z`` can be initialized from Scanpy ``score_genes`` on
+        typed marker sets. For ``markers_layer == 0`` only layer 0 is set this way.
+        For ``markers_layer > 0``, every layer uses the same score softmax among
+        typed markers, replicated uniformly within each marker block at that layer
+        (and uniform ``other`` blocks when ``add_other`` is used). With
+        ``z_init_other_mass=None`` (default), the fraction of mass on ``other``
+        columns at each layer equals the number of other factors at that layer
+        divided by that layer width. ``nmf_init`` is
+        not used by iscDEF.
         """
+        if nmf_init:
+            self.logger.warning(
+                "iscDEF does not use nmf_init; z is initialized from "
+                "marker score_genes when z_init_from_score_genes=True."
+            )
+        nmf_init = False
         if getattr(self, "_has_fit", False):
             old_factor_lists = [
                 np.array(factors, dtype=int).copy() for factors in self.factor_lists
@@ -591,6 +806,31 @@ class iscDEF(scDEF):
             init_w = None
             init_brd = None
             init_ard = None
+            if z_init_from_score_genes:
+                if self.markers_layer > 0:
+                    init_z = (
+                        self._build_z_init_all_hierarchical_layers_from_marker_scores(
+                            temperature=z_init_score_temperature,
+                            other_mass=z_init_other_mass,
+                            layer=score_genes_layer,
+                            score_genes_kwargs=score_genes_kwargs,
+                        )
+                    )
+                    self.logger.info(
+                        "Initialized z at all hierarchy layers from "
+                        "scanpy.tl.score_genes on typed marker sets."
+                    )
+                else:
+                    init_l0 = self._build_z_init_l0_from_marker_scores(
+                        temperature=z_init_score_temperature,
+                        other_mass=z_init_other_mass,
+                        layer=score_genes_layer,
+                        score_genes_kwargs=score_genes_kwargs,
+                    )
+                    init_z = [init_l0] + [None] * (self.n_layers - 1)
+                    self.logger.info(
+                        "Initialized layer-0 z from scanpy.tl.score_genes on typed marker sets."
+                    )
         self.init_var_params(
             init_budgets=init_budgets,
             init_alpha=init_alpha,

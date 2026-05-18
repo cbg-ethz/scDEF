@@ -84,6 +84,8 @@ class scDEF(object):
         layer_cpal: matplotlib color palette for factors/colors at each scDEF layer.
         lightness_mult: lightness multiplier to define the base color for each new scDEF layer.
         set_alpha_from_cov: if True, set the alpha parameter from the data coverage.
+        hierarchy_fraction: multiplier applied to coverage-derived ``alpha`` when
+            ``set_alpha_from_cov`` is True (ignored otherwise).
         marginalize_alpha: if True, infer alpha from a variational posterior during training.
     """
 
@@ -128,6 +130,7 @@ class scDEF(object):
         layer_cpal: Optional[str] = "tab10",
         lightness_mult: Optional[float] = 0.15,
         set_alpha_from_cov: Optional[bool] = True,
+        hierarchy_fraction: Optional[float] = 1.0,
         marginalize_alpha: Optional[bool] = False,
     ):
         self.n_cells, self.n_genes = adata.shape
@@ -158,6 +161,7 @@ class scDEF(object):
         self.gene_scale_shape = gene_scale_shape
         self.use_brd = use_brd
         self.set_alpha_from_cov = set_alpha_from_cov
+        self.hierarchy_fraction = float(hierarchy_fraction)
         self.marginalize_alpha = bool(marginalize_alpha)
         self._marginalize_alpha_init = bool(marginalize_alpha)
 
@@ -341,6 +345,8 @@ class scDEF(object):
             obj.marginalize_alpha = False
         if not hasattr(obj, "_marginalize_alpha_init"):
             obj._marginalize_alpha_init = bool(obj.marginalize_alpha)
+        if not hasattr(obj, "hierarchy_fraction"):
+            obj.hierarchy_fraction = 1.0
         obj.logger = logging.getLogger(payload.get("class_name", cls.__name__))
         if payload.get("logger_level") is not None:
             obj.logger.setLevel(payload["logger_level"])
@@ -667,8 +673,10 @@ class scDEF(object):
             np.median(self.batch_lib_sizes)
         )
         if self.set_alpha_from_cov:
-            self.alpha = float(np.median(self.batch_lib_sizes)) / float(
-                self.layer_sizes[0]
+            self.alpha = (
+                float(np.median(self.batch_lib_sizes))
+                / float(self.layer_sizes[0])
+                * self.hierarchy_fraction
             )
 
     def get_effective_factors(
