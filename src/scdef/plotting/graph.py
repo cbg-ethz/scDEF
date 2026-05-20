@@ -441,6 +441,52 @@ def _add_enrichments_to_label(
     return label
 
 
+def _iscdef_marker_key_for_factor(
+    model: "scDEF",
+    factor_name: str,
+    layer_idx: Optional[int] = None,
+    factor_idx: Optional[int] = None,
+) -> Optional[str]:
+    """Resolve ``markers_dict`` key for an iscDEF factor (typed groups only)."""
+    markers_dict = getattr(model, "markers_dict", None)
+    if not markers_dict:
+        return None
+
+    if factor_name in markers_dict:
+        return str(factor_name)
+
+    markers_layer = int(getattr(model, "markers_layer", 0))
+    if (
+        layer_idx == 0
+        and factor_idx is not None
+        and hasattr(model, "factor_lists")
+        and len(model.factor_lists) > 0
+    ):
+        kept = np.asarray(model.factor_lists[0], dtype=int)
+        if 0 <= int(factor_idx) < len(kept):
+            orig = int(kept[int(factor_idx)])
+            if markers_layer != 0:
+                n_fpm = int(getattr(model, "n_factors_per_marker", 1))
+                if n_fpm > 0:
+                    marker_idx = orig // n_fpm
+                    if 0 <= marker_idx < len(model.marker_names):
+                        key = str(model.marker_names[marker_idx])
+                        if key in markers_dict:
+                            return key
+                        return None
+            elif 0 <= orig < len(model.marker_names):
+                key = str(model.marker_names[orig])
+                if key in markers_dict:
+                    return key
+                return None
+
+    for key in sorted(markers_dict.keys(), key=len, reverse=True):
+        prefix = f"{key}_"
+        if factor_name.startswith(prefix):
+            return str(key)
+    return None
+
+
 def _iscdef_marker_genes_for_factor(
     model: "scDEF",
     factor_name: str,
@@ -452,23 +498,12 @@ def _iscdef_marker_genes_for_factor(
     if not markers_dict:
         return set()
     var_names = set(model.adata.var_names)
-
-    def _genes_for_key(key: str) -> Set[str]:
-        return {str(g) for g in markers_dict[key] if str(g) in var_names}
-
-    if layer_idx == 0 and factor_idx is not None and hasattr(model, "marker_names"):
-        abs_idx = int(factor_idx)
-        if 0 <= abs_idx < len(model.marker_names):
-            key = model.marker_names[abs_idx]
-            if key in markers_dict:
-                return _genes_for_key(key)
-
-    if factor_name in markers_dict:
-        return _genes_for_key(factor_name)
-    for key in sorted(markers_dict.keys(), key=len, reverse=True):
-        if factor_name.startswith(f"{key}_"):
-            return _genes_for_key(key)
-    return set()
+    key = _iscdef_marker_key_for_factor(
+        model, factor_name, layer_idx=layer_idx, factor_idx=factor_idx
+    )
+    if key is None:
+        return set()
+    return {str(g) for g in markers_dict[key] if str(g) in var_names}
 
 
 def _format_signature_gene_label(

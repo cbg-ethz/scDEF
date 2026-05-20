@@ -44,8 +44,10 @@ class iscDEF(scDEF):
             in either `adata.X` or a specified layer.
         markers_dict: dictionary mapping marker/factor names to gene lists (gene sets). These guide
             the formation of factors in the chosen layer.
-        add_other: if > 0, adds one or more "other" factors for cells/observations not matching any
-            marker set. Only one "other" factor is supported for `markers_layer > 0`.
+        add_other: if > 0, adds one or more ``other{i}`` residual categories. At
+            ``markers_layer=0``, each is a separate L0 factor. At ``markers_layer>0``,
+            each gets a block of L0 sub-factors (``add_other * n_factors_per_marker``
+            columns at L0) and one coarse factor at the marker layer.
         markers_layer: index of the layer at which gene sets are enforced as factors (0 = lowest/finest,
             higher = top layer). If > 0, total layers determined by this value.
         cn_small_mean: mean prior connectivity for "small" (weakly-connected) genes between factors and gene sets.
@@ -82,7 +84,9 @@ class iscDEF(scDEF):
     ):
         self.markers_dict = markers_dict
         self.penalize_other = penalize_other
-        self.add_other = add_other
+        self.add_other = int(add_other) if add_other is not None else 0
+        if self.add_other < 0:
+            raise ValueError("add_other must be >= 0.")
         self.markers_layer = markers_layer
 
         # Set w_priors
@@ -111,9 +115,6 @@ class iscDEF(scDEF):
         if "use_brd" not in kwargs and markers_layer != 0:
             kwargs["use_brd"] = True
         self.use_brd = kwargs.get("use_brd", True)
-        if markers_layer != 0:
-            if add_other > 1:
-                raise ValueError("`add_other` can be at most 1 if markers_layer is > 0")
 
         if self.use_brd:
             self.nonmarker_strength = 1.0
