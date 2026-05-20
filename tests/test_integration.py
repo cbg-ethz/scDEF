@@ -348,7 +348,9 @@ def test_iscdef_refit_after_filtering():
         seed=1,
     )
 
-    model.fit(n_epoch=3, n_rounds=1)
+    # HVG-subset adata (~300 genes): Scanpy cannot find control bins with ctrl_as_ref=True.
+    score_genes_kwargs = {"ctrl_as_ref": False}
+    model.fit(n_epoch=3, n_rounds=1, score_genes_kwargs=score_genes_kwargs)
     model.filter_factors(brd_min=1.0, min_cells_lower=0)
     upper_assignments_before = {}
     for layer_idx in range(1, model.n_layers):
@@ -356,7 +358,7 @@ def test_iscdef_refit_after_filtering():
         upper_assignments_before[layer_name] = np.argmax(
             model.adata.obsm[f"X_{layer_name}"], axis=1
         )
-    model.fit(n_epoch=3, n_rounds=1)
+    model.fit(n_epoch=3, n_rounds=1, score_genes_kwargs=score_genes_kwargs)
 
     assert len(model.factor_lists) == model.n_layers
     assert all(len(factors) > 0 for factors in model.factor_lists)
@@ -421,6 +423,40 @@ def test_iscdef_make_graph_with_signatures():
     source = g.source if isinstance(g.source, str) else str(g.source)
     assert "<B>" in source
     assert any(f"<B>{gene}</B>" in source for gene in b_genes)
+
+
+def test_iscdef_hierarchical_l0_marker_genes_use_marker_block_not_slot():
+    adata = sc.datasets.pbmc3k()[:60].copy()
+    adata.X = adata.X.toarray()
+    sc.pp.filter_genes(adata, min_cells=3)
+    adata = adata[:, :80]
+    genes = list(adata.var_names[:6])
+    markers = {"T": genes[:3], "B": genes[3:6]}
+
+    model = scd.iscDEF(
+        adata,
+        markers_dict=markers,
+        markers_layer=2,
+        add_other=0,
+        decay_factor=2,
+        seed=1,
+    )
+    assert model.layer_sizes[0] == 8
+    t_genes = set(genes[:3])
+
+    for slot in range(4):
+        name = model.factor_names[0][slot]
+        assert name.startswith("T_L0_")
+        got = graph_plot._iscdef_marker_genes_for_factor(
+            model, name, layer_idx=0, factor_idx=slot
+        )
+        assert got == t_genes, f"slot {slot} ({name}) got {got}"
+
+    b_name = model.factor_names[0][4]
+    assert b_name.startswith("B_L0_")
+    assert graph_plot._iscdef_marker_genes_for_factor(
+        model, b_name, layer_idx=0, factor_idx=4
+    ) == set(genes[3:6])
 
 
 def test_scdef_entropy_annealing_updates():

@@ -579,31 +579,63 @@ class iscDEF(scDEF):
         if annotate:
             self.annotate_adata()
 
+    def _prepare_score_genes_kwargs(
+        self, score_genes_kwargs: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """Kwargs for Scanpy ``score_genes`` used in z initialization (Scanpy default ``ctrl_as_ref=True``)."""
+        kwargs = dict(score_genes_kwargs or {})
+        kwargs.setdefault("ctrl_as_ref", True)
+        return kwargs
+
+    def _score_genes_vector(
+        self,
+        genes: Sequence[str],
+        score_name: str,
+        layer: Optional[str] = None,
+        score_genes_kwargs: Optional[Dict[str, Any]] = None,
+    ) -> np.ndarray:
+        """Run ``score_genes`` for one gene list; return zeros if scoring fails."""
+        import scanpy as sc
+
+        n_cells = self.adata.n_obs
+        gene_list = [g for g in genes if g in self.adata.var_names]
+        if len(gene_list) == 0:
+            return np.zeros(n_cells, dtype=np.float32)
+
+        score_call_kwargs = self._prepare_score_genes_kwargs(score_genes_kwargs)
+        score_call_kwargs["score_name"] = str(score_name)
+        use_adata = self.adata
+        if layer is not None:
+            if layer not in self.adata.layers:
+                raise ValueError(
+                    f"score_genes layer `{layer}` not found in adata.layers."
+                )
+            score_call_kwargs["layer"] = layer
+        try:
+            sc.tl.score_genes(use_adata, gene_list=gene_list, **score_call_kwargs)
+        except RuntimeError as exc:
+            self.logger.warning(
+                "score_genes failed for %s (%s); using zero scores for z init.",
+                score_name,
+                exc,
+            )
+            return np.zeros(n_cells, dtype=np.float32)
+        return np.asarray(use_adata.obs[str(score_name)].values, dtype=np.float32)
+
     def _compute_marker_score_matrix(
         self,
         layer: Optional[str] = None,
         score_genes_kwargs: Optional[Dict[str, Any]] = None,
     ) -> np.ndarray:
         """Per-cell Scanpy ``score_genes`` scores for each typed entry in ``markers_dict``."""
-        import scanpy as sc
-
-        score_genes_kwargs = dict(score_genes_kwargs or {})
         typed_names = list(self.markers_dict.keys())
         n_cells = self.adata.n_obs
         scores = np.zeros((n_cells, len(typed_names)), dtype=np.float32)
         if len(typed_names) == 0:
             return scores
 
-        score_layer = layer
-        use_adata = self.adata
-        if score_layer is not None:
-            if score_layer not in self.adata.layers:
-                raise ValueError(
-                    f"score_genes layer `{score_layer}` not found in adata.layers."
-                )
-
         for idx, name in enumerate(typed_names):
-            genes = [g for g in self.markers_dict[name] if g in use_adata.var_names]
+            genes = [g for g in self.markers_dict[name] if g in self.adata.var_names]
             if len(genes) == 0:
                 self.logger.warning(
                     f"No marker genes for `{name}` found in var_names; "
@@ -611,13 +643,11 @@ class iscDEF(scDEF):
                 )
                 continue
             score_key = f"_scdef_zinit_{idx}_{name}"
-            score_call_kwargs = dict(score_genes_kwargs)
-            score_call_kwargs.setdefault("score_name", score_key)
-            if score_layer is not None:
-                score_call_kwargs["layer"] = score_layer
-            sc.tl.score_genes(use_adata, gene_list=genes, **score_call_kwargs)
-            scores[:, idx] = np.asarray(
-                use_adata.obs[score_key].values, dtype=np.float32
+            scores[:, idx] = self._score_genes_vector(
+                genes,
+                score_name=score_key,
+                layer=layer,
+                score_genes_kwargs=score_genes_kwargs,
             )
         return scores
 
@@ -639,8 +669,6 @@ class iscDEF(scDEF):
         score_genes_kwargs: Optional[Dict[str, Any]] = None,
     ) -> np.ndarray:
         """Per-cell ``score_genes`` on the union of typed marker genes."""
-        import scanpy as sc
-
         n_cells = self.adata.n_obs
         genes = self._union_marker_genes()
         if len(genes) == 0:
@@ -650,20 +678,12 @@ class iscDEF(scDEF):
             )
             return np.zeros(n_cells, dtype=np.float32)
 
-        score_genes_kwargs = dict(score_genes_kwargs or {})
-        score_key = str(
-            score_genes_kwargs.setdefault("score_name", "_scdef_zinit_union")
+        return self._score_genes_vector(
+            genes,
+            score_name="_scdef_zinit_union",
+            layer=layer,
+            score_genes_kwargs=score_genes_kwargs,
         )
-        score_call_kwargs = dict(score_genes_kwargs)
-        use_adata = self.adata
-        if layer is not None:
-            if layer not in self.adata.layers:
-                raise ValueError(
-                    f"score_genes layer `{layer}` not found in adata.layers."
-                )
-            score_call_kwargs["layer"] = layer
-        sc.tl.score_genes(use_adata, gene_list=genes, **score_call_kwargs)
-        return np.asarray(use_adata.obs[score_key].values, dtype=np.float32)
 
     def _other_affinity_from_union_scores(
         self,
@@ -911,7 +931,7 @@ class iscDEF(scDEF):
         self,
         nmf_init: bool = False,
         max_cells_init: int = 1024,
-        z_init_concentration: float = 100.0,
+        z_init_concentration: float = 10.0,
         z_init_from_score_genes: bool = True,
         z_init_score_temperature: float = 1.0,
         z_init_other_mass: Optional[float] = None,
