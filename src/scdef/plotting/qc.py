@@ -13,6 +13,7 @@ from typing import Optional, Tuple, Literal, Any, TYPE_CHECKING
 from scdef.tools.hierarchy import effective_parents_from_clarity
 
 if TYPE_CHECKING:
+    from scdef.models._iscdef import iscDEF
     from scdef.models._scdef import scDEF
 
 
@@ -218,10 +219,28 @@ def relevance(
         ax.bar(np.arange(layer_size), scales, color=model.layer_colorpalettes[0][0])
     else:
         ax.bar(np.arange(layer_size), scales)
+
     if len(scales) > 15:
-        ax.set_xticks(np.arange(0, layer_size, 2))
+        tick_pos = np.arange(0, layer_size, 2)
     else:
-        ax.set_xticks(np.arange(layer_size))
+        tick_pos = np.arange(layer_size)
+    ax.set_xticks(tick_pos)
+
+    from scdef.models._iscdef import iscDEF
+
+    if (
+        isinstance(model, iscDEF)
+        and hasattr(model, "factor_names")
+        and len(model.factor_names) > 0
+        and len(model.factor_names[0]) >= layer_size
+    ):
+        tick_labels = [str(name) for name in model.factor_names[0][:layer_size]]
+        ax.set_xticklabels(
+            [tick_labels[i] for i in tick_pos],
+            rotation=45,
+            ha="right",
+            fontsize=max(6, fontsize - 4),
+        )
     if not show_yticks:
         ax.set_yticks([])
     if mode == "brd":

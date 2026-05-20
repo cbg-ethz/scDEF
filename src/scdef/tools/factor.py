@@ -120,7 +120,7 @@ def set_confident_signatures(
     confidence_threshold: float = 0.9,
     tau_quantile: float = 0.99,
     min_effect: Optional[float] = None,
-    mc_samples_upper: int = 100,
+    mc_samples: int = 100,
     random_seed: int = 0,
 ) -> Dict[str, List[str]]:
     """Precompute and cache confident signatures/scores for all layers.
@@ -134,7 +134,7 @@ def set_confident_signatures(
             "confidence_threshold": float(confidence_threshold),
             "tau_quantile": float(tau_quantile),
             "min_effect": None if min_effect is None else float(min_effect),
-            "mc_samples_upper": int(mc_samples_upper),
+            "mc_samples": int(mc_samples),
             "random_seed": int(random_seed),
         },
         "by_layer": {},
@@ -151,7 +151,7 @@ def set_confident_signatures(
             tau_quantile=tau_quantile,
             min_effect=min_effect,
             max_genes=None,
-            mc_samples_upper=mc_samples_upper,
+            mc_samples=mc_samples,
             random_seed=random_seed,
             return_confidences=True,
         )
@@ -1166,7 +1166,7 @@ def get_confident_signatures(
     tau_quantile: float = 0.99,
     min_effect: Optional[float] = None,
     max_genes: Optional[int] = None,
-    mc_samples_upper: int = 100,
+    mc_samples: int = 100,
     random_seed: int = 0,
     return_confidences: bool = False,
 ) -> Union[Dict[str, List[str]], Tuple[Dict[str, List[str]], Dict[str, np.ndarray]]]:
@@ -1187,7 +1187,7 @@ def get_confident_signatures(
         tau_quantile: quantile of factor mean loadings used as threshold tau
         min_effect: optional minimum posterior mean loading ``E[W_k,g]``
         max_genes: optional maximum number of genes to keep per factor
-        mc_samples_upper: number of Monte Carlo samples used for
+        mc_samples: number of Monte Carlo samples used for
             ``layer_idx > 0`` confidence estimation
         random_seed: random seed for Monte Carlo sampling in upper layers
         return_confidences: whether to also return per-gene confidence arrays
@@ -1207,8 +1207,8 @@ def get_confident_signatures(
         raise ValueError("confidence_threshold must be in (0, 1).")
     if not (0.0 < tau_quantile < 1.0):
         raise ValueError("tau_quantile must be in (0, 1).")
-    if mc_samples_upper <= 0:
-        raise ValueError("mc_samples_upper must be > 0.")
+    if mc_samples <= 0:
+        raise ValueError("mc_samples must be > 0.")
 
     layer_name = model.layer_names[layer_idx]
     term_names = np.asarray(model.adata.var_names)
@@ -1252,9 +1252,9 @@ def get_confident_signatures(
         if hasattr(model, "logger"):
             model.logger.info(
                 "Estimating confident signatures for layer %s with Monte Carlo "
-                "(mc_samples_upper=%s). This may be slower than layer 0.",
+                "(mc_samples=%s). This may be slower than layer 0.",
                 layer_idx,
-                mc_samples_upper,
+                mc_samples,
             )
         term_means = _get_layer_term_means(model, layer_idx)
         base_rng = random.PRNGKey(int(random_seed))
@@ -1265,10 +1265,8 @@ def get_confident_signatures(
             tau = float(np.quantile(mu, tau_quantile))
 
             samples = []
-            for s_idx in range(int(mc_samples_upper)):
-                rng = random.fold_in(
-                    base_rng, factor_idx * int(mc_samples_upper) + s_idx
-                )
+            for s_idx in range(int(mc_samples)):
+                rng = random.fold_in(base_rng, factor_idx * int(mc_samples) + s_idx)
                 _, sample_scores = model.get_signature_sample(
                     rng,
                     factor_idx=factor_idx,

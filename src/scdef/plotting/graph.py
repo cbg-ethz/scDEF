@@ -437,6 +437,44 @@ def _add_enrichments_to_label(
     return label
 
 
+def _iscdef_marker_genes_for_factor(
+    model: "scDEF",
+    factor_name: str,
+    layer_idx: Optional[int] = None,
+    factor_idx: Optional[int] = None,
+) -> Set[str]:
+    """Return marker genes from ``markers_dict`` for an iscDEF factor node name."""
+    markers_dict = getattr(model, "markers_dict", None)
+    if not markers_dict:
+        return set()
+    var_names = set(model.adata.var_names)
+
+    def _genes_for_key(key: str) -> Set[str]:
+        return {str(g) for g in markers_dict[key] if str(g) in var_names}
+
+    if layer_idx == 0 and factor_idx is not None and hasattr(model, "marker_names"):
+        abs_idx = int(factor_idx)
+        if 0 <= abs_idx < len(model.marker_names):
+            key = model.marker_names[abs_idx]
+            if key in markers_dict:
+                return _genes_for_key(key)
+
+    if factor_name in markers_dict:
+        return _genes_for_key(factor_name)
+    for key in sorted(markers_dict.keys(), key=len, reverse=True):
+        if factor_name.startswith(f"{key}_"):
+            return _genes_for_key(key)
+    return set()
+
+
+def _format_signature_gene_label(
+    gene: str, fontsize: float, marker_genes: Optional[Set[str]]
+) -> str:
+    if marker_genes and gene in marker_genes:
+        return f'<FONT POINT-SIZE="{fontsize}"><B>{gene}</B></FONT>'
+    return f'<FONT POINT-SIZE="{fontsize}">{gene}</FONT>'
+
+
 def _add_signature_to_label(
     label,
     model,
@@ -450,6 +488,7 @@ def _add_signature_to_label(
     show_confidences,
     mc_samples,
     fontsize_kwargs,
+    marker_genes: Optional[Set[str]] = None,
 ):
     """Add signature information to label."""
 
@@ -467,7 +506,7 @@ def _add_signature_to_label(
         else:
             fontsizes = _map_scores_to_fontsizes(factor_gene_scores, **fontsize_kwargs)
         gene_labels = [
-            f'<FONT POINT-SIZE="{fontsizes[j]}">{gene}</FONT>'
+            _format_signature_gene_label(gene, fontsizes[j], marker_genes)
             for j, gene in enumerate(factor_gene_rankings)
         ]
         return "<br/><br/>" + "<br/>".join(gene_labels)
@@ -995,6 +1034,15 @@ def make_graph(
 
             # Add signatures then enrichments.
             if show_signatures:
+                from scdef.models._iscdef import iscDEF
+
+                marker_genes = (
+                    _iscdef_marker_genes_for_factor(
+                        model, factor_name, layer_idx, factor_idx
+                    )
+                    if isinstance(model, iscDEF)
+                    else None
+                )
                 label = _add_signature_to_label(
                     label,
                     model,
@@ -1008,6 +1056,7 @@ def make_graph(
                     show_confidences,
                     mc_samples,
                     fontsize_kwargs,
+                    marker_genes=marker_genes,
                 )
             if show_enrichments:
                 label = _add_enrichments_to_label(
@@ -1373,6 +1422,15 @@ def make_technical_hierarchy_graph(
 
             # Add signatures then enrichments.
             if show_signatures:
+                from scdef.models._iscdef import iscDEF
+
+                marker_genes = (
+                    _iscdef_marker_genes_for_factor(
+                        model, factor_name, layer_idx, factor_idx
+                    )
+                    if isinstance(model, iscDEF)
+                    else None
+                )
                 label = _add_signature_to_label(
                     label,
                     model,
@@ -1386,6 +1444,7 @@ def make_technical_hierarchy_graph(
                     show_confidences,
                     mc_samples,
                     fontsize_kwargs,
+                    marker_genes=marker_genes,
                 )
             if show_enrichments:
                 label = _add_enrichments_to_label(

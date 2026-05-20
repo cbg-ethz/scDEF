@@ -1074,7 +1074,7 @@ def factor_gene_uncertainty_boxplot(
     factor: Union[int, str],
     layer_idx: int = 0,
     max_genes: Optional[int] = 50,
-    mc_samples_upper: int = 100,
+    mc_samples: int = 100,
     random_seed: int = 0,
     whisker_quantiles: Tuple[float, float] = (0.05, 0.95),
     sort_by: Literal["mean", "confidence"] = "mean",
@@ -1108,7 +1108,7 @@ def factor_gene_uncertainty_boxplot(
         factor: factor index (within kept factors of the layer) or factor name
         layer_idx: layer index to visualize
         max_genes: maximum number of genes to plot; if None, plot all genes
-        mc_samples_upper: number of posterior samples for ``layer_idx > 0``
+        mc_samples: number of posterior samples for ``layer_idx > 0``
         random_seed: random seed for upper-layer posterior sampling
         whisker_quantiles: lower/upper quantiles for whiskers
         sort_by: sorting criterion for genes; ``"mean"`` (default) sorts by
@@ -1144,8 +1144,8 @@ def factor_gene_uncertainty_boxplot(
     """
     if layer_idx < 0 or layer_idx >= model.n_layers:
         raise ValueError(f"layer_idx must be in [0, {model.n_layers - 1}].")
-    if mc_samples_upper <= 0:
-        raise ValueError("mc_samples_upper must be > 0.")
+    if mc_samples <= 0:
+        raise ValueError("mc_samples must be > 0.")
     q_lo, q_hi = whisker_quantiles
     if not (0.0 < q_lo < 0.5 and 0.5 < q_hi < 1.0):
         raise ValueError("whisker_quantiles must satisfy 0 < q_lo < 0.5 < q_hi < 1.")
@@ -1216,7 +1216,7 @@ def factor_gene_uncertainty_boxplot(
                 "Computing upper-layer uncertainty boxplot with Monte Carlo "
                 "(layer=%s, samples=%s).",
                 layer_idx,
-                mc_samples_upper,
+                mc_samples,
             )
 
         _, mean_scores = model.get_rankings(
@@ -1229,9 +1229,9 @@ def factor_gene_uncertainty_boxplot(
         all_means = np.asarray(mean_scores[factor_idx], dtype=float)
 
         base_rng = random.PRNGKey(int(random_seed))
-        sample_scores_all = np.empty((int(mc_samples_upper), len(genes)), dtype=float)
-        for s_idx in range(int(mc_samples_upper)):
-            rng = random.fold_in(base_rng, factor_idx * int(mc_samples_upper) + s_idx)
+        sample_scores_all = np.empty((int(mc_samples), len(genes)), dtype=float)
+        for s_idx in range(int(mc_samples)):
+            rng = random.fold_in(base_rng, factor_idx * int(mc_samples) + s_idx)
             _, sampled = model.get_signature_sample(
                 rng,
                 factor_idx=factor_idx,

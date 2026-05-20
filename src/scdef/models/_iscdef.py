@@ -10,13 +10,34 @@ from typing import Any, Dict, List, Optional, Sequence, Mapping
 class iscDEF(scDEF):
     """Informed Single-cell Deep Exponential Families (iscDEF) model.
 
-    iscDEF extends the scDEF framework by incorporating prior biological knowledge in the form of gene sets ("markers").
-    This model can guide the discovery of factors along known biology, either by using gene sets as the highest-resolution
-    (top) factors and learning finer substructure beneath them or as the coarsest layer to learn how they relate hierarchically.
+    iscDEF extends scDEF with marker gene sets that shape the layer-0 loading prior ``W``.
+    Each typed factor is encouraged to use its own marker genes, may load other genes
+    more weakly, and can share biology with ``add_other`` residual factors.
 
-    All methods and functionality available in scDEF are inherited by iscDEF. Additional logic allows for flexible
-    integration of marker sets at a chosen model layer, custom prior settings for marker versus non-marker genes,
-    and automatic handling of cells/gene sets that do not fall into any marker category (via the `add_other` option).
+    **Tuning how much the model relies on markers vs. augments signatures**
+
+    Marker reliance is controlled mainly by the Gamma prior on ``W`` at the markers layer
+    (for ``markers_layer=0``, that is L0). For a typed factor, each listed marker gene has
+    prior mean loading ``≈ gs_big_scale`` (tighter when ``marker_strength`` is high);
+    all other genes default to ``≈ gs_small_scale``. Fitted signatures can still add
+    genes beyond your list if the data and these priors allow it.
+
+    - **Stay close to the input marker lists** (typing, strict gene programs):
+      increase ``gs_big_scale`` and ``marker_strength``;
+      set ``penalize_other=True`` so off-type markers are discouraged on the wrong factor;
+      keep ``add_other`` small when you only have a few types to avoid ignoring the marker factors.
+
+    - **Augment markers with data-driven genes**:
+      decrease ``gs_big_scale`` and ``marker_strength``;
+      increase ``gs_small_scale`` or ``nonmarker_strength`` so non-marker genes are not
+      overly suppressed on typed factors;
+      use ``add_other`` ≥ 1 for programs not in ``markers_dict``;
+      set ``penalize_other=False`` if overlapping lists should not hard-reject shared genes.
+
+    List design matters as much as numeric knobs: non-overlapping marker sets per type
+    separate factors more reliably than tuning alone. Use ``markers_layer=0`` for one
+    factor per type; use ``markers_layer>0`` for coarse types at the top and finer
+    substructure at L0.
 
     Args:
         adata: AnnData object containing the gene expression count matrix. Counts must be present
@@ -31,14 +52,14 @@ class iscDEF(scDEF):
         cn_big_mean: mean prior connectivity for "big" (strongly-connected) genes between factors and gene sets.
         cn_small_strength: concentration parameter for low connectivity (see scDEF prior specification).
         cn_big_strength: concentration parameter for high connectivity.
-        gs_small_scale: scale parameter for genes *not* in the marker gene set.
-        gs_big_scale: scale parameter for genes *in* the marker gene set (encourages large factor loadings).
-        marker_strength: multiplier for the prior strength for marker genes.
-        nonmarker_strength: multiplier for non-marker gene prior strength.
-        other_strength: prior strength for marker genes belonging to "other" sets.
-        **kwargs: additional arguments passed to the scDEF base model. ``hierarchy_fraction``
-            defaults to ``0.25`` for iscDEF (coverage-derived ``alpha`` is scaled when
-            ``set_alpha_from_cov`` is True).
+        gs_small_scale: prior mean scale for genes not in a factor's marker list (higher → more non-marker loading).
+        gs_big_scale: prior mean scale for genes in that factor's marker list (higher → stronger marker reliance).
+        marker_strength: Gamma prior concentration on marker-gene loadings (higher → less augmentation away from markers).
+        nonmarker_strength: prior concentration on non-marker loadings (higher → tighter; overridden to 1.0 if ``use_brd``).
+        other_strength: prior concentration when penalizing marker genes on the wrong factor or on ``other`` rows.
+        penalize_other: if True, typed factors penalize other groups' marker genes; ``other`` factors penalize all typed markers.
+        **kwargs: additional arguments passed to scDEF. ``hierarchy_fraction`` defaults to ``0.25``
+            (scales coverage-derived ``alpha`` when ``set_alpha_from_cov=True``).
     """
 
     def __init__(
@@ -87,17 +108,10 @@ class iscDEF(scDEF):
             2 if "decay_factor" not in kwargs else kwargs["decay_factor"]
         )
         self.n_layers_schedule = kwargs.pop("n_layers", 6)
-        if markers_layer == 0:
-            if "use_brd" not in kwargs:
-                kwargs["use_brd"] = False
-                self.use_brd = False
-            elif kwargs["use_brd"]:
-                raise ValueError("`use_brd` must be False if markers_layer is 0")
-        else:
-            if "use_brd" not in kwargs:
-                self.use_brd = True
-            else:
-                self.use_brd = kwargs["use_brd"]
+        if "use_brd" not in kwargs and markers_layer != 0:
+            kwargs["use_brd"] = True
+        self.use_brd = kwargs.get("use_brd", True)
+        if markers_layer != 0:
             if add_other > 1:
                 raise ValueError("`add_other` can be at most 1 if markers_layer is > 0")
 
@@ -146,9 +160,6 @@ class iscDEF(scDEF):
             layer_names = self.layer_names
             layer_sizes = self.layer_sizes
             layer_names[0] = "marker"
-
-            if self.use_brd:
-                raise ValueError("`use_brd` must be False if markers_layer is 0")
         else:
             # For markers_layer > 0, only the bottom layer (layer 0) gets "other" factors
             self.n_layers = self.markers_layer + 1

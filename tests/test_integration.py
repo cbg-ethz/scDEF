@@ -369,6 +369,60 @@ def test_iscdef_refit_after_filtering():
         )
 
 
+def test_iscdef_make_graph_with_signatures():
+    adata = sc.datasets.pbmc3k()
+    np.random.seed(11)
+    sc.pp.filter_cells(adata, min_genes=200)
+    sc.pp.filter_genes(adata, min_cells=3)
+    adata = adata[np.random.randint(adata.shape[0], size=120)]
+    adata.var["mt"] = adata.var_names.str.startswith("MT-")
+    sc.pp.calculate_qc_metrics(
+        adata, qc_vars=["mt"], percent_top=None, log1p=False, inplace=True
+    )
+    adata = adata[adata.obs.n_genes_by_counts < 2500, :]
+    adata = adata[adata.obs.pct_counts_mt < 5, :]
+    adata.raw = adata
+    raw_adata = adata.raw.to_adata()
+    raw_adata.X = raw_adata.X.toarray()
+    adata.X = adata.X.toarray()
+    sc.pp.normalize_total(adata, target_sum=1e4)
+    sc.pp.log1p(adata)
+    sc.pp.highly_variable_genes(
+        adata, min_mean=0.0125, max_mean=3, min_disp=0.5, n_top_genes=200
+    )
+    raw_adata = raw_adata[:, adata.var.highly_variable]
+    var_names = list(raw_adata.var_names)
+    assert len(var_names) >= 4
+    b_genes = var_names[:2]
+    mono_genes = var_names[2:4]
+    markers = {"B": b_genes, "Mono": mono_genes}
+
+    model = scd.iscDEF(
+        raw_adata,
+        markers_dict=markers,
+        markers_layer=0,
+        add_other=1,
+        n_layers=2,
+        seed=1,
+    )
+    model.fit(n_epoch=2, n_rounds=1)
+    scd.tl.set_confident_signatures(model, mc_samples=20)
+
+    marker_genes_b = graph_plot._iscdef_marker_genes_for_factor(model, "B", layer_idx=0)
+    assert marker_genes_b == set(b_genes)
+
+    g = scd.pl.make_graph(
+        model,
+        show_signatures=True,
+        top_genes=5,
+        mc_samples=20,
+    )
+    assert g is not None
+    source = g.source if isinstance(g.source, str) else str(g.source)
+    assert "<B>" in source
+    assert any(f"<B>{gene}</B>" in source for gene in b_genes)
+
+
 def test_scdef_entropy_annealing_updates():
     adata = sc.datasets.pbmc3k()
     np.random.seed(31)
@@ -862,7 +916,7 @@ def test_scdef_load_and_plotting_pipeline():
             show_confidence_cutoff_line=True,
             confidence_include_threshold=0.9,
             show_tau_quantile_line=True,
-            mc_samples_upper=20,
+            mc_samples=20,
             random_seed=0,
             show=False,
         )
