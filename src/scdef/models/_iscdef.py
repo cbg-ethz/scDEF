@@ -620,6 +620,86 @@ class iscDEF(scDEF):
             )
         return scores
 
+    def _union_marker_genes(self) -> List[str]:
+        """Unique genes in typed ``markers_dict`` entries (union for ``other`` z init)."""
+        seen = set()
+        genes: List[str] = []
+        for gene_list in self.markers_dict.values():
+            for gene in gene_list:
+                if gene in seen:
+                    continue
+                seen.add(gene)
+                genes.append(gene)
+        return [g for g in genes if g in self.adata.var_names]
+
+    def _compute_union_marker_scores(
+        self,
+        layer: Optional[str] = None,
+        score_genes_kwargs: Optional[Dict[str, Any]] = None,
+    ) -> np.ndarray:
+        """Per-cell ``score_genes`` on the union of typed marker genes."""
+        import scanpy as sc
+
+        n_cells = self.adata.n_obs
+        genes = self._union_marker_genes()
+        if len(genes) == 0:
+            self.logger.warning(
+                "No typed marker genes found in var_names for union other z init; "
+                "using zero union scores."
+            )
+            return np.zeros(n_cells, dtype=np.float32)
+
+        score_genes_kwargs = dict(score_genes_kwargs or {})
+        score_key = str(
+            score_genes_kwargs.setdefault("score_name", "_scdef_zinit_union")
+        )
+        score_call_kwargs = dict(score_genes_kwargs)
+        use_adata = self.adata
+        if layer is not None:
+            if layer not in self.adata.layers:
+                raise ValueError(
+                    f"score_genes layer `{layer}` not found in adata.layers."
+                )
+            score_call_kwargs["layer"] = layer
+        sc.tl.score_genes(use_adata, gene_list=genes, **score_call_kwargs)
+        return np.asarray(use_adata.obs[score_key].values, dtype=np.float32)
+
+    def _other_affinity_from_union_scores(
+        self,
+        union_scores: np.ndarray,
+        temperature: float = 1.0,
+    ) -> np.ndarray:
+        """Per-cell weight for ``other`` init: high when union marker score is low."""
+        scores = np.asarray(union_scores, dtype=np.float32).reshape(-1)
+        temp = max(float(temperature), 1e-8)
+        affinity = 1.0 / (1.0 + np.maximum(scores, 0.0) / temp)
+        return affinity.astype(np.float32)
+
+    def _resolve_other_affinity(
+        self,
+        other_mode: str,
+        temperature: float,
+        layer: Optional[str] = None,
+        score_genes_kwargs: Optional[Dict[str, Any]] = None,
+    ) -> np.ndarray:
+        """Per-cell multipliers for ``other`` blocks (``uniform`` or ``inverse_union``)."""
+        mode = str(other_mode).strip().lower()
+        n_cells = self.adata.n_obs
+        if self.add_other <= 0:
+            return np.ones(n_cells, dtype=np.float32)
+        if mode == "uniform":
+            return np.ones(n_cells, dtype=np.float32)
+        if mode == "inverse_union":
+            union_scores = self._compute_union_marker_scores(
+                layer=layer, score_genes_kwargs=score_genes_kwargs
+            )
+            return self._other_affinity_from_union_scores(
+                union_scores, temperature=temperature
+            )
+        raise ValueError(
+            f"z_init_other_mode must be 'uniform' or 'inverse_union', got {other_mode!r}."
+        )
+
     def _hierarchy_content_layers(self) -> int:
         """Layer count used for marker block geometry (excludes optional width-1 root)."""
         n = int(self.n_layers)
@@ -656,6 +736,7 @@ class iscDEF(scDEF):
         typed_props: np.ndarray,
         layer_idx: int,
         other_mass: Optional[float] = None,
+        other_affinity: Optional[np.ndarray] = None,
     ) -> np.ndarray:
         """One layer of score-based ``z`` init for ``markers_layer > 0`` layout."""
         n_cells = self.adata.n_obs
@@ -678,6 +759,15 @@ class iscDEF(scDEF):
         typed_scale = float(k_layer) * (1.0 - other_fraction)
         typed_per_factor = typed_scale / float(block_size)
 
+        if other_affinity is None:
+            other_affinity = np.ones(n_cells, dtype=np.float32)
+        other_affinity = np.asarray(other_affinity, dtype=np.float32).reshape(-1)
+        if other_affinity.shape[0] != n_cells:
+            raise ValueError(
+                f"other_affinity must have length n_obs={n_cells}, "
+                f"got shape {other_affinity.shape}."
+            )
+
         for i in range(n_typed):
             start = i * block_size
             end = start + block_size
@@ -685,14 +775,19 @@ class iscDEF(scDEF):
         for j in range(self.add_other):
             start = (n_typed + j) * block_size
             end = start + block_size
-            m[:, start:end] = other_per_factor
+            m[:, start:end] = (other_per_factor * other_affinity)[:, None]
 
-        return np.clip(m, 1e-3, 10.0).astype(np.float32)
+        m = np.clip(m, 1e-3, 10.0)
+        if float(np.ptp(other_affinity)) > 1e-6:
+            row_sum = np.maximum(m.sum(axis=1, keepdims=True), 1e-12)
+            m = m * (float(k_layer) / row_sum)
+        return m.astype(np.float32)
 
     def _build_z_init_all_hierarchical_layers_from_marker_scores(
         self,
         temperature: float = 1.0,
         other_mass: Optional[float] = None,
+        other_mode: str = "inverse_union",
         layer: Optional[str] = None,
         score_genes_kwargs: Optional[Dict[str, Any]] = None,
     ) -> List[np.ndarray]:
@@ -701,11 +796,19 @@ class iscDEF(scDEF):
             layer=layer,
             score_genes_kwargs=score_genes_kwargs,
         )
+        other_affinity = self._resolve_other_affinity(
+            other_mode=other_mode,
+            temperature=temperature,
+            layer=layer,
+            score_genes_kwargs=score_genes_kwargs,
+        )
         n_init_layers = self.n_layers
         if getattr(self, "add_root", False):
             n_init_layers -= 1
         inits = [
-            self._build_z_init_hierarchical_layer(typed_props, ell, other_mass)
+            self._build_z_init_hierarchical_layer(
+                typed_props, ell, other_mass, other_affinity=other_affinity
+            )
             for ell in range(n_init_layers)
         ]
         if getattr(self, "add_root", False):
@@ -724,14 +827,17 @@ class iscDEF(scDEF):
         self,
         temperature: float = 1.0,
         other_mass: Optional[float] = None,
+        other_mode: str = "inverse_union",
         layer: Optional[str] = None,
         score_genes_kwargs: Optional[Dict[str, Any]] = None,
     ) -> np.ndarray:
         """Build layer-0 ``z`` means from marker scores and optional ``other`` mass.
 
         Typed groups use a softmax of ``score_genes``. If ``other_mass`` is ``None``,
-        the fraction of mass on ``other`` L0 columns is ``n_other / K0`` (uniform
-        mass per factor). If set explicitly, that value is used as the fraction.
+        the fraction of mass on ``other`` L0 columns is ``n_other / K0``. With
+        ``other_mode='inverse_union'`` (default), ``other`` mass is higher on cells
+        with low ``score_genes`` on the union of typed marker genes; use
+        ``other_mode='uniform'`` for constant per-cell ``other`` init.
         When ``markers_layer > 0``, the same block structure as
         :meth:`_build_z_init_hierarchical_layer` at layer 0 is used.
         """
@@ -743,8 +849,17 @@ class iscDEF(scDEF):
                 layer=layer,
                 score_genes_kwargs=score_genes_kwargs,
             )
+            other_affinity = self._resolve_other_affinity(
+                other_mode=other_mode,
+                temperature=temperature,
+                layer=layer,
+                score_genes_kwargs=score_genes_kwargs,
+            )
             return self._build_z_init_hierarchical_layer(
-                typed_props, layer_idx=0, other_mass=other_mass
+                typed_props,
+                layer_idx=0,
+                other_mass=other_mass,
+                other_affinity=other_affinity,
             )
 
         scores = self._compute_marker_score_matrix(
@@ -761,6 +876,13 @@ class iscDEF(scDEF):
         denom = np.maximum(exp_s.sum(axis=1, keepdims=True), 1e-12)
         typed_props = exp_s / denom
 
+        other_affinity = self._resolve_other_affinity(
+            other_mode=other_mode,
+            temperature=temperature,
+            layer=layer,
+            score_genes_kwargs=score_genes_kwargs,
+        )
+
         if n_other > 0:
             if other_mass is None:
                 other_fraction = float(n_other) / float(k0)
@@ -776,9 +898,13 @@ class iscDEF(scDEF):
         for i in range(n_typed):
             m[:, i] = typed_props[:, i] * typed_scale
         for j in range(self.add_other):
-            m[:, n_typed + j] = other_per_factor
+            m[:, n_typed + j] = other_per_factor * other_affinity
 
-        return np.clip(m, 1e-3, 10.0).astype(np.float32)
+        m = np.clip(m, 1e-3, 10.0)
+        if float(np.ptp(other_affinity)) > 1e-6:
+            row_sum = np.maximum(m.sum(axis=1, keepdims=True), 1e-12)
+            m = m * (float(k0) / row_sum)
+        return m.astype(np.float32)
 
     def fit(
         self,
@@ -788,6 +914,7 @@ class iscDEF(scDEF):
         z_init_from_score_genes: bool = True,
         z_init_score_temperature: float = 1.0,
         z_init_other_mass: Optional[float] = None,
+        z_init_other_mode: str = "inverse_union",
         score_genes_layer: Optional[str] = None,
         score_genes_kwargs: Optional[Dict[str, Any]] = None,
         root_epochs: int = 0,
@@ -806,7 +933,10 @@ class iscDEF(scDEF):
         (and uniform ``other`` blocks when ``add_other`` is used). With
         ``z_init_other_mass=None`` (default), the fraction of mass on ``other``
         columns at each layer equals the number of other factors at that layer
-        divided by that layer width. ``nmf_init`` is
+        divided by that layer width. With ``z_init_other_mode='inverse_union'``
+        (default), per-cell ``other`` init is scaled by ``1 / (1 + union_marker_score)``
+        from ``score_genes`` on the union of typed marker genes; use
+        ``z_init_other_mode='uniform'`` for constant ``other`` init. ``nmf_init`` is
         not used by iscDEF.
 
         When ``add_root=True`` (``markers_layer > 0`` only), a width-1 root is appended
@@ -877,6 +1007,7 @@ class iscDEF(scDEF):
                         self._build_z_init_all_hierarchical_layers_from_marker_scores(
                             temperature=z_init_score_temperature,
                             other_mass=z_init_other_mass,
+                            other_mode=z_init_other_mode,
                             layer=score_genes_layer,
                             score_genes_kwargs=score_genes_kwargs,
                         )
@@ -889,6 +1020,7 @@ class iscDEF(scDEF):
                     init_l0 = self._build_z_init_l0_from_marker_scores(
                         temperature=z_init_score_temperature,
                         other_mass=z_init_other_mass,
+                        other_mode=z_init_other_mode,
                         layer=score_genes_layer,
                         score_genes_kwargs=score_genes_kwargs,
                     )
