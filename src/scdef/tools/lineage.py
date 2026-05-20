@@ -47,7 +47,7 @@ def _validate_layer_idx(model: "scDEF", layer_idx: int) -> None:
 
 
 def _build_factor_obs_lookup(
-    factor_obs: pd.DataFrame, layer_names: Sequence[str]
+    factor_obs: pd.DataFrame,
 ) -> Dict[Tuple[str, str], int]:
     lookup: Dict[Tuple[str, str], int] = {}
     for idx in range(len(factor_obs)):
@@ -68,34 +68,78 @@ def _current_name_for_row(model: "scDEF", row: pd.Series) -> Optional[str]:
     return None
 
 
-def _lineage_path_to_top(
+def _resolve_factor_label(model: "scDEF", factor_label: str) -> Tuple[str, int]:
+    """Resolve a factor name to ``(factor_obs_index_label, layer_idx)``.
+
+    The top layer has no ``factor_obs`` row; its name is used as a ``best_parent``
+    target for the layer below.
+    """
+    label = str(factor_label)
+    factor_obs = model.adata.uns["factor_obs"]
+
+    if label in factor_obs.index:
+        layer_name = str(factor_obs.loc[label, "child_layer"])
+        return label, int(model.layer_names.index(layer_name))
+
+    resolved, unknown = _resolve_factor_obs_names(model, [label])
+    if resolved:
+        row = factor_obs.loc[resolved[0]]
+        return resolved[0], int(model.layer_names.index(str(row["child_layer"])))
+
+    for layer_idx, names in enumerate(model.factor_names):
+        if label in names:
+            if layer_idx == model.n_layers - 1:
+                return label, layer_idx
+            slot = names.index(label)
+            orig = int(model.factor_lists[layer_idx][slot])
+            layer_name = model.layer_names[layer_idx]
+            mask = (factor_obs["child_layer"] == layer_name) & (
+                factor_obs["original_factor_idx"].astype(int) == orig
+            )
+            matches = factor_obs.index[mask].tolist()
+            if matches:
+                return matches[0], layer_idx
+
+    if unknown:
+        raise ValueError(
+            f"Unknown factor label `{factor_label}`. "
+            "Expected a name in model.factor_names or factor_obs.index."
+        )
+    raise ValueError(f"Unknown factor label `{factor_label}`.")
+
+
+def _path_to_ancestor(
     factor_obs: pd.DataFrame,
     start_name: str,
     start_layer_idx: int,
-    top_factor_obs_name: str,
+    ancestor_obs_name: str,
+    ancestor_layer_idx: int,
     layer_names: Sequence[str],
 ) -> Optional[List[int]]:
-    """Row indices from ``start_layer_idx`` upward; None if path does not reach top."""
-    lookup = _build_factor_obs_lookup(factor_obs, layer_names)
-    top_layer_name = layer_names[-1]
-    penultimate_idx = len(layer_names) - 2
+    """Row indices on the path from ``start_layer_idx`` up to ``ancestor_layer_idx``.
+
+    Returns ``None`` if the upward walk does not reach ``ancestor_obs_name``.
+    """
+    if start_layer_idx >= ancestor_layer_idx:
+        return None
+
+    lookup = _build_factor_obs_lookup(factor_obs)
     path: List[int] = []
     cur_name = str(start_name)
-    for layer_idx in range(start_layer_idx, penultimate_idx + 1):
+
+    for layer_idx in range(start_layer_idx, ancestor_layer_idx):
         key = (layer_names[layer_idx], cur_name)
         if key not in lookup:
             return None
         ridx = lookup[key]
         path.append(ridx)
         row = factor_obs.iloc[ridx]
-        if layer_idx == penultimate_idx:
-            if (
-                str(row["parent_layer"]) == top_layer_name
-                and str(row["best_parent"]) == top_factor_obs_name
-            ):
+        if layer_idx == ancestor_layer_idx - 1:
+            if str(row["best_parent"]) == ancestor_obs_name:
                 return path
             return None
         cur_name = str(row["best_parent"])
+
     return None
 
 
@@ -117,24 +161,6 @@ def _path_passes_thresholds(
     return True
 
 
-def _resolve_top_factor_label(model: "scDEF", top_factor_label: str) -> str:
-    """Map a user top-layer name to the ``best_parent`` label used in ``factor_obs``."""
-    label = str(top_factor_label)
-    factor_obs = model.adata.uns["factor_obs"]
-    if label in factor_obs.index:
-        return label
-    resolved, _unknown = _resolve_factor_obs_names(model, [label])
-    if resolved:
-        return resolved[0]
-    if label in model.factor_names[model.n_layers - 1]:
-        return label
-    raise ValueError(
-        f"Unknown top_factor_label `{top_factor_label}`. "
-        f"Expected a name in model.factor_names[{model.n_layers - 1}] "
-        f"or factor_obs.index."
-    )
-
-
 def _hierarchy_ambiguity_score(row: pd.Series, layer_idx: int) -> float:
     if layer_idx == 0 and "avg_n_eff_parents" in row.index:
         val = row["avg_n_eff_parents"]
@@ -151,39 +177,53 @@ def get_lineage_factors(
     prob_min: float = 0.5,
     exclude_technical: bool = True,
 ) -> List[str]:
-    """Return L{layer_idx} factors in the lineage of a top-layer population.
+    """Return factors at ``layer_idx`` that are clear descendants of ``top_factor_label``.
 
-    A factor is included if following ``best_parent`` at each child layer reaches
-    ``top_factor_label`` at the top, and every step on that path has
-    ``n_eff_parents <= n_eff_parents_max`` and ``best_parent_prob >= prob_min``.
+    ``top_factor_label`` may name a factor at any layer (including the top). Factors
+    at ``layer_idx`` are included when the upward ``best_parent`` chain reaches that
+    ancestor and each step on the path is unambiguous
+    (``n_eff_parents <= n_eff_parents_max``, ``best_parent_prob >= prob_min``).
+
+    When ``layer_idx == ancestor_layer - 1``, these are the direct children of the
+    ancestor; for lower ``layer_idx``, they are deeper descendants with the same
+    clarity constraints on every step up to the ancestor.
 
     Args:
         model: fitted scDEF / iscDEF / sscDEF model with ``factor_obs`` stored.
-        top_factor_label: name of a top-layer factor (current ``model.factor_names``
-            or a ``factor_obs`` index label).
+        top_factor_label: ancestor factor name (any layer; current
+            ``model.factor_names`` or ``factor_obs`` index).
         layer_idx: child layer to query (default 0 = L0).
-        n_eff_parents_max: maximum effective parents at each step on the path.
-        prob_min: minimum ``best_parent_prob`` at each step on the path.
+        n_eff_parents_max: maximum effective parents on each step toward the ancestor.
+        prob_min: minimum ``best_parent_prob`` on each step toward the ancestor.
         exclude_technical: drop factors marked technical in ``factor_obs``.
 
     Returns:
         List of factor names in the current model view at ``layer_idx``.
     """
     _validate_layer_idx(model, layer_idx)
+    layer_idx = int(layer_idx)
     factor_obs = _require_factor_obs(model)
 
-    top_obs_name = _resolve_top_factor_label(model, top_factor_label)
+    ancestor_obs_name, ancestor_layer_idx = _resolve_factor_label(
+        model, top_factor_label
+    )
+    if layer_idx >= ancestor_layer_idx:
+        raise ValueError(
+            f"layer_idx ({layer_idx}) must be below the ancestor layer "
+            f"({ancestor_layer_idx}) for `{top_factor_label}`."
+        )
 
     child_layer = model.layer_names[layer_idx]
     candidates = factor_obs.index[factor_obs["child_layer"] == child_layer]
 
     out: List[str] = []
     for name in candidates:
-        path = _lineage_path_to_top(
+        path = _path_to_ancestor(
             factor_obs,
             str(name),
             layer_idx,
-            top_obs_name,
+            ancestor_obs_name,
+            ancestor_layer_idx,
             model.layer_names,
         )
         if path is None:
