@@ -239,6 +239,7 @@ class iscDEF(scDEF):
         out = f"iscDEF object with {self.n_layers} layers"
         out += "\n\t" + "Markers layer: " + str(self.markers_layer)
         out += "\n\t" + "Contains `other` category: " + str(self.add_other)
+        out += "\n\t" + "Penalize non-marker genes: " + str(self.penalize_other)
         out += "\n\t" + "Gene set strength: " + str(self.marker_strength)
         out += "\n\t" + "Gene set mean: " + str(self.gs_big_scale)
         out += (
