@@ -3,7 +3,11 @@ import pandas as pd
 import matplotlib
 from graphviz import Graph
 from typing import Optional, Dict, List, Sequence, Union, Any, TYPE_CHECKING, Set, Tuple
-from ..tools import get_technical_signature, get_stored_confident_signatures
+from ..tools import (
+    get_technical_signature,
+    get_global_signature,
+    get_stored_confident_signatures,
+)
 from ..utils import hierarchy_utils
 
 if TYPE_CHECKING:
@@ -924,15 +928,13 @@ def make_graph(
     ordering = "out"
     angle_dict = {}
     technical_factors = set()
-    if (
-        "factor_obs" in model.adata.uns
-        and "technical" in model.adata.uns["factor_obs"].columns
-    ):
-        technical_factors = set(
-            model.adata.uns["factor_obs"]
-            .index[model.adata.uns["factor_obs"]["technical"]]
-            .tolist()
-        )
+    global_factors = set()
+    if "factor_obs" in model.adata.uns:
+        factor_obs = model.adata.uns["factor_obs"]
+        if "technical" in factor_obs.columns:
+            technical_factors = set(factor_obs.index[factor_obs["technical"]].tolist())
+        if "global" in factor_obs.columns:
+            global_factors = set(factor_obs.index[factor_obs["global"]].tolist())
 
     # Process each layer
     for layer_idx in range(model.n_layers):
@@ -1113,7 +1115,12 @@ def make_graph(
 
             # Finalize label
             label = _finalize_node_label(label, show_label)
-            fontcolor = "gray" if factor_name in technical_factors else "black"
+            if factor_name in technical_factors:
+                fontcolor = "gray"
+            elif factor_name in global_factors:
+                fontcolor = "#4169E1"
+            else:
+                fontcolor = "black"
 
             # Compute position for shell layout
             pos = None
@@ -1533,13 +1540,48 @@ def biological_hierarchy(model: "scDEF", **kwargs: Any) -> Graph:
         Graphviz Graph object
     """
     # Get the top signature
-    technical_factors = model.adata.uns["factor_obs"][
-        model.adata.uns["factor_obs"]["technical"]
-    ].index.tolist()
+    factor_obs = model.adata.uns["factor_obs"]
+    drop_mask = factor_obs["technical"]
+    if "global" in factor_obs.columns:
+        drop_mask = drop_mask | factor_obs["global"]
+    drop_factors = factor_obs.index[drop_mask].tolist()
     g = make_graph(
         model,
         hierarchy=model.adata.uns["biological_hierarchy"],
-        drop_factors=technical_factors,
+        drop_factors=drop_factors,
+        **kwargs,
+    )
+    return g
+
+
+def global_hierarchy(
+    model: "scDEF", show_signatures: bool = True, **kwargs: Any
+) -> Graph:
+    """Plot the global (shared-across-lineages) factor hierarchy.
+
+    Args:
+        model: scDEF model instance
+        show_signatures: whether to show gene signatures
+        **kwargs: keyword arguments passed to :func:`make_technical_hierarchy_graph`
+
+    Returns:
+        Graphviz Graph object
+    """
+    global_signature = None
+    global_scores = None
+    if show_signatures:
+        global_signature, global_scores = get_global_signature(
+            model,
+            return_scores=True,
+            top_genes=None,
+        )
+    g = make_technical_hierarchy_graph(
+        model,
+        hierarchy=model.adata.uns["global_hierarchy"],
+        root_gene_rankings=[global_signature],
+        root_gene_scores=[global_scores],
+        root_name="global_top",
+        show_signatures=show_signatures,
         **kwargs,
     )
     return g

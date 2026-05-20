@@ -6,6 +6,7 @@ from .hierarchy import (
     make_hierarchies,
     make_biological_hierarchy,
     make_technical_hierarchy,
+    make_global_hierarchy,
     compute_hierarchy_scores,
     add_l0_lineage_aggregate_scores,
 )
@@ -21,7 +22,9 @@ from .factor import (
     set_factor_signatures,
     get_confident_signatures,
     set_technical_factors,
+    set_global_factors,
     get_technical_signature,
+    get_global_signature,
     get_biological_signature,
     gsea,
     umap,
@@ -34,6 +37,7 @@ from .trajectory import (
     score_paths,
 )
 from .batch import get_batch_specific_genes_from_gene_scale
+from .lineage import get_lineage_factors, get_global_factors
 
 __all__ = [
     "assign_confident",
@@ -42,6 +46,7 @@ __all__ = [
     "make_hierarchies",
     "make_biological_hierarchy",
     "make_technical_hierarchy",
+    "make_global_hierarchy",
     "compute_within_group_pairwise_dissimilarity",
     "factor_diagnostics",
     "get_obs_score_rankings",
@@ -52,7 +57,9 @@ __all__ = [
     "set_factor_signatures",
     "get_confident_signatures",
     "set_technical_factors",
+    "set_global_factors",
     "get_technical_signature",
+    "get_global_signature",
     "get_biological_signature",
     "gsea",
     "compute_hierarchy_scores",
@@ -63,4 +70,6 @@ __all__ = [
     "score_paths",
     "multilevel_paga",
     "get_batch_specific_genes_from_gene_scale",
+    "get_lineage_factors",
+    "get_global_factors",
 ]

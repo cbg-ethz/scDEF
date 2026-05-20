@@ -1909,6 +1909,7 @@ class scDEF(object):
             "obs_scores",
             "within_group_pairwise_dissimilarity",
             "technical_hierarchy",
+            "global_hierarchy",
         ]:
             self.adata.uns.pop(key, None)
 
@@ -2665,6 +2666,8 @@ class scDEF(object):
             "child_layer" in source.columns and "original_factor_idx" in source.columns
         ):
             self.adata.uns["factor_obs"]["technical"] = False
+            if "global" in self.adata.uns["factor_obs"].columns:
+                self.adata.uns["factor_obs"]["global"] = False
             return
 
         layer_lookup = {}
@@ -2694,6 +2697,7 @@ class scDEF(object):
         if "child_factor" in new_factor_obs.columns:
             new_factor_obs["child_factor"] = new_index
         new_factor_obs["technical"] = False
+        new_factor_obs["global"] = False
         self.adata.uns["factor_obs"] = new_factor_obs
 
     def set_factor_names(self):

@@ -1,4 +1,4 @@
-from .models import scDEF as scDEF, iscDEF as iscDEF
+from .models import scDEF as scDEF, iscDEF as iscDEF, sscDEF as sscDEF
 from .utils import (
     hierarchy_utils as hierarchy_utils,
     jax_utils as jax_utils,

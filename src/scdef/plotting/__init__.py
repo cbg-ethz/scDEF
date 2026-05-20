@@ -1,7 +1,12 @@
 """Plotting utilities for scDEF.
 """
 
-from .graph import make_graph, technical_hierarchy, biological_hierarchy
+from .graph import (
+    make_graph,
+    technical_hierarchy,
+    global_hierarchy,
+    biological_hierarchy,
+)
 from .factors import (
     obs_factor_dotplot,
     layers_obs,
@@ -36,6 +41,7 @@ from .qc import (
 __all__ = [
     "make_graph",
     "technical_hierarchy",
+    "global_hierarchy",
     "biological_hierarchy",
     "obs_factor_dotplot",
     "multilevel_paga",
