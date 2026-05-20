@@ -24,7 +24,7 @@ class iscDEF(scDEF):
 
     - **Stay close to the input marker lists** (typing, strict gene programs):
       increase ``gs_big_scale`` and ``marker_strength``;
-      set ``penalize_other=True`` so off-type markers are discouraged on the wrong factor;
+      keep the default ``penalize_other=True`` so off-type markers are discouraged on the wrong factor;
       keep ``add_other`` small when you only have a few types to avoid ignoring the marker factors.
 
     - **Augment markers with data-driven genes**:
@@ -59,7 +59,8 @@ class iscDEF(scDEF):
         marker_strength: Gamma prior concentration on marker-gene loadings (higher → less augmentation away from markers).
         nonmarker_strength: prior concentration on non-marker loadings (higher → tighter; overridden to 1.0 if ``use_brd``).
         other_strength: prior concentration when penalizing marker genes on the wrong factor or on ``other`` rows.
-        penalize_other: if True, typed factors penalize other groups' marker genes; ``other`` factors penalize all typed markers.
+        penalize_other: if True (default), typed factors penalize other groups' marker genes;
+            ``other`` factors penalize all typed markers.
         **kwargs: additional arguments passed to scDEF. ``hierarchy_fraction`` defaults to ``0.25``
             (scales coverage-derived ``alpha`` when ``set_alpha_from_cov=True``).
     """
@@ -79,7 +80,7 @@ class iscDEF(scDEF):
         marker_strength: Optional[float] = 1.0,
         nonmarker_strength: Optional[float] = 0.1,
         other_strength: Optional[float] = 0.1,
-        penalize_other: Optional[bool] = False,
+        penalize_other: Optional[bool] = True,
         **kwargs,
     ):
         self.markers_dict = markers_dict
