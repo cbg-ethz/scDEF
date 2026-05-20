@@ -50,6 +50,9 @@ class iscDEF(scDEF):
             columns at L0) and one coarse factor at the marker layer.
         markers_layer: index of the layer at which gene sets are enforced as factors (0 = lowest/finest,
             higher = top layer). If > 0, total layers determined by this value.
+        add_root: when ``markers_layer > 0`` (default ``True``), append a width-1 root above the
+            marker layer. Fitting runs in two phases (main fit with frozen root, then
+            ``root_epochs`` on the root only); see :meth:`fit`. Ignored when ``markers_layer=0``.
         cn_small_mean: mean prior connectivity for "small" (weakly-connected) genes between factors and gene sets.
         cn_big_mean: mean prior connectivity for "big" (strongly-connected) genes between factors and gene sets.
         cn_small_strength: concentration parameter for low connectivity (see scDEF prior specification).
@@ -71,6 +74,7 @@ class iscDEF(scDEF):
         markers_dict: Mapping[str, Sequence[str]],
         add_other: Optional[int] = 0,
         markers_layer: Optional[int] = 0,
+        add_root: Optional[bool] = None,
         cn_small_mean: Optional[float] = 1e-2,
         cn_big_mean: Optional[float] = 1.0,
         cn_small_strength: Optional[float] = 1.0,
@@ -88,7 +92,15 @@ class iscDEF(scDEF):
         self.add_other = int(add_other) if add_other is not None else 0
         if self.add_other < 0:
             raise ValueError("add_other must be >= 0.")
-        self.markers_layer = markers_layer
+        self.markers_layer = int(markers_layer)
+        if self.markers_layer == 0:
+            if add_root is True:
+                raise ValueError("add_root=True requires markers_layer > 0.")
+            self.add_root = False
+        elif add_root is None:
+            self.add_root = True
+        else:
+            self.add_root = bool(add_root)
 
         # Set w_priors
         self.cn_small_strength = cn_small_strength
@@ -128,7 +140,7 @@ class iscDEF(scDEF):
             adata,
             layer_sizes=self.layer_sizes,
             layer_names=self.layer_names,
-            n_layers=self.n_layers_schedule,
+            n_layers=len(self.layer_sizes),
             **kwargs,
         )
 
@@ -150,7 +162,7 @@ class iscDEF(scDEF):
         self.set_posterior_means()
         self.set_posterior_variances()
         self.set_factor_names()
-        self._top_factor_names = list(self.factor_names[-1])
+        self._refresh_top_factor_names()
 
     def set_layer_sizes(self):
         layer_sizes = []
@@ -191,8 +203,20 @@ class iscDEF(scDEF):
                     self.n_layers - 1
                 )
 
+            if self.add_root:
+                layer_sizes.append(1)
+                layer_names.append("root")
+
         self.layer_sizes = layer_sizes
         self.layer_names = layer_names
+        self.n_layers = len(layer_sizes)
+
+    def _refresh_top_factor_names(self) -> None:
+        """Marker-layer names used for annotation (not the optional width-1 root)."""
+        if self.markers_layer != 0 and len(self.factor_names) > self.markers_layer:
+            self._top_factor_names = list(self.factor_names[self.markers_layer])
+        elif len(self.factor_names) > 0:
+            self._top_factor_names = list(self.factor_names[-1])
 
     def update_model_priors(self):
         super(iscDEF, self).update_model_priors()
@@ -255,7 +279,10 @@ class iscDEF(scDEF):
         self.cn_big_mean = cn_big_mean
 
         # Ensure connectivity follows an exponential hierarchy: Each factor at layer L is connected to decay_factor child factors for the same marker at layer (L-1)
-        for layer_idx in range(1, self.n_layers):
+        connectivity_layers = self.n_layers
+        if getattr(self, "add_root", False) and self.markers_layer > 0:
+            connectivity_layers = self.markers_layer + 1
+        for layer_idx in range(1, connectivity_layers):
             upper_kept = np.asarray(self.factor_lists[layer_idx], dtype=int)
             lower_kept = np.asarray(self.factor_lists[layer_idx - 1], dtype=int)
             n_upper = len(upper_kept)
@@ -265,7 +292,7 @@ class iscDEF(scDEF):
             upper_pos = {factor_idx: pos for pos, factor_idx in enumerate(upper_kept)}
             lower_pos = {factor_idx: pos for pos, factor_idx in enumerate(lower_kept)}
 
-            layer_rev_idx = self.n_layers - 1 - layer_idx  # How far from the bottom
+            layer_rev_idx = self._hierarchy_content_layers() - 1 - layer_idx
 
             n_marker_factors = self.n_markers
 
@@ -455,7 +482,7 @@ class iscDEF(scDEF):
                                 marker_name + f"_{self.layer_names[idx]}_{sub_factor}"
                             )
                         factor_names += marker_factor_names
-                elif idx == self.n_layers - 1:
+                elif idx == self.markers_layer:
                     if hasattr(self, "_top_factor_names") and len(
                         self._top_factor_names
                     ) == len(self.factor_lists[idx]):
@@ -466,8 +493,13 @@ class iscDEF(scDEF):
                             for i, marker in enumerate(self.marker_names)
                             if i in self.factor_lists[idx]
                         ]
+                elif getattr(self, "add_root", False) and idx == self.n_layers - 1:
+                    factor_names = [
+                        f"{self.layer_names[idx]}_{i}"
+                        for i in range(len(self.factor_lists[idx]))
+                    ]
                 else:
-                    rev_idx = self.n_layers - 1 - idx
+                    rev_idx = self._hierarchy_content_layers() - 1 - idx
                     factor_names = []
                     factors_per_marker = int(self.decay_factor) ** rev_idx
                     for marker_idx, marker_name in enumerate(self.marker_names):
@@ -488,8 +520,7 @@ class iscDEF(scDEF):
                         factor_names += marker_factor_names
                     # For layer 0, add "other" factors at the end
                 self.factor_names.append(factor_names)
-        if len(self.factor_names) > 0:
-            self._top_factor_names = list(self.factor_names[-1])
+        self._refresh_top_factor_names()
 
     def filter_factors(
         self,
@@ -542,8 +573,7 @@ class iscDEF(scDEF):
                 else:
                     corrected_names.append(self.factor_names[idx])
             self.factor_names = corrected_names
-            if len(self.factor_names) > 0:
-                self._top_factor_names = list(self.factor_names[-1])
+            self._refresh_top_factor_names()
 
         if annotate:
             self.annotate_adata()
@@ -590,11 +620,19 @@ class iscDEF(scDEF):
             )
         return scores
 
+    def _hierarchy_content_layers(self) -> int:
+        """Layer count used for marker block geometry (excludes optional width-1 root)."""
+        n = int(self.n_layers)
+        if getattr(self, "add_root", False):
+            n -= 1
+        return n
+
     def _hierarchical_block_size(self, layer_idx: int) -> int:
         """Factors per marker block at ``layer_idx`` when ``markers_layer > 0``."""
-        if self.n_layers == 1:
+        n_content = self._hierarchy_content_layers()
+        if n_content == 1:
             return int(self.n_factors_per_marker)
-        rev_layer = (self.n_layers - 1) - layer_idx
+        rev_layer = (n_content - 1) - layer_idx
         return int(self.decay_factor**rev_layer)
 
     def _typed_props_from_marker_scores(
@@ -663,10 +701,16 @@ class iscDEF(scDEF):
             layer=layer,
             score_genes_kwargs=score_genes_kwargs,
         )
-        return [
+        n_init_layers = self.n_layers
+        if getattr(self, "add_root", False):
+            n_init_layers -= 1
+        inits = [
             self._build_z_init_hierarchical_layer(typed_props, ell, other_mass)
-            for ell in range(self.n_layers)
+            for ell in range(n_init_layers)
         ]
+        if getattr(self, "add_root", False):
+            inits.append(None)
+        return inits
 
     def _l0_other_factor_count(self) -> int:
         """Number of L0 factor columns reserved for ``other`` blocks."""
@@ -746,6 +790,7 @@ class iscDEF(scDEF):
         z_init_other_mass: Optional[float] = None,
         score_genes_layer: Optional[str] = None,
         score_genes_kwargs: Optional[Dict[str, Any]] = None,
+        root_epochs: int = 0,
         **kwargs,
     ):
         """Fit iscDEF, warm-starting from previous fit when available.
@@ -763,6 +808,10 @@ class iscDEF(scDEF):
         columns at each layer equals the number of other factors at that layer
         divided by that layer width. ``nmf_init`` is
         not used by iscDEF.
+
+        When ``add_root=True`` (``markers_layer > 0`` only), a width-1 root is appended
+        and fitting runs in two phases: all layers except the root, then ``root_epochs``
+        on the root only (default ``10`` when ``add_root`` and ``root_epochs`` is 0).
         """
         if nmf_init:
             self.logger.warning(
@@ -770,6 +819,9 @@ class iscDEF(scDEF):
                 "marker score_genes when z_init_from_score_genes=True."
             )
         nmf_init = False
+        if getattr(self, "add_root", False) and int(root_epochs) == 0:
+            root_epochs = 10
+        self.root_epochs = int(root_epochs)
         if getattr(self, "_has_fit", False):
             old_factor_lists = [
                 np.array(factors, dtype=int).copy() for factors in self.factor_lists
@@ -857,6 +909,57 @@ class iscDEF(scDEF):
         )
         self.elbos = []
         self.step_sizes = []
-        self._learn(**kwargs)
+        self._invalidate_cached_diagnostics()
+
+        optimize_layers = list(range(self.n_layers))
+        if self.root_epochs > 0:
+            optimize_layers = list(range(self.n_layers - 1))
+
+        main_learn_kwargs = dict(kwargs)
+        if self.root_epochs > 0:
+            main_learn_kwargs["filter"] = False
+            main_learn_kwargs["annotate"] = False
+
+        self._learn(
+            optimize_layers=optimize_layers,
+            **main_learn_kwargs,
+        )
+        self.qc_elbos = [np.asarray(x).copy() for x in self.elbos]
+        preserved_traces = {
+            "entropy_annealing_trace": np.asarray(
+                getattr(self, "entropy_annealing_trace", np.array([]))
+            ).copy(),
+            "entropy_annealing_trace_epochs": np.asarray(
+                getattr(self, "entropy_annealing_trace_epochs", np.array([]))
+            ).copy(),
+        }
+
+        if self.root_epochs > 0:
+            root_kwargs = dict(kwargs)
+            root_kwargs.pop("n_rounds", None)
+            root_kwargs["n_epoch"] = self.root_epochs
+            root_kwargs["annealing"] = 1.0
+            root_kwargs["entropy_anneal"] = False
+            self._learn(
+                n_rounds=1,
+                optimize_layers=[self.n_layers - 1],
+                **root_kwargs,
+            )
+            self.entropy_annealing_trace = preserved_traces[
+                "entropy_annealing_trace"
+            ].copy()
+            self.entropy_annealing_trace_epochs = preserved_traces[
+                "entropy_annealing_trace_epochs"
+            ].copy()
+            self.adata.uns.pop("alpha_trace", None)
+            self.adata.uns.pop("alpha_trace_epochs", None)
+            self.adata.uns.pop("n_eff_parents_trace", None)
+            self.adata.uns.pop("n_eff_parents_trace_epochs", None)
+            self.adata.uns.pop("active_l0_factor_counts_trace", None)
+            self.adata.uns.pop("alpha_schedule_alphas", None)
+            self.adata.uns.pop("alpha_schedule_losses", None)
+            self.adata.uns.pop("alpha_schedule_epochs", None)
+
+        self.clear_runtime_cache(clear_jax_cache=False)
         self._has_fit = True
         self._fit_revision = getattr(self, "_fit_revision", 0) + 1

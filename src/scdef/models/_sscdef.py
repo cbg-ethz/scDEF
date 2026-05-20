@@ -19,9 +19,9 @@ class sscDEF(scDEF):
     """Supervised scDEF (sscDEF): cell-type labels fix the top hierarchy.
 
     Layer sizes and :math:`W` priors match :class:`scDEF` (geometric schedule from
-    ``n_factors`` / ``n_layers``, or explicit ``layer_sizes``). Unlike default scDEF
-    with multiple top factors, no width-1 root is appended: the coarsest layer is the
-    supervised one with one factor per category in ``adata.obs[top_key]``.
+    ``n_factors`` / ``n_layers``, or explicit ``layer_sizes``).     By default a width-1 root is appended above the supervised top layer (fitted in a
+    second phase via ``root_epochs``, default 10). Pass ``add_root=False`` to use only
+    the supervised layer as the coarsest level.
 
     Top-layer cell-factor usage ``z`` is fixed to binary assignments (1 on the annotated
     population, near-zero elsewhere). During fitting the top ``z`` is not sampled from
@@ -32,8 +32,10 @@ class sscDEF(scDEF):
         adata: AnnData with counts in ``adata.X`` or ``counts_layer``.
         top_key: ``adata.obs`` column with cell population / cell-type labels.
         n_factors, n_layers, layer_sizes, layer_names: same meaning as :class:`scDEF`
-            (``n_layers`` counts layers from L0 through the supervised top; no extra root).
-        **kwargs: passed to :class:`scDEF`.
+            (``n_layers`` counts layers from L0 through the supervised top; ``add_root``
+            appends a width-1 root not counted in ``n_layers``).
+        add_root: if True (default), append a width-1 root above the supervised top layer.
+        **kwargs: passed to :class:`scDEF` (including ``root_epochs`` for the root-only phase).
     """
 
     _Z_OFF_TYPE = 1e-3
@@ -78,6 +80,7 @@ class sscDEF(scDEF):
         self,
         adata: AnnData,
         top_key: str,
+        add_root: bool = True,
         **kwargs: Any,
     ):
         if top_key not in adata.obs.columns:
@@ -106,10 +109,23 @@ class sscDEF(scDEF):
                 "at least one learned layer below)."
             )
 
+        self.add_root = bool(add_root)
+
         layer_sizes = kwargs.get("layer_sizes")
         if layer_sizes is not None:
             layer_sizes = [int(x) for x in layer_sizes]
-            if int(layer_sizes[-1]) != self.n_populations:
+            if self.add_root:
+                if int(layer_sizes[-1]) != 1:
+                    raise ValueError(
+                        "With add_root=True, the last entry of layer_sizes must be 1."
+                    )
+                if int(layer_sizes[-2]) != self.n_populations:
+                    raise ValueError(
+                        "With add_root=True, the penultimate layer_sizes entry must "
+                        f"equal the number of categories in obs[`{self.top_key}`] "
+                        f"({self.n_populations})."
+                    )
+            elif int(layer_sizes[-1]) != self.n_populations:
                 raise ValueError(
                     "The last entry of layer_sizes must equal the number of "
                     f"categories in obs[`{self.top_key}`] ({self.n_populations})."
@@ -118,12 +134,16 @@ class sscDEF(scDEF):
             layer_sizes = self._geometric_layer_sizes_no_root(
                 n_factors, self.n_populations, n_layers_schedule
             )
+            if self.add_root:
+                layer_sizes.append(1)
 
         layer_names = kwargs.get("layer_names")
         if layer_names is None:
-            layer_names = [f"L{i}" for i in range(len(layer_sizes) - 1)] + [
-                self.top_key
-            ]
+            n_below_top = len(layer_sizes) - 1 - int(self.add_root)
+            layer_names = [f"L{i}" for i in range(n_below_top)]
+            layer_names.append(self.top_key)
+            if self.add_root:
+                layer_names.append("root")
         elif len(layer_names) != len(layer_sizes):
             raise ValueError("layer_names must have the same length as layer_sizes.")
 
@@ -134,7 +154,9 @@ class sscDEF(scDEF):
         kwargs["top_factors"] = self.n_populations
         kwargs["n_layers"] = len(layer_sizes)
 
-        self.supervised_top_layer_idx = len(layer_sizes) - 1
+        self.supervised_top_layer_idx = (
+            len(layer_sizes) - 2 if self.add_root else len(layer_sizes) - 1
+        )
 
         super(sscDEF, self).__init__(adata, **kwargs)
 
@@ -163,7 +185,7 @@ class sscDEF(scDEF):
 
     def set_factor_names(self) -> None:
         super(sscDEF, self).set_factor_names()
-        top_idx = int(self.n_layers - 1)
+        top_idx = int(self.supervised_top_layer_idx)
         self.factor_names[top_idx] = [
             self.population_names[int(i)] for i in self.factor_lists[top_idx]
         ]
@@ -998,10 +1020,18 @@ class sscDEF(scDEF):
             )
             self.annotate_adata()
 
-    def fit(self, **kwargs: Any) -> None:
-        """Fit sscDEF; the supervised top layer ``z`` is held fixed."""
+    def fit(self, root_epochs: int = 0, **kwargs: Any) -> None:
+        """Fit sscDEF; the supervised top layer ``z`` is held fixed.
+
+        When ``add_root=True``, delegates to :meth:`scDEF.fit` two-phase scheduling
+        (frozen root during the main fit, then ``root_epochs`` on the root). Defaults
+        to ``root_epochs=10`` when ``add_root`` and ``root_epochs`` is 0.
+        """
         kwargs = dict(kwargs)
         kwargs.pop("optimize_layers", None)
+        if self.add_root and int(root_epochs) == 0:
+            root_epochs = 10
+        kwargs["root_epochs"] = int(root_epochs)
         self._learn_jit_cache = None
         self._pin_supervised_top_z_local_params()
         super(sscDEF, self).fit(**kwargs)
