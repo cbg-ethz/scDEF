@@ -305,6 +305,7 @@ def factor_diagnostics(
     factor_obs.loc[l0_rows, "ARD"] = ard_all[original_idx]
     factor_obs.loc[l0_rows, "BRD"] = brd_all[original_idx]
     factor_obs["technical"] = False
+    factor_obs["global"] = False
     factor_obs["batch_entropy"] = np.nan
     factor_obs["batch_purity"] = np.nan
 
@@ -1465,6 +1466,84 @@ def set_technical_factors(
     model.annotate_adata()
 
 
+def set_global_factors(
+    model: "scDEF",
+    factors: Optional[Sequence[str]] = None,
+    layer_idx: int = 0,
+    n_eff_parents_min: float = 1.5,
+    exclude_technical: bool = True,
+) -> None:
+    """Mark global (shared-across-lineages) factors in ``factor_obs``.
+
+    Global factors are identified from hierarchy diagnostics (high effective
+    parents). They are excluded from :func:`make_biological_hierarchy` but remain
+    eligible for cell-to-factor assignment at L0 (unlike technical factors).
+
+    Args:
+        model: scDEF model instance
+        factors: explicit factor names to mark as global (resolved like
+            :func:`set_technical_factors`). When ``None``, uses
+            :func:`scdef.tools.lineage.get_global_factors`.
+        layer_idx: child layer for automatic selection (default 0).
+        n_eff_parents_min: minimum effective-parent score when ``factors`` is None.
+        exclude_technical: do not mark technical factors as global.
+    """
+    from scdef.tools.lineage import get_global_factors
+
+    if "factor_obs" not in model.adata.uns:
+        factor_diagnostics(model)
+    if "global" not in model.adata.uns["factor_obs"].columns:
+        model.adata.uns["factor_obs"]["global"] = False
+    model.adata.uns["factor_obs"]["global"] = False
+
+    factor_obs = model.adata.uns["factor_obs"]
+    global_factor_rows: List[str] = []
+    if factors is not None:
+        resolved, unknown = _resolve_factor_obs_names(model, factors)
+        if len(unknown) > 0:
+            raise ValueError(
+                "Unknown factor name(s) in `factors`: " + ", ".join(map(str, unknown))
+            )
+        global_factor_rows = resolved
+    else:
+        for name in get_global_factors(
+            model,
+            layer_idx=layer_idx,
+            n_eff_parents_min=n_eff_parents_min,
+            exclude_technical=exclude_technical,
+        ):
+            resolved, unknown = _resolve_factor_obs_names(model, [name])
+            if unknown:
+                continue
+            global_factor_rows.extend(resolved)
+
+    if len(global_factor_rows) > 0:
+        model.adata.uns["factor_obs"].loc[global_factor_rows, "global"] = True
+
+    complete_hierarchy: Dict[str, Sequence[str]] = {}
+    pmeans = getattr(model, "pmeans", None)
+    if isinstance(pmeans, dict):
+        can_build = True
+        for layer_idx in range(model.n_layers - 1):
+            key = f"{model.layer_names[layer_idx + 1]}W"
+            if key not in pmeans:
+                can_build = False
+                break
+        if can_build:
+            complete_hierarchy = get_hierarchy(model, simplified=False)
+
+    for factor, children in complete_hierarchy.items():
+        if len(children) == 0:
+            continue
+        if all(
+            bool(model.adata.uns["factor_obs"].loc[child, "global"])
+            for child in children
+            if child in model.adata.uns["factor_obs"].index
+        ):
+            if factor in model.adata.uns["factor_obs"].index:
+                model.adata.uns["factor_obs"].loc[factor, "global"] = True
+
+
 def __build_consensus_signature(var_names, gene_scores_array, sizes_array):
     sizes_array = sizes_array / np.sum(sizes_array)
     avg_ranks = np.sum(sizes_array[:, None] * gene_scores_array, axis=0)
@@ -1513,6 +1592,64 @@ def get_technical_signature(
 
     relevances = model.get_relevances_dict()
     children = hierarchy["tech_top"]
+    factors = [
+        factor
+        for i, factor in enumerate(range(len(gene_scores)))
+        if model.factor_names[0][i] in children
+    ]
+    gene_scores = np.array([gene_scores[f] / np.max(gene_scores[f]) for f in factors])
+    children_sizes = np.array([relevances[child] for child in children]).ravel()
+
+    consensus_signature, consensus_scores = __build_consensus_signature(
+        model.adata.var_names, gene_scores, children_sizes
+    )
+    if return_scores:
+        return consensus_signature[:top_genes], consensus_scores[:top_genes]
+    return consensus_signature[:top_genes]
+
+
+def get_global_signature(
+    model: "scDEF", top_genes: int = 10, return_scores: bool = False
+) -> Union[List[str], Tuple[List[str], np.ndarray]]:
+    """Consensus gene signature over global layer-0 factors.
+
+    Requires :func:`make_global_hierarchy` (or :func:`make_hierarchies`) to have
+    been run so ``model.adata.uns['global_hierarchy']`` exists.
+
+    Args:
+        model: scDEF model instance
+        top_genes: number of top genes to return
+        return_scores: if True, also return consensus scores
+
+    Returns:
+        Gene list, or ``(genes, scores)`` when ``return_scores=True``.
+    """
+    hierarchy = model.adata.uns["global_hierarchy"]
+    gene_rankings, gene_scores = model.get_rankings(
+        layer_idx=0,
+        genes=True,
+        return_scores=True,
+    )
+
+    var_names = np.array(model.adata.var_names)
+    n_factors = len(gene_scores)
+    gene_scores_ordered = []
+    for i in range(n_factors):
+        ranking = np.array(gene_rankings[i])
+        scores = np.array(gene_scores[i])
+        scores_full = np.full(len(var_names), np.nan)
+        mask = np.in1d(var_names, ranking)
+        scores_full[mask] = scores[
+            [np.where(ranking == g)[0][0] for g in var_names[mask]]
+        ]
+        scores_full = np.nan_to_num(scores_full, nan=0)
+        gene_scores_ordered.append(scores_full)
+    gene_scores = np.array(
+        [s / np.max(s) if np.max(s) > 0 else s for s in gene_scores_ordered]
+    )
+
+    relevances = model.get_relevances_dict()
+    children = hierarchy["global_top"]
     factors = [
         factor
         for i, factor in enumerate(range(len(gene_scores)))

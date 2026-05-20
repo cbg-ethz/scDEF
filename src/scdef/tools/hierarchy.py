@@ -342,10 +342,12 @@ def make_biological_hierarchy(model: "scDEF") -> Dict[str, Sequence[str]]:
     Returns:
         biological_hierarchy: dictionary containing the biological hierarchy
     """
-    technical_factors = model.adata.uns["factor_obs"][
-        model.adata.uns["factor_obs"]["technical"]
-    ].index.tolist()  # layer 0
-    biological_hierarchy = get_hierarchy(model, drop_factors=technical_factors)
+    factor_obs = model.adata.uns["factor_obs"]
+    drop_mask = factor_obs["technical"]
+    if "global" in factor_obs.columns:
+        drop_mask = drop_mask | factor_obs["global"]
+    drop_factors = factor_obs.index[drop_mask].tolist()
+    biological_hierarchy = get_hierarchy(model, drop_factors=drop_factors)
     model.adata.uns["biological_hierarchy"] = biological_hierarchy
     return biological_hierarchy
 
@@ -372,14 +374,37 @@ def make_technical_hierarchy(model: "scDEF") -> Dict[str, Sequence[str]]:
     return technical_hierarchy
 
 
+def make_global_hierarchy(model: "scDEF") -> Dict[str, Sequence[str]]:
+    """Make the global (shared-across-lineages) hierarchy of the model.
+
+    Args:
+        model: scDEF model instance
+
+    Returns:
+        global_hierarchy: dictionary with synthetic root ``global_top`` and
+            global layer-0 factors as direct children.
+    """
+    factor_obs = model.adata.uns["factor_obs"]
+    if "global" not in factor_obs.columns:
+        factor_obs["global"] = False
+    global_mask = factor_obs["global"] & (
+        factor_obs["child_layer"] == model.layer_names[0]
+    )
+    global_factors = factor_obs[global_mask].index.tolist()
+    global_hierarchy: Dict[str, Sequence[str]] = {"global_top": global_factors}
+    model.adata.uns["global_hierarchy"] = global_hierarchy
+    return global_hierarchy
+
+
 def make_hierarchies(model: "scDEF") -> None:
-    """Store the biological and technical hierarchies of the model.
+    """Store the biological, technical, and global hierarchies of the model.
 
     Args:
         model: scDEF model instance
     """
     make_biological_hierarchy(model)
     make_technical_hierarchy(model)
+    make_global_hierarchy(model)
 
 
 def get_hierarchy(
