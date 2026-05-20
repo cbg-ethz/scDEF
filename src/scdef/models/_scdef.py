@@ -889,6 +889,13 @@ class scDEF(object):
             z_init_layer = _get_layer_init(init_z, layer_idx)
             if z_init_layer is not None and not nmf_init:
                 m = z_init_layer.astype(jnp.float32)
+                m = jnp.clip(
+                    tfd.Gamma(a, a / m).sample(
+                        seed=rngs[rng_cnt],
+                    ),
+                    clip,
+                    4.0,
+                )
             elif (
                 nmf_init
                 and (not init_z_provided)
