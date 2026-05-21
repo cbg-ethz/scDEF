@@ -21,10 +21,10 @@ def test_sscdef_supervised_top_z_and_make_graph():
         n_factors=4,
         seed=1,
     )
-    assert model.n_layers == 2
-    assert model.layer_sizes == [4, 2]
-    assert model.layer_names[-1] == "cell_type"
-    assert len(model.w_priors) == 2
+    assert model.n_layers == 3
+    assert model.layer_sizes == [4, 2, 1]
+    assert model.layer_names[model.supervised_top_layer_idx] == "cell_type"
+    assert len(model.w_priors) == 3
     assert model.w_priors[1][0].shape == (2, 4)
 
     top = model._supervised_top_z
@@ -36,7 +36,9 @@ def test_sscdef_supervised_top_z_and_make_graph():
     model.fit(n_epoch=2, n_rounds=1)
     model.annotate_adata()
 
-    z_top = np.array(model.pmeans[f"{model.layer_names[-1]}z"])
+    z_top = np.array(
+        model.pmeans[f"{model.layer_names[model.supervised_top_layer_idx]}z"]
+    )
     np.testing.assert_allclose(z_top, top, rtol=1e-5, atol=1e-5)
 
     start, end = model._layer_column_range(model.supervised_top_layer_idx)
@@ -59,6 +61,23 @@ def test_sscdef_layer_sizes_match_scdef_geometric_without_root():
     scdef_model = scd.scDEF(
         adata, n_factors=n_factors, top_factors=top_k, n_layers=n_layers, seed=0
     )
-    # scDEF appends a width-1 root when top_factors > 1
+    adata.obs["pop"] = np.tile([f"p{i}" for i in range(top_k)], 2)
+    sscdef_no_root = scd.sscDEF(
+        adata,
+        top_key="pop",
+        n_factors=n_factors,
+        n_layers=n_layers,
+        add_root=False,
+        seed=0,
+    )
+    sscdef_root = scd.sscDEF(
+        adata,
+        top_key="pop",
+        n_factors=n_factors,
+        n_layers=n_layers,
+        seed=0,
+    )
     assert scdef_model.layer_sizes == expected + [1]
+    assert sscdef_no_root.layer_sizes == expected
+    assert sscdef_root.layer_sizes == expected + [1]
     assert expected[-1] == top_k
