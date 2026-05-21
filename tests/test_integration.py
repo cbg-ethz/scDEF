@@ -241,6 +241,7 @@ def test_scdef():
     scd.pl.factor_diagnostics(model, batch_purity_min=0.1, show=False)
     scd.tl.set_technical_factors(model, factors=[model.factor_names[0][0]])
     scd.tl.make_hierarchies(model)
+    scd.tl.set_confident_signatures(model)
     with patch(
         "scdef.plotting.graph._get_confident_signature_rankings_layer",
         wraps=graph_plot._get_confident_signature_rankings_layer,
