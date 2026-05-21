@@ -1707,6 +1707,7 @@ class scDEF(object):
             nmf_init = False
             init_budgets = False
             init_alpha = True
+            z_init_concentration = 100.0  # on re-fit, use high concentration to avoid ignoring initial state
             if force_decay_factor:
                 l0_keep = np.array(old_factor_lists[0], dtype=int)
                 init_z = np.array(self.pmeans[f"{self.layer_names[0]}z"])[:, l0_keep]
