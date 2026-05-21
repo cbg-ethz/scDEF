@@ -890,7 +890,7 @@ class scDEF(object):
             if z_init_layer is not None and not nmf_init:
                 m = z_init_layer.astype(jnp.float32)
                 m = jnp.clip(
-                    tfd.Gamma(a, a / m).sample(
+                    tfd.Gamma(z_init_concentration, z_init_concentration / m).sample(
                         seed=rngs[rng_cnt],
                     ),
                     clip,
