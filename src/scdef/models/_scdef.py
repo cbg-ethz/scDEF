@@ -560,7 +560,7 @@ class scDEF(object):
         parent_idx: int,
         fraction: float,
         min_l0_factors: int = 10,
-        min_upper_factors: int = 10,
+        min_upper_factors: int = 5,
     ) -> bool:
         """True when a child layer keeps at least ``fraction`` of its parent's factors."""
         layer_sizes = [int(x) for x in layer_sizes]
@@ -589,7 +589,7 @@ class scDEF(object):
         layer_sizes: Sequence[int],
         fraction: float,
         min_l0_factors: int = 10,
-        min_upper_factors: int = 10,
+        min_upper_factors: int = 5,
     ) -> Tuple[List[int], List[int], int]:
         """Drop redundant child layers throughout the hierarchy (bottom-up scan)."""
         sizes = [int(x) for x in layer_sizes]
@@ -1815,7 +1815,7 @@ class scDEF(object):
         root_epochs: int = 0,
         collapse_l1_fraction: Optional[float] = 0.8,
         collapse_l0_min_factors: int = 10,
-        collapse_upper_min_factors: int = 10,
+        collapse_upper_min_factors: int = 5,
         **kwargs: Any,
     ) -> None:
         """Fit scDEF, warm-starting from a previous fit when available.
