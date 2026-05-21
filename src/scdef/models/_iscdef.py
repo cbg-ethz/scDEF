@@ -1007,7 +1007,7 @@ class iscDEF(scDEF):
             l0_keep = old_factor_lists[0]
             init_brd = np.array(self.pmeans["brd"])[l0_keep] if self.use_brd else None
             init_ard = np.array(self.pmeans["factor_means"])[l0_keep]
-            z_init_concentration = 100.0
+            z_init_concentration = 100.0  # on re-fit, use high concentration to avoid ignoring initial state
 
             # After extracting priors/inits in original index space, switch to
             # compact local indexing for learning/annotation consistency.
