@@ -2934,24 +2934,7 @@ class scDEF(object):
             self.adata.obsm[f"X_{layer_name}"] = np.array(
                 self.pmeans[f"{layer_name}z"][:, self.factor_lists[idx]]
             )
-            technical_names = set()
-            if (
-                "factor_obs" in self.adata.uns
-                and "technical" in self.adata.uns["factor_obs"].columns
-            ):
-                technical_names = set(
-                    self.adata.uns["factor_obs"]
-                    .index[self.adata.uns["factor_obs"]["technical"]]
-                    .tolist()
-                )
-            biological_mask = np.array(
-                [name not in technical_names for name in self.factor_names[idx]],
-                dtype=bool,
-            )
-            scores_for_assignment = self.adata.obsm[f"X_{layer_name}"].copy()
-            if np.any(biological_mask):
-                scores_for_assignment[:, ~biological_mask] = -np.inf
-            assignments = np.argmax(scores_for_assignment, axis=1)
+            assignments = np.argmax(self.adata.obsm[f"X_{layer_name}"], axis=1)
             self.adata.obs[f"{layer_name}"] = [
                 self.factor_names[idx][a] for a in assignments
             ]
@@ -3061,27 +3044,9 @@ class scDEF(object):
     def normalize_cellscores(self):
         for idx in range(self.n_layers):
             layer_name = self.layer_names[idx]
-            technical_names = set()
-            if (
-                "factor_obs" in self.adata.uns
-                and "technical" in self.adata.uns["factor_obs"].columns
-            ):
-                technical_names = set(
-                    self.adata.uns["factor_obs"]
-                    .index[self.adata.uns["factor_obs"]["technical"]]
-                    .tolist()
-                )
-            biological_mask = np.array(
-                [name not in technical_names for name in self.factor_names[idx]],
-                dtype=bool,
-            )
-            probs = np.zeros_like(self.adata.obsm[f"X_{layer_name}"], dtype=float)
-            if np.any(biological_mask):
-                bio_scores = self.adata.obsm[f"X_{layer_name}"][:, biological_mask]
-                bio_den = np.sum(bio_scores, axis=1, keepdims=True)
-                bio_den = np.clip(bio_den, 1e-12, None)
-                probs[:, biological_mask] = bio_scores / bio_den
-            self.adata.obsm[f"X_{layer_name}_probs"] = probs
+            scores = np.asarray(self.adata.obsm[f"X_{layer_name}"], dtype=float)
+            den = np.clip(np.sum(scores, axis=1, keepdims=True), 1e-12, None)
+            self.adata.obsm[f"X_{layer_name}_probs"] = scores / den
             scores_names = [f + "_prob" for f in self.factor_names[idx]]
             df = pd.DataFrame(
                 self.adata.obsm[f"X_{layer_name}_probs"],

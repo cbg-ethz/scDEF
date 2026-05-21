@@ -1524,9 +1524,61 @@ def set_technical_factors(
         ):
             model.adata.uns["factor_obs"].loc[factor, "technical"] = True
 
-    # Refresh annotations/probabilities so cell assignments and factor probabilities
-    # are computed using biological factors only.
     model.annotate_adata()
+
+
+def drop_technical(model: "scDEF", annotate: bool = True) -> int:
+    """Remove factors marked ``technical`` from ``factor_lists`` and re-annotate.
+
+    Technical flags in ``factor_obs`` are cleared for the remaining factors.
+    Hierarchical gene signatures still exclude technical L0 programs via
+    :func:`annotate_adata` (until factors are dropped from the model).
+
+    Args:
+        model: fitted scDEF model instance
+        annotate: if True, run :meth:`scDEF.annotate_adata` after dropping
+
+    Returns:
+        Number of factor slots removed across all layers.
+    """
+    if "factor_obs" not in model.adata.uns:
+        factor_diagnostics(model)
+    if "technical" not in model.adata.uns["factor_obs"].columns:
+        return 0
+
+    technical_names = set(get_technical_drop_factors(model))
+    if len(technical_names) == 0:
+        return 0
+
+    n_before = sum(len(fl) for fl in model.factor_lists)
+    new_factor_lists = []
+    for layer_idx in range(model.n_layers):
+        keep = [
+            int(model.factor_lists[layer_idx][slot])
+            for slot, name in enumerate(model.factor_names[layer_idx])
+            if name not in technical_names
+        ]
+        if len(keep) == 0:
+            raise ValueError(
+                f"Cannot drop technical factors: layer {model.layer_names[layer_idx]} "
+                "would have no factors left."
+            )
+        new_factor_lists.append(np.array(keep, dtype=int))
+
+    model.factor_lists = new_factor_lists
+    model.set_factor_names()
+    model._sync_factor_obs_with_filter()
+    model.make_layercolors(
+        layer_cpal=model.layer_cpal, lightness_mult=model.lightness_mult
+    )
+    model.adata.uns.pop("confident_signatures", None)
+    model.adata.uns.pop("biological_hierarchy", None)
+    model.adata.uns.pop("technical_hierarchy", None)
+
+    if annotate:
+        model.annotate_adata()
+
+    return int(n_before - sum(len(fl) for fl in model.factor_lists))
 
 
 def set_global_factors(
@@ -1539,8 +1591,8 @@ def set_global_factors(
     """Mark global (shared-across-lineages) factors in ``factor_obs``.
 
     Global factors are identified from hierarchy diagnostics (high effective
-    parents). They are excluded from :func:`make_biological_hierarchy` but remain
-    eligible for cell-to-factor assignment at L0 (unlike technical factors).
+    parents). They are excluded from :func:`make_biological_hierarchy`. Use
+    :func:`drop_technical` to remove technical factors from the active model.
 
     Args:
         model: scDEF model instance
