@@ -13,6 +13,8 @@ from ..utils import hierarchy_utils
 if TYPE_CHECKING:
     from scdef.models._scdef import scDEF
 
+TECHNICAL_FACTOR_FONTCOLOR = "#404040"
+
 
 def _validate_top_genes(top_genes, n_layers):
     """Validate and normalize top_genes parameter."""
@@ -217,41 +219,39 @@ def _compute_layer_factor_orders(model, show_all):
 
 
 def _get_confident_signature_rankings_layer(model, layer_idx, top_genes_layer):
-    """Get confidence-filtered signatures and combined scores for one layer."""
+    """Get confidence-filtered signatures, combined scores, and Jaccard confidences."""
     if top_genes_layer is None or int(top_genes_layer) <= 0:
         n = len(model.factor_names[layer_idx])
         return (
             [[] for _ in range(n)],
             [np.array([]) for _ in range(n)],
-            [np.array([]) for _ in range(n)],
+            [float("nan") for _ in range(n)],
         )
 
-    sigs, confs, combined = get_stored_confident_signatures(
+    sigs, combined, signature_conf = get_stored_confident_signatures(
         model,
         layer_idx=layer_idx,
         max_genes=int(top_genes_layer),
-        return_confidences=True,
         return_combined_scores=True,
+        return_signature_confidences=True,
     )
     rankings = []
     scores = []
-    confidences = []
+    signature_confidences = []
     for factor_name in model.factor_names[layer_idx]:
         genes = list(sigs.get(factor_name, []))[: int(top_genes_layer)]
         combined_scores = np.asarray(
             combined.get(factor_name, np.array([])), dtype=float
         )[: int(top_genes_layer)]
-        conf_scores = np.asarray(confs.get(factor_name, np.array([])), dtype=float)[
-            : int(top_genes_layer)
-        ]
-        n = min(len(genes), len(combined_scores), len(conf_scores))
+        n = min(len(genes), len(combined_scores))
         genes = genes[:n]
         combined_scores = combined_scores[:n]
-        conf_scores = conf_scores[:n]
         rankings.append(genes)
         scores.append(combined_scores)
-        confidences.append(conf_scores)
-    return rankings, scores, confidences
+        signature_confidences.append(
+            float(signature_conf.get(factor_name, float("nan")))
+        )
+    return rankings, scores, signature_confidences
 
 
 def _get_layer_colors(model, layer_idx, show_all, factors):
@@ -522,10 +522,9 @@ def _add_signature_to_label(
     show_all,
     gene_rankings,
     gene_scores_layer,
-    gene_confidences_layer,
+    signature_confidence,
     top_genes_layer,
     show_confidences,
-    mc_samples,
     fontsize_kwargs,
     marker_genes: Optional[Set[str]] = None,
 ):
@@ -555,20 +554,22 @@ def _add_signature_to_label(
         if factor_idx in model.factor_lists[layer_idx]:
             idx = np.where(factor_idx == np.array(model.factor_lists[layer_idx]))[0][0]
             label += print_signature(idx)
-            if show_confidences and gene_confidences_layer is not None:
-                confidence_vals = np.asarray(
-                    gene_confidences_layer[idx][:top_genes_layer], dtype=float
-                )
-                if len(confidence_vals) > 0:
-                    label += f"<br/><br/>({float(np.mean(confidence_vals)):.3f})"
+            conf = (
+                signature_confidence[idx]
+                if signature_confidence is not None and idx < len(signature_confidence)
+                else float("nan")
+            )
+            if show_confidences and np.isfinite(conf):
+                label += f"<br/><br/>({float(conf):.3f})"
     else:
         label += print_signature(idx)
-        if show_confidences and gene_confidences_layer is not None:
-            confidence_vals = np.asarray(
-                gene_confidences_layer[idx][:top_genes_layer], dtype=float
-            )
-            if len(confidence_vals) > 0:
-                label += f"<br/><br/>({float(np.mean(confidence_vals)):.3f})"
+        conf = (
+            signature_confidence[idx]
+            if signature_confidence is not None and idx < len(signature_confidence)
+            else float("nan")
+        )
+        if show_confidences and np.isfinite(conf):
+            label += f"<br/><br/>({float(conf):.3f})"
 
     return label
 
@@ -824,7 +825,6 @@ def make_graph(
     assignments: Optional[bool] = True,
     color_edges: Optional[bool] = True,
     show_confidences: Optional[bool] = False,
-    mc_samples: Optional[int] = 100,
     n_cells_label: Optional[bool] = False,
     n_cells: Optional[bool] = False,
     node_size_max: Optional[float] = 2.0,
@@ -863,8 +863,8 @@ def make_graph(
         wedged: key from model.adata.obs to use to wedge the nodes with
         assignments: whether to use the assignments of cells to factors to wedge the nodes, rather than the scores
         color_edges: whether to color the graph edges according to the upper factors
-        show_confidences: whether to show the confidence score for each signature
-        mc_samples: number of Monte Carlo samples to take from the posterior to compute signature confidences
+        show_confidences: whether to show precomputed signature Jaccard confidence
+            (from ``scd.tl.set_confident_signatures``) for each factor
         n_cells_label: whether to show the number of cells that attach to the factor
         n_cells: whether to scale the node sizes by the number of cells that attach to the factor
         node_size_max: maximum node size when scaled by cell numbers
@@ -985,12 +985,12 @@ def make_graph(
         # Get gene rankings if showing signatures
         gene_rankings_layer = None
         gene_scores_layer = None
-        gene_confidences_layer = None
+        signature_confidences_layer = None
         if show_signatures:
             (
                 gene_rankings_layer,
                 gene_scores_layer,
-                gene_confidences_layer,
+                signature_confidences_layer,
             ) = _get_confident_signature_rankings_layer(
                 model,
                 layer_idx=layer_idx,
@@ -1088,10 +1088,9 @@ def make_graph(
                     show_all,
                     gene_rankings_layer,
                     gene_scores_layer,
-                    gene_confidences_layer,
+                    signature_confidences_layer,
                     top_genes[layer_idx],
                     show_confidences,
-                    mc_samples,
                     fontsize_kwargs,
                     marker_genes=marker_genes,
                 )
@@ -1151,7 +1150,7 @@ def make_graph(
             # Finalize label
             label = _finalize_node_label(label, show_label)
             if factor_name in technical_factors:
-                fontcolor = "gray"
+                fontcolor = TECHNICAL_FACTOR_FONTCOLOR
             elif factor_name in global_factors:
                 fontcolor = "#4169E1"
             else:
@@ -1250,7 +1249,6 @@ def make_technical_hierarchy_graph(
     assignments: Optional[bool] = True,
     color_edges: Optional[bool] = True,
     show_confidences: Optional[bool] = False,
-    mc_samples: Optional[int] = 100,
     n_cells_label: Optional[bool] = False,
     n_cells: Optional[bool] = False,
     node_size_max: Optional[int] = 2.0,
@@ -1285,8 +1283,8 @@ def make_technical_hierarchy_graph(
         wedged: key from model.adata.obs to use to wedge the nodes with
         assignments: whether to use the assignments of cells to factors to wedge the nodes, rather than the scores
         color_edges: whether to color the graph edges according to the upper factors
-        show_confidences: whether to show the confidence score for each signature
-        mc_samples: number of Monte Carlo samples to take from the posterior to compute signature confidences
+        show_confidences: whether to show precomputed signature Jaccard confidence
+            (from ``scd.tl.set_confident_signatures``) for each factor
         n_cells_label: whether to show the number of cells that attach to the factor
         n_cells: whether to scale the node sizes by the number of cells that attach to the factor
         node_size_max: maximum node size when scaled by cell numbers
@@ -1343,6 +1341,11 @@ def make_technical_hierarchy_graph(
     g.engine = "neato" if shell else "dot"
     ordering = "out"
     angle_dict = {}
+    technical_factors = set()
+    if "factor_obs" in model.adata.uns:
+        factor_obs = model.adata.uns["factor_obs"]
+        if "technical" in factor_obs.columns:
+            technical_factors = set(factor_obs.index[factor_obs["technical"]].tolist())
 
     # Process each layer
     for layer_idx in [0, model.n_layers - 1]:
@@ -1363,7 +1366,7 @@ def make_technical_hierarchy_graph(
         # Get gene rankings if showing signatures
         gene_rankings_layer = None
         gene_scores_layer = None
-        gene_confidences_layer = None
+        signature_confidences_layer = None
         if show_signatures:
             if layer_idx == model.n_layers - 1:
                 gene_rankings_layer, gene_scores_layer = (
@@ -1374,7 +1377,7 @@ def make_technical_hierarchy_graph(
                 (
                     gene_rankings_layer,
                     gene_scores_layer,
-                    gene_confidences_layer,
+                    signature_confidences_layer,
                 ) = _get_confident_signature_rankings_layer(
                     model,
                     layer_idx=layer_idx,
@@ -1481,10 +1484,9 @@ def make_technical_hierarchy_graph(
                     False,
                     gene_rankings_layer,
                     gene_scores_layer,
-                    gene_confidences_layer,
+                    signature_confidences_layer,
                     top_genes[layer_idx],
                     show_confidences,
-                    mc_samples,
                     fontsize_kwargs,
                     marker_genes=marker_genes,
                 )
@@ -1522,6 +1524,10 @@ def make_technical_hierarchy_graph(
 
             # Finalize label
             label = _finalize_node_label(label, show_label)
+            if factor_name in technical_factors or factor_name == root_name:
+                fontcolor = TECHNICAL_FACTOR_FONTCOLOR
+            else:
+                fontcolor = "black"
 
             # Compute position for shell layout
             pos = None
@@ -1550,6 +1556,7 @@ def make_technical_hierarchy_graph(
                 shell,
                 pos,
                 ordering,
+                fontcolor=fontcolor,
             )
 
             # Add edges

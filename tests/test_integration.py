@@ -417,7 +417,6 @@ def test_iscdef_make_graph_with_signatures():
         model,
         show_signatures=True,
         top_genes=5,
-        mc_samples=20,
     )
     assert g is not None
     source = g.source if isinstance(g.source, str) else str(g.source)

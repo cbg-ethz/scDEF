@@ -15,6 +15,59 @@ if TYPE_CHECKING:
     from scdef.models._scdef import scDEF
 
 
+def _jaccard_gene_lists(reference: Sequence[str], sample: Sequence[str]) -> float:
+    """Jaccard similarity between two gene lists (as sets)."""
+    ref = set(reference)
+    samp = set(sample)
+    if len(ref) == 0 and len(samp) == 0:
+        return 1.0
+    union = ref | samp
+    if len(union) == 0:
+        return 1.0
+    return float(len(ref & samp) / len(union))
+
+
+def _compute_signature_jaccard_confidences(
+    model: "scDEF",
+    layer_idx: int,
+    signatures: Dict[str, List[str]],
+    mc_samples: int,
+    random_seed: int,
+) -> Dict[str, float]:
+    """Average Jaccard of each posterior top-k draw vs the confident signature.
+
+    For each factor, ``k`` is the number of genes in that factor's confident
+    signature. Each Monte Carlo draw yields a top-``k`` gene list from
+    ``get_signature_sample``; Jaccard is computed against the confident
+    signature, then averaged over draws.
+    """
+    from jax import random
+
+    base_rng = random.PRNGKey(int(random_seed))
+    layer_offset = int(layer_idx) * 1_000_003
+    out: Dict[str, float] = {}
+    for factor_idx, factor_name in enumerate(model.factor_names[layer_idx]):
+        reference = list(signatures.get(factor_name, []))
+        k = len(reference)
+        if k == 0:
+            out[factor_name] = float("nan")
+            continue
+        jaccs: List[float] = []
+        for s_idx in range(int(mc_samples)):
+            rng = random.fold_in(
+                base_rng, layer_offset + factor_idx * int(mc_samples) + s_idx
+            )
+            draw_genes = model.get_signature_sample(
+                rng,
+                factor_idx=factor_idx,
+                layer_idx=layer_idx,
+                top_genes=k,
+            )
+            jaccs.append(_jaccard_gene_lists(reference, draw_genes))
+        out[factor_name] = float(np.mean(jaccs))
+    return out
+
+
 def _confidence_mean_score(
     confidences: np.ndarray,
     means: np.ndarray,
@@ -142,10 +195,18 @@ def get_stored_confident_signatures(
     max_genes: Optional[int] = None,
     return_confidences: bool = False,
     return_combined_scores: bool = False,
+    return_signature_confidences: bool = False,
 ) -> Union[
     Dict[str, List[str]],
     Tuple[Dict[str, List[str]], Dict[str, np.ndarray]],
     Tuple[Dict[str, List[str]], Dict[str, np.ndarray], Dict[str, np.ndarray]],
+    Tuple[Dict[str, List[str]], Dict[str, float]],
+    Tuple[
+        Dict[str, List[str]],
+        Dict[str, np.ndarray],
+        Dict[str, np.ndarray],
+        Dict[str, float],
+    ],
 ]:
     """Load precomputed confident signatures (and optional scores) from cache."""
     if layer_idx < 0 or layer_idx >= model.n_layers:
@@ -161,12 +222,23 @@ def get_stored_confident_signatures(
     combined_scores: Dict[str, np.ndarray] = {
         k: np.asarray(v, dtype=float) for k, v in layer_data["combined_scores"].items()
     }
+    signature_confidences: Dict[str, float] = {
+        k: float(v) for k, v in layer_data.get("signature_confidences", {}).items()
+    }
     if max_genes is not None:
         kmax = int(max_genes)
         signatures = {k: v[:kmax] for k, v in signatures.items()}
         confidences = {k: v[:kmax] for k, v in confidences.items()}
         combined_scores = {k: v[:kmax] for k, v in combined_scores.items()}
 
+    if return_signature_confidences and return_confidences and return_combined_scores:
+        return signatures, confidences, combined_scores, signature_confidences
+    if return_signature_confidences and return_confidences:
+        return signatures, confidences, signature_confidences
+    if return_signature_confidences and return_combined_scores:
+        return signatures, combined_scores, signature_confidences
+    if return_signature_confidences:
+        return signatures, signature_confidences
     if return_confidences and return_combined_scores:
         return signatures, confidences, combined_scores
     if return_confidences:
@@ -186,8 +258,9 @@ def set_confident_signatures(
 ) -> Dict[str, List[str]]:
     """Precompute and cache confident signatures/scores for all layers.
 
-    Stores signatures, confidence values and combined scores in
-    ``model.adata.uns['confident_signatures']`` for reuse by plotting/utilities.
+    Stores signatures, per-gene confidences, combined scores, and per-factor
+    signature Jaccard confidences (posterior stability of each confident gene
+    list) in ``model.adata.uns['confident_signatures']`` for reuse by plotting.
     """
     cache: Dict[str, object] = {
         "fit_revision": int(getattr(model, "_fit_revision", 0)),
@@ -237,6 +310,14 @@ def set_confident_signatures(
             layer_combined_scores[factor_name] = combined_arr.tolist()
             signatures_flat[factor_name] = genes
 
+        signature_jaccard = _compute_signature_jaccard_confidences(
+            model,
+            layer_idx=layer_idx,
+            signatures=sigs,
+            mc_samples=mc_samples,
+            random_seed=random_seed,
+        )
+
         cache["by_layer"][str(int(layer_idx))] = {
             "layer_name": model.layer_names[layer_idx],
             "signatures": {k: list(v) for k, v in sigs.items()},
@@ -244,6 +325,7 @@ def set_confident_signatures(
                 k: np.asarray(v, dtype=float).tolist() for k, v in confs.items()
             },
             "combined_scores": layer_combined_scores,
+            "signature_confidences": signature_jaccard,
         }
 
     model.adata.uns["confident_signatures"] = cache
@@ -1527,58 +1609,45 @@ def set_technical_factors(
     model.annotate_adata()
 
 
-def drop_technical(model: "scDEF", annotate: bool = True) -> int:
+def drop_technical(model: "scDEF") -> None:
     """Remove factors marked ``technical`` from ``factor_lists`` and re-annotate.
 
     Technical flags in ``factor_obs`` are cleared for the remaining factors.
-    Hierarchical gene signatures still exclude technical L0 programs via
-    :func:`annotate_adata` (until factors are dropped from the model).
 
     Args:
         model: fitted scDEF model instance
-        annotate: if True, run :meth:`scDEF.annotate_adata` after dropping
-
-    Returns:
-        Number of factor slots removed across all layers.
     """
     if "factor_obs" not in model.adata.uns:
         factor_diagnostics(model)
-    if "technical" not in model.adata.uns["factor_obs"].columns:
-        return 0
 
-    technical_names = set(get_technical_drop_factors(model))
-    if len(technical_names) == 0:
-        return 0
+    if "technical" in model.adata.uns["factor_obs"].columns:
+        technical_names = set(get_technical_drop_factors(model))
+        if len(technical_names) > 0:
+            new_factor_lists = []
+            for layer_idx in range(model.n_layers):
+                keep = [
+                    int(model.factor_lists[layer_idx][slot])
+                    for slot, name in enumerate(model.factor_names[layer_idx])
+                    if name not in technical_names
+                ]
+                if len(keep) == 0:
+                    raise ValueError(
+                        f"Cannot drop technical factors: layer "
+                        f"{model.layer_names[layer_idx]} would have no factors left."
+                    )
+                new_factor_lists.append(np.array(keep, dtype=int))
 
-    n_before = sum(len(fl) for fl in model.factor_lists)
-    new_factor_lists = []
-    for layer_idx in range(model.n_layers):
-        keep = [
-            int(model.factor_lists[layer_idx][slot])
-            for slot, name in enumerate(model.factor_names[layer_idx])
-            if name not in technical_names
-        ]
-        if len(keep) == 0:
-            raise ValueError(
-                f"Cannot drop technical factors: layer {model.layer_names[layer_idx]} "
-                "would have no factors left."
+            model.factor_lists = new_factor_lists
+            model.set_factor_names()
+            model._sync_factor_obs_with_filter()
+            model.make_layercolors(
+                layer_cpal=model.layer_cpal, lightness_mult=model.lightness_mult
             )
-        new_factor_lists.append(np.array(keep, dtype=int))
+            model.adata.uns.pop("confident_signatures", None)
+            model.adata.uns.pop("biological_hierarchy", None)
+            model.adata.uns.pop("technical_hierarchy", None)
 
-    model.factor_lists = new_factor_lists
-    model.set_factor_names()
-    model._sync_factor_obs_with_filter()
-    model.make_layercolors(
-        layer_cpal=model.layer_cpal, lightness_mult=model.lightness_mult
-    )
-    model.adata.uns.pop("confident_signatures", None)
-    model.adata.uns.pop("biological_hierarchy", None)
-    model.adata.uns.pop("technical_hierarchy", None)
-
-    if annotate:
-        model.annotate_adata()
-
-    return int(n_before - sum(len(fl) for fl in model.factor_lists))
+    model.annotate_adata()
 
 
 def set_global_factors(
