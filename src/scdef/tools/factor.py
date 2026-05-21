@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 
 def _jaccard_gene_lists(reference: Sequence[str], sample: Sequence[str]) -> float:
-    """Jaccard similarity between two gene lists (as sets)."""
+    """Unweighted Jaccard similarity between two gene lists (as sets)."""
     ref = set(reference)
     samp = set(sample)
     if len(ref) == 0 and len(samp) == 0:
@@ -27,19 +27,52 @@ def _jaccard_gene_lists(reference: Sequence[str], sample: Sequence[str]) -> floa
     return float(len(ref & samp) / len(union))
 
 
+def _weighted_signature_jaccard(
+    reference: Sequence[str],
+    weights: Sequence[float],
+    sample: Sequence[str],
+) -> float:
+    """Weighted Jaccard of a posterior draw top-k list vs the confident signature.
+
+    Genes in the confident signature are weighted by normalized ``combined_scores``
+    (higher-ranked signature genes count more). Genes in the draw but not in the
+    reference add ``1 / k`` each to the union denominator (``k = |reference|``).
+    """
+    ref_genes = list(reference)
+    k = len(ref_genes)
+    if k == 0:
+        return 1.0
+    w = np.asarray(weights[:k], dtype=float)
+    if w.size < k:
+        w = np.pad(w, (0, k - w.size), constant_values=0.0)
+    if np.all(w <= 0):
+        w = np.ones(k, dtype=float)
+    w = w / np.sum(w)
+
+    draw = set(sample)
+    ref_set = set(ref_genes)
+    intersection_weight = float(
+        np.sum([w[i] for i, gene in enumerate(ref_genes) if gene in draw])
+    )
+    n_draw_only = len(draw - ref_set)
+    union_weight = 1.0 + float(n_draw_only) / float(k)
+    return intersection_weight / union_weight
+
+
 def _compute_signature_jaccard_confidences(
     model: "scDEF",
     layer_idx: int,
     signatures: Dict[str, List[str]],
+    combined_scores: Dict[str, Sequence[float]],
     mc_samples: int,
     random_seed: int,
 ) -> Dict[str, float]:
-    """Average Jaccard of each posterior top-k draw vs the confident signature.
+    """Average weighted Jaccard of posterior top-k draws vs confident signatures.
 
     For each factor, ``k`` is the number of genes in that factor's confident
     signature. Each Monte Carlo draw yields a top-``k`` gene list from
-    ``get_signature_sample``; Jaccard is computed against the confident
-    signature, then averaged over draws.
+    ``get_signature_sample``. Weighted Jaccard uses ``combined_scores`` so genes
+    ranked higher in the confident signature contribute more to the score.
     """
     from jax import random
 
@@ -52,6 +85,7 @@ def _compute_signature_jaccard_confidences(
         if k == 0:
             out[factor_name] = float("nan")
             continue
+        weights = list(combined_scores.get(factor_name, []))[:k]
         jaccs: List[float] = []
         for s_idx in range(int(mc_samples)):
             rng = random.fold_in(
@@ -63,7 +97,7 @@ def _compute_signature_jaccard_confidences(
                 layer_idx=layer_idx,
                 top_genes=k,
             )
-            jaccs.append(_jaccard_gene_lists(reference, draw_genes))
+            jaccs.append(_weighted_signature_jaccard(reference, weights, draw_genes))
         out[factor_name] = float(np.mean(jaccs))
     return out
 
@@ -259,8 +293,9 @@ def set_confident_signatures(
     """Precompute and cache confident signatures/scores for all layers.
 
     Stores signatures, per-gene confidences, combined scores, and per-factor
-    signature Jaccard confidences (posterior stability of each confident gene
-    list) in ``model.adata.uns['confident_signatures']`` for reuse by plotting.
+    weighted signature Jaccard confidences (posterior stability of each
+    confident gene list, weighted by ``combined_scores``) in
+    ``model.adata.uns['confident_signatures']`` for reuse by plotting.
     """
     cache: Dict[str, object] = {
         "fit_revision": int(getattr(model, "_fit_revision", 0)),
@@ -314,6 +349,7 @@ def set_confident_signatures(
             model,
             layer_idx=layer_idx,
             signatures=sigs,
+            combined_scores=layer_combined_scores,
             mc_samples=mc_samples,
             random_seed=random_seed,
         )
