@@ -2921,8 +2921,12 @@ class scDEF(object):
 
         if not getattr(self, "_preserve_factor_names_on_annotate", False):
             self.set_factor_names()
+        from scdef.tools.factor import _resolve_signature_drop_factors
+
         ranked_genes, ranked_scores = self.get_signatures_dict(
-            scores=True, sorted_scores=True
+            scores=True,
+            sorted_scores=True,
+            drop_factors=_resolve_signature_drop_factors(self, None),
         )
 
         for idx in range(self.n_layers):
@@ -3162,12 +3166,11 @@ class scDEF(object):
         if top_genes is None:
             top_genes = len(self.adata.var_names)
 
-        if (
-            genes
-            and sorted_scores
-            and top_genes_provided
-            and (drop_factors is None or len(drop_factors) == 0)
-        ):
+        from scdef.tools.factor import _resolve_signature_drop_factors
+
+        drop_factors = _resolve_signature_drop_factors(self, drop_factors)
+
+        if genes and sorted_scores and top_genes_provided and len(drop_factors) == 0:
             from scdef.tools.factor import (
                 get_stored_confident_signatures,
                 set_confident_signatures,
@@ -3203,16 +3206,9 @@ class scDEF(object):
 
         term_names = np.array(self.adata.var_names)
         factor_names_0 = np.array(self.factor_names[0])
-        indices_0 = np.arange(len(factor_names_0))
+        from scdef.tools.factor import _l0_keep_indices
 
-        # Prepare mask for drop_factors to select factors in dot products for upper layers
-        if drop_factors is not None and len(drop_factors) > 0:
-            drop_set = set(drop_factors)
-            keep_indices_0 = [
-                i for i, name in enumerate(factor_names_0) if name not in drop_set
-            ]
-        else:
-            keep_indices_0 = indices_0
+        keep_indices_0 = _l0_keep_indices(self, drop_factors)
 
         term_scores = self.pmeans[f"{self.layer_names[0]}W"][self.factor_lists[0]]
         n_factors = len(self.factor_lists[layer_idx])
@@ -3323,15 +3319,29 @@ class scDEF(object):
                 )
                 term_scores_sample = term_scores_sample.dot(lower_mat_sample)
 
-            lower_term_scores_shape = self.global_params[2 + 0][0][self.factor_lists[0]]
-
-            lower_term_scores_rate = np.exp(
-                self.global_params[2 + 0][1][self.factor_lists[0]]
+            from scdef.tools.factor import (
+                _filter_l0_factor_columns,
+                _filter_l0_factor_rows,
+                _resolve_signature_drop_factors,
             )
+
+            drop_factors = _resolve_signature_drop_factors(self, None)
+            l0_rows = np.asarray(self.factor_lists[0], dtype=int)
+            lower_term_scores_shape = self.global_params[2 + 0][0][l0_rows]
+            lower_term_scores_rate = np.exp(self.global_params[2 + 0][1][l0_rows])
             rng, sample_rng = random.split(rng)
             lower_term_scores_sample = lognormal_sample(
                 sample_rng, lower_term_scores_shape, lower_term_scores_rate
             )
+            lower_term_scores_sample = _filter_l0_factor_rows(
+                self, lower_term_scores_sample, drop_factors
+            )
+            if layer_idx > 0 and term_scores_sample.shape[1] == len(
+                self.factor_names[0]
+            ):
+                term_scores_sample = _filter_l0_factor_columns(
+                    self, term_scores_sample, drop_factors
+                )
 
             term_scores_sample = term_scores_sample.dot(lower_term_scores_sample)
 

@@ -33,8 +33,66 @@ def _confidence_mean_score(
     return means * significance
 
 
-def _get_layer_term_means(model: "scDEF", layer_idx: int) -> np.ndarray:
-    """Return per-factor mean loadings aligned with ``adata.var_names``."""
+def get_technical_drop_factors(model: "scDEF") -> List[str]:
+    """Factor names marked technical in ``adata.uns['factor_obs']``."""
+    factor_obs = model.adata.uns.get("factor_obs")
+    if factor_obs is None or "technical" not in factor_obs.columns:
+        return []
+    return factor_obs.index[factor_obs["technical"].astype(bool)].tolist()
+
+
+def _resolve_signature_drop_factors(
+    model: "scDEF", drop_factors: Optional[Sequence[str]]
+) -> List[str]:
+    """Drop list for hierarchical gene signatures (defaults to technical factors)."""
+    if drop_factors is not None:
+        return list(drop_factors)
+    return get_technical_drop_factors(model)
+
+
+def _l0_keep_indices(model: "scDEF", drop_factors: Sequence[str]) -> np.ndarray:
+    """Indices into ``model.factor_names[0]`` to keep when building L0→gene maps."""
+    if not drop_factors:
+        return np.arange(len(model.factor_names[0]), dtype=int)
+    drop_set = set(drop_factors)
+    return np.array(
+        [i for i, name in enumerate(model.factor_names[0]) if name not in drop_set],
+        dtype=int,
+    )
+
+
+def _filter_l0_factor_columns(
+    model: "scDEF", matrix: np.ndarray, drop_factors: Sequence[str]
+) -> np.ndarray:
+    """Drop L0 factor columns used when mapping upper-layer loadings to genes."""
+    keep = _l0_keep_indices(model, drop_factors)
+    if keep.size == len(model.factor_names[0]):
+        return matrix
+    return np.asarray(matrix, dtype=float)[:, keep]
+
+
+def _filter_l0_factor_rows(
+    model: "scDEF", matrix: np.ndarray, drop_factors: Sequence[str]
+) -> np.ndarray:
+    """Drop L0 factor rows (``L0W``) when mapping upper-layer loadings to genes."""
+    keep = _l0_keep_indices(model, drop_factors)
+    if keep.size == len(model.factor_names[0]):
+        return matrix
+    return np.asarray(matrix, dtype=float)[keep, :]
+
+
+def _get_layer_term_means(
+    model: "scDEF",
+    layer_idx: int,
+    drop_factors: Optional[Sequence[str]] = None,
+) -> np.ndarray:
+    """Return per-factor mean loadings aligned with ``adata.var_names``.
+
+    For ``layer_idx > 0``, loadings are propagated through ``W`` down to L0 and then
+    to genes. When ``drop_factors`` is omitted, factors marked ``technical`` in
+    ``factor_obs`` are excluded from the L0→gene map (biological signatures only).
+    """
+    drop_factors = _resolve_signature_drop_factors(model, drop_factors)
     layer_name = model.layer_names[layer_idx]
     if layer_idx == 0:
         kept = np.asarray(model.factor_lists[layer_idx], dtype=int)
@@ -55,6 +113,9 @@ def _get_layer_term_means(model: "scDEF", layer_idx: int) -> np.ndarray:
         np.asarray(model.factor_lists[0], dtype=int),
         :,
     ]
+    w0 = _filter_l0_factor_rows(model, w0, drop_factors)
+    if term_scores.shape[1] == len(model.factor_names[0]):
+        term_scores = _filter_l0_factor_columns(model, term_scores, drop_factors)
     return term_scores.dot(w0)
 
 
@@ -1448,6 +1509,8 @@ def set_technical_factors(
 
     if len(technical_factors) > 0:
         model.adata.uns["factor_obs"].loc[technical_factors, "technical"] = True
+
+    model.adata.uns.pop("confident_signatures", None)
 
     # Get complete hierarchy
     complete_hierarchy = get_hierarchy(model, simplified=False)
