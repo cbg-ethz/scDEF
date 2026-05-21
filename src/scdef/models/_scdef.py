@@ -554,6 +554,161 @@ class scDEF(object):
             out.append(1)
         return out
 
+    def _should_collapse_adjacent_layer_sizes(
+        self,
+        layer_sizes: Sequence[int],
+        parent_idx: int,
+        fraction: float,
+        min_l0_factors: int = 10,
+        min_upper_factors: int = 10,
+    ) -> bool:
+        """True when a child layer keeps at least ``fraction`` of its parent's factors."""
+        layer_sizes = [int(x) for x in layer_sizes]
+        if parent_idx < 0 or parent_idx + 1 >= len(layer_sizes):
+            return False
+        n_parent = layer_sizes[parent_idx]
+        n_child = layer_sizes[parent_idx + 1]
+        min_parent = int(min_l0_factors) if parent_idx == 0 else int(min_upper_factors)
+        if n_parent <= min_parent:
+            return False
+        return n_child >= float(fraction) * float(n_parent)
+
+    def _should_collapse_redundant_l1(
+        self,
+        fraction: float,
+        min_l0_factors: int = 10,
+    ) -> bool:
+        """Backward-compatible L0/L1 redundancy check."""
+        layer_sizes = [len(f) for f in self.factor_lists]
+        return self._should_collapse_adjacent_layer_sizes(
+            layer_sizes, 0, fraction, min_l0_factors
+        )
+
+    def _collapse_redundant_adjacent_layer_sizes(
+        self,
+        layer_sizes: Sequence[int],
+        fraction: float,
+        min_l0_factors: int = 10,
+        min_upper_factors: int = 10,
+    ) -> Tuple[List[int], List[int], int]:
+        """Drop redundant child layers throughout the hierarchy (bottom-up scan)."""
+        sizes = [int(x) for x in layer_sizes]
+        old_keep = list(range(len(sizes)))
+        n_dropped = 0
+        i = 0
+        while i < len(sizes) - 1 and len(sizes) >= 3:
+            if not self._should_collapse_adjacent_layer_sizes(
+                sizes,
+                i,
+                fraction,
+                min_l0_factors,
+                min_upper_factors,
+            ):
+                i += 1
+                continue
+            child_old = old_keep[i + 1]
+            promote_old = old_keep[i + 2]
+            parent_name = (
+                self.layer_names[old_keep[i]]
+                if old_keep[i] < len(self.layer_names)
+                else f"L{old_keep[i]}"
+            )
+            child_name = (
+                self.layer_names[child_old]
+                if child_old < len(self.layer_names)
+                else f"L{child_old}"
+            )
+            promote_name = (
+                self.layer_names[promote_old]
+                if promote_old < len(self.layer_names)
+                else f"L{promote_old}"
+            )
+            self.logger.info(
+                "Redundant hierarchy on refit (%s %s, %s %s factors; threshold %.2f). "
+                "Dropping %s; %s becomes the new %s.",
+                sizes[i],
+                parent_name,
+                sizes[i + 1],
+                child_name,
+                float(fraction),
+                child_name,
+                promote_name,
+                parent_name,
+            )
+            sizes = sizes[: i + 1] + sizes[i + 2 :]
+            old_keep = old_keep[: i + 1] + old_keep[i + 2 :]
+            n_dropped += 1
+            if hasattr(self, "n_layers_schedule"):
+                self.n_layers_schedule = max(2, int(self.n_layers_schedule) - 1)
+        return sizes, old_keep, n_dropped
+
+    def _compose_w_to_parent_layer(
+        self,
+        layer_names: Sequence[str],
+        factor_lists: Sequence[np.ndarray],
+        child_old_idx: int,
+        parent_old_idx: int,
+    ) -> np.ndarray:
+        """Compose ``W`` from ``child_old_idx`` down to ``parent_old_idx`` (inclusive)."""
+        if child_old_idx <= parent_old_idx:
+            raise ValueError("child_old_idx must be greater than parent_old_idx.")
+        fl = [np.asarray(f, dtype=int) for f in factor_lists]
+        w = np.eye(len(fl[parent_old_idx]), dtype=np.float32)
+        for k in range(parent_old_idx + 1, child_old_idx + 1):
+            w = (
+                np.asarray(self.pmeans[f"{layer_names[k]}W"], dtype=np.float32)[
+                    np.ix_(fl[k], fl[k - 1])
+                ]
+                @ w
+            )
+        return np.clip(w, 1e-8, None).astype(np.float32)
+
+    def _build_collapsed_refit_init(
+        self,
+        old_keep: Sequence[int],
+        factor_lists: Optional[Sequence[np.ndarray]] = None,
+        layer_names: Optional[Sequence[str]] = None,
+    ) -> Tuple[List[np.ndarray], List[np.ndarray], np.ndarray, np.ndarray]:
+        """Warm-start inits after dropping one or more redundant intermediate layers."""
+        old_keep = [int(i) for i in old_keep]
+        if len(old_keep) < 2:
+            raise ValueError("Collapsed hierarchy must keep at least two layers.")
+
+        fl = [
+            np.asarray(f, dtype=int)
+            for f in (factor_lists if factor_lists is not None else self.factor_lists)
+        ]
+        names = list(layer_names if layer_names is not None else self.layer_names)
+
+        init_z: List[np.ndarray] = [
+            np.asarray(self.pmeans[f"{names[old_keep[0]]}z"], dtype=np.float32)[
+                :, fl[old_keep[0]]
+            ]
+        ]
+        init_w: List[np.ndarray] = [
+            np.asarray(self.pmeans[f"{names[old_keep[0]]}W"], dtype=np.float32)[
+                fl[old_keep[0]]
+            ]
+        ]
+
+        for new_j in range(1, len(old_keep)):
+            child_old = old_keep[new_j]
+            parent_old = old_keep[new_j - 1]
+            init_w.append(
+                self._compose_w_to_parent_layer(names, fl, child_old, parent_old)
+            )
+            init_z.append(
+                np.asarray(self.pmeans[f"{names[child_old]}z"], dtype=np.float32)[
+                    :, fl[child_old]
+                ]
+            )
+
+        init_brd = np.asarray(self.pmeans["brd"], dtype=np.float32)[fl[old_keep[0]]]
+        init_ard = np.asarray(self.pmeans["factor_means"], dtype=np.float32)[
+            fl[old_keep[0]]
+        ]
+        return init_z, init_w, init_brd, init_ard
+
     def update_model_size(
         self,
         max_n_factors=None,
@@ -1658,6 +1813,9 @@ class scDEF(object):
         pretraining: bool = False,
         force_decay_factor: bool = False,
         root_epochs: int = 0,
+        collapse_l1_fraction: Optional[float] = 0.8,
+        collapse_l0_min_factors: int = 10,
+        collapse_upper_min_factors: int = 10,
         **kwargs: Any,
     ) -> None:
         """Fit scDEF, warm-starting from a previous fit when available.
@@ -1678,6 +1836,15 @@ class scDEF(object):
                 ``stop_gradients`` on the root). Factor ``filter`` and ``annotate`` (see
                 ``_learn``) are skipped during the frozen-root phase and run only after the
                 root step, using the ``filter`` / ``annotate`` values passed to ``fit``.
+            collapse_l1_fraction: on **refit only** (second and later ``fit()`` calls),
+                scan adjacent layer pairs (L0/L1, L1/L2, …). When the parent layer has more
+                than ``collapse_l0_min_factors`` (L0) or ``collapse_upper_min_factors``
+                (L1 and above) factors and the child keeps at least this fraction of the
+                parent width, drop the child layer when rebuilding ``layer_sizes`` and
+                warm-start through composed ``W`` matrices. Ignored on the first ``fit()``.
+                Set to ``None`` to disable. Default ``0.8``.
+            collapse_l0_min_factors: minimum L0 parent width required to collapse L1.
+            collapse_upper_min_factors: minimum parent width for L1/L2, L2/L3, … pairs.
             **kwargs: additional keyword arguments.
 
             On the first call, parameters are initialized from priors (or NMF if enabled).
@@ -1688,15 +1855,38 @@ class scDEF(object):
         """
         marginalize_alpha_for_main_fit = bool(self.marginalize_alpha)
         self.root_epochs = int(root_epochs)
-        if getattr(self, "_has_fit", False):
+        is_refit = bool(getattr(self, "_has_fit", False))
+        if is_refit:
             # Keep original kept indices before resizing; update_model_size resets factor_lists.
             old_factor_lists = [np.array(f).copy() for f in self.factor_lists]
-            layer_sizes = [len(self.factor_lists[i]) for i in range(self.n_layers)]
+            layer_sizes = [len(factors) for factors in old_factor_lists]
+            old_layer_names = list(self.layer_names)
+            collapsed_layers = False
+            if collapse_l1_fraction is not None:
+                (
+                    layer_sizes,
+                    old_keep,
+                    n_dropped,
+                ) = self._collapse_redundant_adjacent_layer_sizes(
+                    layer_sizes,
+                    float(collapse_l1_fraction),
+                    int(collapse_l0_min_factors),
+                    int(collapse_upper_min_factors),
+                )
+                collapsed_layers = n_dropped > 0
+            else:
+                old_keep = list(range(len(layer_sizes)))
             if force_decay_factor:
                 template = self._geometric_layer_sizes(int(self.n_layers_schedule))
                 for i in range(min(len(layer_sizes), len(template))):
                     if layer_sizes[i] > template[i]:
                         layer_sizes[i] = template[i]
+            if collapsed_layers:
+                init_z, init_w, init_brd, init_ard = self._build_collapsed_refit_init(
+                    old_keep,
+                    factor_lists=old_factor_lists,
+                    layer_names=old_layer_names,
+                )
             self.update_model_size(
                 max_n_factors=max(layer_sizes), layer_sizes=layer_sizes
             )
@@ -1708,13 +1898,13 @@ class scDEF(object):
             init_budgets = False
             init_alpha = True
             z_init_concentration = 100.0  # on re-fit, use high concentration to avoid ignoring initial state
-            if force_decay_factor:
+            if not collapsed_layers and force_decay_factor:
                 l0_keep = np.array(old_factor_lists[0], dtype=int)
                 init_z = np.array(self.pmeans[f"{self.layer_names[0]}z"])[:, l0_keep]
                 init_w = np.array(self.pmeans["L0W"])[l0_keep]
                 init_brd = np.array(self.pmeans["brd"])[l0_keep]
                 init_ard = np.array(self.pmeans["factor_means"])[l0_keep]
-            else:
+            elif not collapsed_layers:
                 init_z = [
                     np.array(self.pmeans[f"{self.layer_names[layer_idx]}z"])[
                         :, np.array(old_factor_lists[layer_idx], dtype=int)
@@ -1849,6 +2039,7 @@ class scDEF(object):
             else:
                 self.adata.uns.pop("entropy_annealing_trace", None)
                 self.adata.uns.pop("entropy_annealing_trace_epochs", None)
+
         self.clear_runtime_cache(clear_jax_cache=False)
         self._has_fit = True
         self._fit_revision += 1
