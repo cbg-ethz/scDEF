@@ -218,8 +218,10 @@ class iscDEF(scDEF):
         elif len(self.factor_names) > 0:
             self._top_factor_names = list(self.factor_names[-1])
 
-    def update_model_priors(self):
-        super(iscDEF, self).update_model_priors()
+    def update_model_priors(self, update_alpha_from_cov: bool = True):
+        super(iscDEF, self).update_model_priors(
+            update_alpha_from_cov=update_alpha_from_cov
+        )
         if self.markers_layer != 0 and self.n_layers > 1:
             self.set_connectivity_prior(
                 cn_small_strength=self.cn_small_strength,
@@ -983,7 +985,7 @@ class iscDEF(scDEF):
             self.n_layers = len(self.layer_sizes)
             # Keep current factor names stable across refits. Recomputing names
             # from index patterns here can relabel factors even when n_epoch=0.
-            self.update_model_priors()
+            self.update_model_priors(update_alpha_from_cov=False)
             self.logger.info(
                 f"Continuing iscDEF from previous fit with layer sizes {self.layer_sizes}."
             )
