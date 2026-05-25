@@ -208,6 +208,7 @@ class scDEF(object):
         self._has_fit = False
         self._fit_revision = 0
         self._learn_jit_cache = None
+        self._pending_reference_init = None
 
     def __repr__(self):
         out = f"scDEF object with {self.n_layers} layers"
@@ -227,6 +228,256 @@ class scDEF(object):
         out += "\n\t" + "Number of batches: " + str(self.n_batches)
         out += "\n" + "Contains " + self.adata.__str__()
         return out
+
+    @classmethod
+    def from_reference(
+        cls,
+        reference_model: "scDEF",
+        adata: AnnData,
+        counts_layer: Optional[str] = None,
+        batch_key: Optional[str] = None,
+        reference_obs: Optional[str] = None,
+        query_obs: Optional[str] = None,
+        copy_cell_z: bool = True,
+        **kwargs: Any,
+    ) -> "scDEF":
+        """Create a new model initialized from a fitted reference hierarchy.
+
+        The new model uses ``adata`` as its data matrix and initializes global
+        hierarchy parameters (W, BRD/ARD, alpha-related hyperparameters) from
+        ``reference_model``. Cell/gene budgets are initialized from the new data
+        so modality/batch-specific scales can be learned.
+        """
+        if reference_model.adata.n_vars != adata.n_vars or not np.array_equal(
+            np.asarray(reference_model.adata.var_names), np.asarray(adata.var_names)
+        ):
+            if set(reference_model.adata.var_names).issubset(set(adata.var_names)):
+                adata = adata[:, reference_model.adata.var_names].copy()
+            else:
+                raise ValueError(
+                    "adata must contain all reference genes; pass matching genes or "
+                    "pre-align adata.var_names to reference_model.adata.var_names."
+                )
+        if batch_key is not None:
+            if batch_key not in adata.obs:
+                raise KeyError(f"batch_key {batch_key!r} not found in adata.obs.")
+            values = set(map(str, adata.obs[batch_key].astype(str).unique()))
+            for label, value in {
+                "reference_obs": reference_obs,
+                "query_obs": query_obs,
+            }.items():
+                if value is not None and str(value) not in values:
+                    raise ValueError(
+                        f"{label}={value!r} is not present in adata.obs[{batch_key!r}]."
+                    )
+
+        factor_lists = [np.asarray(f, dtype=int) for f in reference_model.factor_lists]
+        layer_sizes = [len(f) for f in factor_lists]
+        init_w = []
+        for layer_idx, keep in enumerate(factor_lists):
+            w = np.asarray(
+                reference_model.pmeans[f"{reference_model.layer_names[layer_idx]}W"],
+                dtype=np.float32,
+            )
+            if layer_idx == 0:
+                init_w.append(w[keep])
+            else:
+                parent_keep = factor_lists[layer_idx - 1]
+                init_w.append(w[np.ix_(keep, parent_keep)])
+
+        init_brd = np.asarray(reference_model.pmeans["brd"], dtype=np.float32)[
+            factor_lists[0]
+        ]
+        init_ard = np.asarray(reference_model.pmeans["factor_means"], dtype=np.float32)[
+            factor_lists[0]
+        ]
+
+        init_z = None
+        if copy_cell_z:
+            init_z = [np.ones((adata.n_obs, size), dtype=np.float32) for size in layer_sizes]
+            ref_pos = {
+                str(name): i for i, name in enumerate(reference_model.adata.obs_names)
+            }
+            matches = [
+                (new_i, ref_pos[str(name)])
+                for new_i, name in enumerate(adata.obs_names)
+                if str(name) in ref_pos
+            ]
+            if len(matches) > 0:
+                new_idx = np.asarray([m[0] for m in matches], dtype=int)
+                ref_idx = np.asarray([m[1] for m in matches], dtype=int)
+                for layer_idx, keep in enumerate(factor_lists):
+                    z = np.asarray(
+                        reference_model.pmeans[
+                            f"{reference_model.layer_names[layer_idx]}z"
+                        ],
+                        dtype=np.float32,
+                    )[np.ix_(ref_idx, keep)]
+                    init_z[layer_idx][new_idx] = z
+
+        model_kwargs = cls._reference_model_kwargs(reference_model, layer_sizes)
+        model_kwargs.update(kwargs)
+        model = cls(
+            adata,
+            counts_layer=counts_layer,
+            batch_key=batch_key,
+            **model_kwargs,
+        )
+        model.alpha = float(reference_model.alpha)
+        model.top_alpha = reference_model.top_alpha
+        model.update_model_priors(update_alpha_from_cov=False)
+        model._pending_reference_init = {
+            "init_w": init_w,
+            "init_brd": init_brd,
+            "init_ard": init_ard,
+            "init_z": init_z,
+            "reference_obs": reference_obs,
+            "query_obs": query_obs,
+        }
+        return model
+
+    @classmethod
+    def from_hierarchy(
+        cls,
+        adata: AnnData,
+        hierarchy: Union["scDEF", Sequence[np.ndarray]],
+        counts_layer: Optional[str] = None,
+        batch_key: Optional[str] = None,
+        init_brd: Optional[np.ndarray] = None,
+        init_ard: Optional[np.ndarray] = None,
+        init_z: Optional[Sequence[np.ndarray]] = None,
+        **kwargs: Any,
+    ) -> "scDEF":
+        """Create a model for new data initialized from a learned hierarchy.
+
+        ``hierarchy`` can be either a fitted scDEF model (preferred) or an
+        explicit sequence of W matrices. When a model is passed, current
+        ``factor_lists`` are respected and the corresponding W submatrices,
+        BRD/ARD, and hyperparameters are copied.
+        """
+        reference_model = hierarchy if hasattr(hierarchy, "pmeans") else None
+        if reference_model is not None:
+            if reference_model.adata.n_vars != adata.n_vars or not np.array_equal(
+                np.asarray(reference_model.adata.var_names), np.asarray(adata.var_names)
+            ):
+                if set(reference_model.adata.var_names).issubset(set(adata.var_names)):
+                    adata = adata[:, reference_model.adata.var_names].copy()
+                else:
+                    raise ValueError(
+                        "adata must contain all hierarchy model genes; pass matching "
+                        "genes or pre-align adata.var_names."
+                    )
+            factor_lists = [
+                np.asarray(f, dtype=int) for f in reference_model.factor_lists
+            ]
+            init_w = []
+            for layer_idx, keep in enumerate(factor_lists):
+                w = np.asarray(
+                    reference_model.pmeans[
+                        f"{reference_model.layer_names[layer_idx]}W"
+                    ],
+                    dtype=np.float32,
+                )
+                if layer_idx == 0:
+                    init_w.append(w[keep])
+                else:
+                    parent_keep = factor_lists[layer_idx - 1]
+                    init_w.append(w[np.ix_(keep, parent_keep)])
+            if init_brd is None:
+                init_brd = np.asarray(reference_model.pmeans["brd"], dtype=np.float32)[
+                    factor_lists[0]
+                ]
+            if init_ard is None:
+                init_ard = np.asarray(
+                    reference_model.pmeans["factor_means"], dtype=np.float32
+                )[factor_lists[0]]
+            model_kwargs = cls._reference_model_kwargs(
+                reference_model, [len(f) for f in factor_lists]
+            )
+            model_kwargs.update(kwargs)
+            kwargs = model_kwargs
+        else:
+            w_matrices = hierarchy
+            if len(w_matrices) == 0:
+                raise ValueError("hierarchy must contain at least L0W.")
+            init_w = [np.asarray(w, dtype=np.float32) for w in w_matrices]
+            kwargs = dict(kwargs)
+        w_matrices = init_w
+        if len(w_matrices) == 0:
+            raise ValueError("hierarchy must contain at least L0W.")
+        init_w = [np.asarray(w, dtype=np.float32) for w in w_matrices]
+        if init_w[0].ndim != 2:
+            raise ValueError("Each W matrix must be 2-dimensional.")
+        if init_w[0].shape[1] != adata.n_vars:
+            raise ValueError(
+                f"L0W has {init_w[0].shape[1]} genes, but adata has {adata.n_vars}."
+            )
+        layer_sizes = [int(init_w[0].shape[0])]
+        for layer_idx in range(1, len(init_w)):
+            if init_w[layer_idx].ndim != 2:
+                raise ValueError("Each W matrix must be 2-dimensional.")
+            expected_parent = layer_sizes[layer_idx - 1]
+            if int(init_w[layer_idx].shape[1]) != expected_parent:
+                raise ValueError(
+                    f"W matrix {layer_idx} has {init_w[layer_idx].shape[1]} columns; "
+                    f"expected {expected_parent}."
+                )
+            layer_sizes.append(int(init_w[layer_idx].shape[0]))
+
+        model_kwargs = dict(kwargs)
+        model_kwargs.setdefault("layer_sizes", layer_sizes)
+        model_kwargs.setdefault("n_factors", layer_sizes[0])
+        top_idx = len(layer_sizes) - 2 if len(layer_sizes) > 1 and layer_sizes[-1] == 1 else len(layer_sizes) - 1
+        model_kwargs.setdefault("top_factors", layer_sizes[top_idx])
+        model = cls(
+            adata,
+            counts_layer=counts_layer,
+            batch_key=batch_key,
+            **model_kwargs,
+        )
+        model._pending_reference_init = {
+            "init_w": init_w,
+            "init_brd": init_brd,
+            "init_ard": init_ard,
+            "init_z": init_z,
+            "reference_obs": None,
+            "query_obs": None,
+        }
+        return model
+
+    @staticmethod
+    def _reference_model_kwargs(
+        reference_model: "scDEF", layer_sizes: Sequence[int]
+    ) -> Dict[str, Any]:
+        top_idx = (
+            len(layer_sizes) - 2
+            if len(layer_sizes) > 1 and int(layer_sizes[-1]) == 1
+            else len(layer_sizes) - 1
+        )
+        return {
+            "n_factors": int(layer_sizes[0]),
+            "top_factors": int(layer_sizes[top_idx]),
+            "n_layers": reference_model.n_layers_schedule,
+            "layer_sizes": [int(x) for x in layer_sizes],
+            "alpha": reference_model.alpha,
+            "top_alpha": reference_model.top_alpha,
+            "shrinkage_shape": reference_model.shrinkage_shape,
+            "shrinkage_rate": reference_model.shrinkage_rate,
+            "shrinkage_mean": reference_model.shrinkage_mean,
+            "factor_shape": reference_model.factor_shape,
+            "brd_strength": reference_model.brd,
+            "brd_mean": reference_model.brd_mean,
+            "use_brd": reference_model.use_brd,
+            "cell_scale_shape": reference_model.cell_scale_shape,
+            "gene_scale_shape": reference_model.gene_scale_shape,
+            "batch_cpal": reference_model.batch_cpal,
+            "layer_cpal": reference_model.layer_cpal,
+            "lightness_mult": reference_model.lightness_mult,
+            "set_alpha_from_cov": reference_model.set_alpha_from_cov,
+            "hierarchy_fraction": reference_model.hierarchy_fraction,
+            "marginalize_alpha": reference_model.marginalize_alpha,
+            "seed": reference_model.seed,
+        }
 
     def save(
         self,
@@ -554,6 +805,45 @@ class scDEF(object):
             out.append(1)
         return out
 
+    @staticmethod
+    def _geometric_layer_sizes_for(
+        n_factors: int, top_factors: int, n_layers: int
+    ) -> List[int]:
+        n_layers = max(2, int(n_layers))
+        min_k = float(int(n_factors))
+        top_k = float(int(top_factors))
+        ratio = top_k / max(min_k, 1.0)
+        add_root = int(top_factors) > 1
+        if n_layers == 2:
+            out = [max(1, int(round(min_k))), int(top_factors)]
+            if out[0] < out[1]:
+                out[0] = out[1]
+            if add_root:
+                out.append(1)
+            return out
+
+        denom = float(n_layers - 1)
+        out: List[int] = []
+        prev: Optional[int] = None
+        for l in range(n_layers):
+            r = l / denom
+            if l == n_layers - 1:
+                k_i = int(top_factors)
+            else:
+                k_f = min_k * (ratio**r)
+                k_i = max(1, int(round(k_f)))
+                if prev is not None and k_i >= prev:
+                    k_i = max(1, prev - 1)
+            out.append(k_i)
+            prev = k_i
+        out[-1] = int(top_factors)
+        for i in range(len(out) - 2, -1, -1):
+            if out[i] < out[i + 1]:
+                out[i] = out[i + 1]
+        if add_root:
+            out.append(1)
+        return out
+
     def _should_collapse_adjacent_layer_sizes(
         self,
         layer_sizes: Sequence[int],
@@ -562,16 +852,20 @@ class scDEF(object):
         min_l0_factors: int = 10,
         min_upper_factors: int = 5,
     ) -> bool:
-        """True when a child layer keeps at least ``fraction`` of its parent's factors."""
+        """True when the layer above is nearly as wide as the layer below (redundant step).
+
+        ``parent_idx`` indexes the lower layer in ``layer_sizes`` (L0 when 0). The
+        hierarchy grows upward: L0 is the child of L1, L1 of L2, etc.
+        """
         layer_sizes = [int(x) for x in layer_sizes]
         if parent_idx < 0 or parent_idx + 1 >= len(layer_sizes):
             return False
-        n_parent = layer_sizes[parent_idx]
-        n_child = layer_sizes[parent_idx + 1]
-        min_parent = int(min_l0_factors) if parent_idx == 0 else int(min_upper_factors)
-        if n_parent <= min_parent:
+        n_lower = layer_sizes[parent_idx]
+        n_upper = layer_sizes[parent_idx + 1]
+        min_lower = int(min_l0_factors) if parent_idx == 0 else int(min_upper_factors)
+        if n_lower <= min_lower:
             return False
-        return n_child >= float(fraction) * float(n_parent)
+        return n_upper >= float(fraction) * float(n_lower)
 
     def _should_collapse_redundant_l1(
         self,
@@ -584,6 +878,38 @@ class scDEF(object):
             layer_sizes, 0, fraction, min_l0_factors
         )
 
+    def _sanitize_layer_sizes(
+        self,
+        layer_sizes: Sequence[int],
+        old_keep: Optional[Sequence[int]] = None,
+    ) -> Tuple[List[int], List[int]]:
+        """Clip non-increasing widths and drop consecutive duplicate layer sizes.
+
+        Returns sanitized sizes and ``old_keep[j]`` = original layer index kept at
+        new position ``j``. Used on refit so warm-start can compose ``W`` across
+        removed layers.
+        """
+        sizes = [int(x) for x in layer_sizes]
+        if old_keep is None:
+            keep = list(range(len(sizes)))
+        else:
+            keep = [int(i) for i in old_keep]
+            if len(keep) != len(sizes):
+                raise ValueError(
+                    "old_keep must have the same length as layer_sizes "
+                    f"({len(keep)} != {len(sizes)})."
+                )
+        for i in range(len(sizes) - 1):
+            if sizes[i + 1] > sizes[i]:
+                sizes[i + 1] = sizes[i]
+        new_sizes: List[int] = []
+        new_keep: List[int] = []
+        for j, size in enumerate(sizes):
+            if len(new_sizes) == 0 or size != new_sizes[-1]:
+                new_sizes.append(size)
+                new_keep.append(keep[j])
+        return new_sizes, new_keep
+
     def _collapse_redundant_adjacent_layer_sizes(
         self,
         layer_sizes: Sequence[int],
@@ -591,7 +917,7 @@ class scDEF(object):
         min_l0_factors: int = 10,
         min_upper_factors: int = 5,
     ) -> Tuple[List[int], List[int], int]:
-        """Drop redundant child layers throughout the hierarchy (bottom-up scan)."""
+        """Drop redundant intermediate layers (bottom-up scan along layer_sizes)."""
         sizes = [int(x) for x in layer_sizes]
         old_keep = list(range(len(sizes)))
         n_dropped = 0
@@ -606,17 +932,17 @@ class scDEF(object):
             ):
                 i += 1
                 continue
-            child_old = old_keep[i + 1]
+            dropped_old = old_keep[i + 1]
             promote_old = old_keep[i + 2]
-            parent_name = (
+            lower_name = (
                 self.layer_names[old_keep[i]]
                 if old_keep[i] < len(self.layer_names)
                 else f"L{old_keep[i]}"
             )
-            child_name = (
-                self.layer_names[child_old]
-                if child_old < len(self.layer_names)
-                else f"L{child_old}"
+            dropped_name = (
+                self.layer_names[dropped_old]
+                if dropped_old < len(self.layer_names)
+                else f"L{dropped_old}"
             )
             promote_name = (
                 self.layer_names[promote_old]
@@ -625,15 +951,15 @@ class scDEF(object):
             )
             self.logger.info(
                 "Redundant hierarchy on refit (%s %s, %s %s factors; threshold %.2f). "
-                "Dropping %s; %s becomes the new %s.",
+                "Dropping %s; %s becomes the new parent of %s.",
                 sizes[i],
-                parent_name,
+                lower_name,
                 sizes[i + 1],
-                child_name,
+                dropped_name,
                 float(fraction),
-                child_name,
+                dropped_name,
                 promote_name,
-                parent_name,
+                lower_name,
             )
             sizes = sizes[: i + 1] + sizes[i + 2 :]
             old_keep = old_keep[: i + 1] + old_keep[i + 2 :]
@@ -709,6 +1035,163 @@ class scDEF(object):
         ]
         return init_z, init_w, init_brd, init_ard
 
+    def _resolve_factor_name_in_old_layers(
+        self,
+        factor_name: str,
+        factor_lists: Sequence[np.ndarray],
+        factor_names: Sequence[Sequence[str]],
+    ) -> Tuple[int, int, int]:
+        """Return ``(layer_idx, slot_idx, original_idx)`` for an old factor name."""
+        for layer_idx, names in enumerate(factor_names):
+            if factor_name in names:
+                slot_idx = int(list(names).index(factor_name))
+                return (
+                    int(layer_idx),
+                    slot_idx,
+                    int(np.asarray(factor_lists[layer_idx], dtype=int)[slot_idx]),
+                )
+        raise ValueError(f"Unknown refit_top_factor {factor_name!r}.")
+
+    def _allocate_groups_by_top(
+        self, child_to_top: np.ndarray, n_groups: int, n_top: int
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Assign child groups to a smaller parent layer while preserving top labels."""
+        child_to_top = np.asarray(child_to_top, dtype=int)
+        n_groups = int(n_groups)
+        if n_groups < n_top:
+            raise ValueError(
+                f"Intermediate layer size {n_groups} cannot be smaller than "
+                f"the number of sensible top factors ({n_top})."
+            )
+        counts = np.bincount(child_to_top, minlength=n_top).astype(float)
+        active = np.where(counts > 0)[0]
+        group_counts = np.zeros(n_top, dtype=int)
+        group_counts[active] = 1
+        remaining = n_groups - int(group_counts.sum())
+        if remaining > 0 and counts.sum() > 0:
+            quotas = counts / counts.sum() * remaining
+            extra = np.floor(quotas).astype(int)
+            group_counts += extra
+            remaining = n_groups - int(group_counts.sum())
+            order = np.argsort(-(quotas - extra))
+            for top_idx in order[:remaining]:
+                group_counts[int(top_idx)] += 1
+        while int(group_counts.sum()) > n_groups:
+            candidates = np.where(group_counts > 1)[0]
+            if len(candidates) == 0:
+                break
+            group_counts[candidates[np.argmin(counts[candidates])]] -= 1
+
+        group_to_top = np.concatenate(
+            [np.full(group_counts[t], t, dtype=int) for t in range(n_top)]
+        )
+        if len(group_to_top) != n_groups:
+            raise RuntimeError("Failed to allocate requested number of groups.")
+        child_to_group = np.zeros(len(child_to_top), dtype=int)
+        for top_idx in range(n_top):
+            children = np.where(child_to_top == top_idx)[0]
+            groups = np.where(group_to_top == top_idx)[0]
+            if len(children) == 0 or len(groups) == 0:
+                continue
+            for pos, child in enumerate(children):
+                child_to_group[int(child)] = int(groups[pos % len(groups)])
+        return child_to_group, group_to_top
+
+    def _build_frontier_refit_init(
+        self,
+        top_factors: Sequence[str],
+        factor_lists: Optional[Sequence[np.ndarray]] = None,
+        factor_names: Optional[Sequence[Sequence[str]]] = None,
+        layer_names: Optional[Sequence[str]] = None,
+    ) -> Tuple[List[int], List[np.ndarray], List[np.ndarray], np.ndarray, np.ndarray]:
+        """Warm-start a geometric hierarchy whose top layer is a mixed-depth frontier."""
+        fl = [
+            np.asarray(f, dtype=int)
+            for f in (factor_lists if factor_lists is not None else self.factor_lists)
+        ]
+        names = list(layer_names if layer_names is not None else self.layer_names)
+        old_factor_names = (
+            [list(x) for x in factor_names]
+            if factor_names is not None
+            else [list(x) for x in self.factor_names]
+        )
+        top_factors = [str(x) for x in top_factors]
+        if len(top_factors) == 0:
+            raise ValueError("refit_top_factors must contain at least one factor.")
+        resolved = [
+            self._resolve_factor_name_in_old_layers(f, fl, old_factor_names)
+            for f in top_factors
+        ]
+        n_l0 = len(fl[0])
+        n_top = len(resolved)
+        layer_sizes, _ = self._sanitize_layer_sizes(
+            self._geometric_layer_sizes_for(n_l0, n_top, int(self.n_layers_schedule))
+        )
+        has_root = len(layer_sizes) > 1 and int(layer_sizes[-1]) == 1
+        top_layer_idx = len(layer_sizes) - 2 if has_root else len(layer_sizes) - 1
+        if layer_sizes[top_layer_idx] != n_top:
+            raise RuntimeError("Frontier top layer size was not preserved.")
+
+        init_w: List[np.ndarray] = [
+            np.asarray(self.pmeans[f"{names[0]}W"], dtype=np.float32)[fl[0]]
+        ]
+        init_z: List[np.ndarray] = [
+            np.asarray(self.pmeans[f"{names[0]}z"], dtype=np.float32)[:, fl[0]]
+        ]
+
+        top_to_l0 = np.zeros((n_top, n_l0), dtype=np.float32)
+        top_z = np.zeros((self.n_cells, n_top), dtype=np.float32)
+        for top_slot, (old_layer, old_slot, _) in enumerate(resolved):
+            if old_layer == 0:
+                top_to_l0[top_slot, old_slot] = 1.0
+            else:
+                composed = self._compose_w_to_parent_layer(names, fl, old_layer, 0)
+                top_to_l0[top_slot] = composed[old_slot]
+            top_z[:, top_slot] = np.asarray(
+                self.pmeans[f"{names[old_layer]}z"], dtype=np.float32
+            )[:, fl[old_layer][old_slot]]
+        top_to_l0 = np.clip(top_to_l0, 1e-8, None)
+
+        current_z = init_z[0]
+        current_to_l0 = np.eye(n_l0, dtype=np.float32)
+        child_to_top = np.argmax(top_to_l0, axis=0).astype(int)
+        for layer_idx in range(1, top_layer_idx):
+            next_size = int(layer_sizes[layer_idx])
+            child_to_group, group_to_top = self._allocate_groups_by_top(
+                child_to_top, next_size, n_top
+            )
+            w = np.zeros((next_size, current_z.shape[1]), dtype=np.float32)
+            for child_idx, group_idx in enumerate(child_to_group):
+                w[int(group_idx), int(child_idx)] = 1.0
+            group_sizes = np.maximum(w.sum(axis=1, keepdims=True), 1.0)
+            init_w.append(np.clip(w / group_sizes, 1e-8, None).astype(np.float32))
+            current_z = current_z @ w.T
+            current_to_l0 = w @ current_to_l0
+            child_to_top = group_to_top
+            init_z.append(np.clip(current_z, 1e-8, None).astype(np.float32))
+
+        w_top = top_to_l0 @ current_to_l0.T
+        w_top = w_top / np.maximum(w_top.sum(axis=0, keepdims=True), 1e-8)
+        init_w.append(np.clip(w_top, 1e-8, None).astype(np.float32))
+        init_z.append(np.clip(top_z, 1e-8, None).astype(np.float32))
+
+        if has_root:
+            init_w.append(
+                np.ones((1, n_top), dtype=np.float32) / max(float(n_top), 1.0)
+            )
+            old_root_idx = len(fl) - 1
+            if len(fl[old_root_idx]) == 1:
+                root_z = np.asarray(
+                    self.pmeans[f"{names[old_root_idx]}z"], dtype=np.float32
+                )[:, fl[old_root_idx]]
+            else:
+                root_z = np.ones((self.n_cells, 1), dtype=np.float32)
+            init_z.append(np.clip(root_z, 1e-8, None).astype(np.float32))
+
+        init_brd = np.asarray(self.pmeans["brd"], dtype=np.float32)[fl[0]]
+        init_ard = np.asarray(self.pmeans["factor_means"], dtype=np.float32)[fl[0]]
+        return layer_sizes, init_z, init_w, init_brd, init_ard
+
     def update_model_size(
         self,
         max_n_factors=None,
@@ -732,18 +1215,7 @@ class scDEF(object):
                 ``n_layers_schedule`` on ``self`` for a geometric ladder (``scDEF``).
         """
         if layer_sizes is not None:
-            # If two consecutive layers have increasing sizes, clip
-            for i in range(len(layer_sizes) - 1):
-                if layer_sizes[i + 1] > layer_sizes[i]:
-                    layer_sizes[i + 1] = layer_sizes[i]
-            # If consecutive layers have the same size, keep only one.
-            # Build a deduplicated list directly so chains like [...,1,1,1]
-            # collapse to a single 1.
-            dedup_layer_sizes = []
-            for size in layer_sizes:
-                if len(dedup_layer_sizes) == 0 or size != dedup_layer_sizes[-1]:
-                    dedup_layer_sizes.append(size)
-            layer_sizes = dedup_layer_sizes
+            layer_sizes, _ = self._sanitize_layer_sizes(layer_sizes)
             self.layer_sizes = layer_sizes
             self.n_layers = len(self.layer_sizes)
             self.layer_names = [f"L{i}" for i in range(self.n_layers)]
@@ -791,7 +1263,7 @@ class scDEF(object):
         self.factor_lists = [np.arange(size) for size in self.layer_sizes]
         self.set_factor_names()
 
-    def update_model_priors(self):
+    def update_model_priors(self, update_alpha_from_cov: bool = True):
         if self.use_brd:
             self.factor_shapes = [1.0] + [
                 self.factor_shape  # * self.layer_sizes[layer_idx] / self.layer_sizes[0]
@@ -827,7 +1299,7 @@ class scDEF(object):
         self.cell_alpha_factor = self.batch_lib_sizes / float(
             np.median(self.batch_lib_sizes)
         )
-        if self.set_alpha_from_cov:
+        if self.set_alpha_from_cov and update_alpha_from_cov:
             self.alpha = (
                 float(np.median(self.batch_lib_sizes))
                 / float(self.layer_sizes[0])
@@ -1004,7 +1476,7 @@ class scDEF(object):
         v_brd = m_brd**2 / 100.0
         if init_brd is not None:
             m_brd = init_brd
-            v_brd = m_brd**2 / 10.0
+            v_brd = m_brd**2 / 100.0
         self.global_params.append(
             jnp.array(
                 (
@@ -1043,14 +1515,15 @@ class scDEF(object):
 
             z_init_layer = _get_layer_init(init_z, layer_idx)
             if z_init_layer is not None and not nmf_init:
-                m = z_init_layer.astype(jnp.float32)
+                m = jnp.clip(jnp.asarray(z_init_layer, dtype=jnp.float32), clip, 1e6)
                 m = jnp.clip(
                     tfd.Gamma(z_init_concentration, z_init_concentration / m).sample(
                         seed=rngs[rng_cnt],
                     ),
                     clip,
-                    4.0,
+                    1e6,
                 )
+                v = m**2 / 100.0
             elif (
                 nmf_init
                 and (not init_z_provided)
@@ -1074,6 +1547,10 @@ class scDEF(object):
                     1e1,
                 )
                 rng_cnt += 1
+                v = m / 100.0
+
+                if layer_idx > 0:
+                    v = m / 10.0                
             else:
                 m = jnp.clip(
                     tfd.Gamma(a, a / 1.0).sample(
@@ -1083,6 +1560,10 @@ class scDEF(object):
                     clip,
                     4.0,
                 )
+                v = m / 100.0
+
+                if layer_idx > 0:
+                    v = m / 10.0                
                 # sd = 2.0  # tunable
                 # Lognormal with mean = 1 (corrected via -sd²/2 shift in log space)
                 # m = tfd.LogNormal(loc=-sd**2 / 2, scale=sd).sample(
@@ -1092,10 +1573,6 @@ class scDEF(object):
                 # m = jnp.clip(m, clip, 1e1)
                 # rng_cnt += 1
 
-            v = m / 100.0
-
-            if layer_idx > 0:
-                v = m / 10.0
             z_shape = jnp.log(m**2 / jnp.sqrt(m**2 + v)) * jnp.ones(
                 (self.n_cells, self.layer_sizes[layer_idx])
             )
@@ -1121,8 +1598,8 @@ class scDEF(object):
 
             w_init_layer = _get_layer_init(init_w, layer_idx)
             if w_init_layer is not None and not nmf_init:
-                m = w_init_layer.astype(jnp.float32)  # + 1e-6
-                v = m  # / 100.0
+                m = jnp.clip(jnp.asarray(w_init_layer, dtype=jnp.float32), 1e-8, 1e8)
+                v = m**2 / 100.0
             else:
                 m = 1.0 / self.layer_sizes[layer_idx] * jnp.ones((in_layer, out_layer))
                 m = m * self.w_priors[layer_idx][0] / self.w_priors[layer_idx][1]
@@ -1130,6 +1607,8 @@ class scDEF(object):
                     m = tfd.Gamma(a, a / (m)).sample(seed=rngs[rng_cnt])
                 rng_cnt += 1
                 v = m / 100.0
+                if layer_idx > 0:
+                    v = m / 10.0
             # if nmf_init and layer_idx == 0:
             #     iw = init_w[layer_idx].astype(jnp.float32)
             #     # Rescale
@@ -1145,9 +1624,6 @@ class scDEF(object):
             #     m = tfd.Gamma(100.0, 100.0 / (iw)).sample(seed=rngs[rng_cnt])
             #     rng_cnt += 1
             #     v = m / 100.0
-            v = m / 10.0
-            if layer_idx > 0:
-                v = m / 10.0
             w_shape = jnp.log(m**2 / jnp.sqrt(m**2 + v)) * jnp.ones(
                 (in_layer, out_layer)
             )
@@ -1164,7 +1640,7 @@ class scDEF(object):
         v = m**2 / 10.0
         if init_ard is not None:
             m = init_ard
-            v = m**2 / 10.0
+            v = m**2 / 100.0
 
         self.global_params.append(
             jnp.array(
@@ -1816,6 +2292,9 @@ class scDEF(object):
         collapse_l1_fraction: Optional[float] = 0.8,
         collapse_l0_min_factors: int = 10,
         collapse_upper_min_factors: int = 5,
+        learn_budgets_on_refit: bool = False,
+        refit_top_layer: Optional[Union[int, str]] = None,
+        refit_top_factors: Optional[Sequence[str]] = None,
         **kwargs: Any,
     ) -> None:
         """Fit scDEF, warm-starting from a previous fit when available.
@@ -1837,14 +2316,27 @@ class scDEF(object):
                 ``_learn``) are skipped during the frozen-root phase and run only after the
                 root step, using the ``filter`` / ``annotate`` values passed to ``fit``.
             collapse_l1_fraction: on **refit only** (second and later ``fit()`` calls),
-                scan adjacent layer pairs (L0/L1, L1/L2, …). When the parent layer has more
-                than ``collapse_l0_min_factors`` (L0) or ``collapse_upper_min_factors``
-                (L1 and above) factors and the child keeps at least this fraction of the
-                parent width, drop the child layer when rebuilding ``layer_sizes`` and
-                warm-start through composed ``W`` matrices. Ignored on the first ``fit()``.
-                Set to ``None`` to disable. Default ``0.8``.
-            collapse_l0_min_factors: minimum L0 parent width required to collapse L1.
-            collapse_upper_min_factors: minimum parent width for L1/L2, L2/L3, … pairs.
+                scan adjacent pairs along the hierarchy (L0/L1, L1/L2, …; L0 is the
+                bottom child layer). When the upper layer is nearly as wide as the layer
+                below (at least this fraction of its factor count) and the lower layer
+                exceeds ``collapse_l0_min_factors`` (L0) or ``collapse_upper_min_factors``
+                (L1+), drop the upper redundant layer, promote the next layer up as its
+                replacement parent, and warm-start through composed ``W`` matrices.
+                Ignored on the first ``fit()``. Set to ``None`` to disable. Default ``0.8``.
+            collapse_l0_min_factors: minimum L0 width required to collapse a redundant L1.
+            collapse_upper_min_factors: minimum lower-layer width for L1/L2, L2/L3, … pairs.
+            learn_budgets_on_refit: on refit only, keep existing cell/gene budget
+                parameters (no re-initialization) but allow them to be optimized when
+                ``True``. When ``False`` (default), budgets are warm-started and frozen
+                during the main learning phase.
+            refit_top_layer: on refit only, truncate the hierarchy so this layer becomes
+                the top non-root layer, preserving a final width-1 root when present and
+                warm-starting through composed ``W`` matrices. Accepts a layer index or
+                layer name (for example the ``recommended_layer_idx`` returned by
+                ``scd.tl.find_sensible_top_layer``).
+            refit_top_factors: on refit only, rebuild a geometric hierarchy using
+                these mixed-depth factors as the top non-root layer. Intermediate
+                layer sizes follow the existing ``n_layers_schedule``.
             **kwargs: additional keyword arguments.
 
             On the first call, parameters are initialized from priors (or NMF if enabled).
@@ -1861,8 +2353,56 @@ class scDEF(object):
             old_factor_lists = [np.array(f).copy() for f in self.factor_lists]
             layer_sizes = [len(factors) for factors in old_factor_lists]
             old_layer_names = list(self.layer_names)
-            collapsed_layers = False
-            if collapse_l1_fraction is not None:
+            old_factor_names = [list(names) for names in self.factor_names]
+            n_original = len(layer_sizes)
+            old_keep = list(range(n_original))
+            if refit_top_factors is not None:
+                if refit_top_layer is not None:
+                    raise ValueError(
+                        "Pass only one of refit_top_factors or refit_top_layer."
+                    )
+                layer_sizes, init_z, init_w, init_brd, init_ard = (
+                    self._build_frontier_refit_init(
+                        refit_top_factors,
+                        factor_lists=old_factor_lists,
+                        factor_names=old_factor_names,
+                        layer_names=old_layer_names,
+                    )
+                )
+                old_keep = []
+                self.logger.info(
+                    "Refit: using %s sensible top factors as the top non-root layer.",
+                    len(refit_top_factors),
+                )
+            elif refit_top_layer is not None:
+                if isinstance(refit_top_layer, str):
+                    if refit_top_layer not in old_layer_names:
+                        raise ValueError(
+                            f"Unknown refit_top_layer {refit_top_layer!r}; expected one of "
+                            f"{old_layer_names}."
+                        )
+                    top_layer_idx = old_layer_names.index(refit_top_layer)
+                else:
+                    top_layer_idx = int(refit_top_layer)
+                if top_layer_idx < 0 or top_layer_idx >= n_original:
+                    raise ValueError(
+                        f"refit_top_layer must be within [0, {n_original - 1}]."
+                    )
+                has_root = n_original > 1 and int(layer_sizes[-1]) == 1
+                if has_root and top_layer_idx == n_original - 1:
+                    raise ValueError(
+                        "refit_top_layer should name the top non-root layer, not the root."
+                    )
+                old_keep = list(range(top_layer_idx + 1))
+                if has_root and (n_original - 1) not in old_keep:
+                    old_keep.append(n_original - 1)
+                layer_sizes = [layer_sizes[i] for i in old_keep]
+                self.logger.info(
+                    "Refit: using %s as the top non-root layer (old_keep=%s).",
+                    old_layer_names[top_layer_idx],
+                    old_keep,
+                )
+            elif collapse_l1_fraction is not None:
                 (
                     layer_sizes,
                     old_keep,
@@ -1873,15 +2413,31 @@ class scDEF(object):
                     int(collapse_l0_min_factors),
                     int(collapse_upper_min_factors),
                 )
-                collapsed_layers = n_dropped > 0
+            if refit_top_factors is not None:
+                hierarchy_changed = True
+                warm_start_all_layers = True
             else:
-                old_keep = list(range(len(layer_sizes)))
-            if force_decay_factor:
-                template = self._geometric_layer_sizes(int(self.n_layers_schedule))
-                for i in range(min(len(layer_sizes), len(template))):
-                    if layer_sizes[i] > template[i]:
-                        layer_sizes[i] = template[i]
-            if collapsed_layers:
+                if force_decay_factor:
+                    template = self._geometric_layer_sizes(int(self.n_layers_schedule))
+                    for i in range(min(len(layer_sizes), len(template))):
+                        if layer_sizes[i] > template[i]:
+                            layer_sizes[i] = template[i]
+                n_before_sanitize = len(old_keep)
+                layer_sizes, old_keep = self._sanitize_layer_sizes(
+                    layer_sizes, old_keep
+                )
+                if len(old_keep) < n_before_sanitize:
+                    self.logger.info(
+                        "Refit: dropped %s layer(s) with duplicate adjacent widths; "
+                        "warm-start via composed W (old_keep=%s).",
+                        n_before_sanitize - len(old_keep),
+                        old_keep,
+                    )
+                hierarchy_changed = len(old_keep) != n_original or old_keep != list(
+                    range(n_original)
+                )
+                warm_start_all_layers = hierarchy_changed or not force_decay_factor
+            if refit_top_factors is None and warm_start_all_layers:
                 init_z, init_w, init_brd, init_ard = self._build_collapsed_refit_init(
                     old_keep,
                     factor_lists=old_factor_lists,
@@ -1890,7 +2446,7 @@ class scDEF(object):
             self.update_model_size(
                 max_n_factors=max(layer_sizes), layer_sizes=layer_sizes
             )
-            self.update_model_priors()
+            self.update_model_priors(update_alpha_from_cov=False)
             self.logger.info(
                 f"Continuing scDEF from previous fit with layer sizes {self.layer_sizes}."
             )
@@ -1898,38 +2454,12 @@ class scDEF(object):
             init_budgets = False
             init_alpha = True
             z_init_concentration = 100.0  # on re-fit, use high concentration to avoid ignoring initial state
-            if not collapsed_layers and force_decay_factor:
+            if not warm_start_all_layers and force_decay_factor:
                 l0_keep = np.array(old_factor_lists[0], dtype=int)
                 init_z = np.array(self.pmeans[f"{self.layer_names[0]}z"])[:, l0_keep]
                 init_w = np.array(self.pmeans["L0W"])[l0_keep]
                 init_brd = np.array(self.pmeans["brd"])[l0_keep]
                 init_ard = np.array(self.pmeans["factor_means"])[l0_keep]
-            elif not collapsed_layers:
-                init_z = [
-                    np.array(self.pmeans[f"{self.layer_names[layer_idx]}z"])[
-                        :, np.array(old_factor_lists[layer_idx], dtype=int)
-                    ]
-                    for layer_idx in range(
-                        self.n_layers - 1
-                    )  # ignore root and subroot z
-                ]
-                init_w = []
-                for layer_idx in range(self.n_layers - 1):  # ignore root
-                    w = np.array(self.pmeans[f"{self.layer_names[layer_idx]}W"])
-                    row_keep = np.array(old_factor_lists[layer_idx], dtype=int)
-                    if layer_idx == 0:
-                        init_w.append(w[row_keep])
-                    else:
-                        col_keep = np.array(old_factor_lists[layer_idx - 1], dtype=int)
-                        init_w.append(w[np.ix_(row_keep, col_keep)])
-                init_brd = np.array(self.pmeans["brd"])[
-                    np.array(old_factor_lists[0], dtype=int)
-                ]
-                init_ard = np.array(self.pmeans["factor_means"])[
-                    np.array(old_factor_lists[0], dtype=int)
-                ]
-                # init_brd = None
-                # init_ard = None
         else:
             init_budgets = True
             init_alpha = True
@@ -1937,6 +2467,14 @@ class scDEF(object):
             init_w = None
             init_brd = None
             init_ard = None
+            pending_reference_init = getattr(self, "_pending_reference_init", None)
+            if pending_reference_init is not None:
+                init_z = pending_reference_init.get("init_z")
+                init_w = pending_reference_init.get("init_w")
+                init_brd = pending_reference_init.get("init_brd")
+                init_ard = pending_reference_init.get("init_ard")
+                nmf_init = False
+                z_init_concentration = 100.0
         self.init_var_params(
             init_budgets=init_budgets,
             init_alpha=init_alpha,
@@ -1948,6 +2486,8 @@ class scDEF(object):
             max_cells=max_cells_init,
             z_init_concentration=z_init_concentration,
         )
+        if not is_refit and getattr(self, "_pending_reference_init", None) is not None:
+            self._pending_reference_init = None
         self._invalidate_cached_diagnostics()
         self.elbos = []
         self.step_sizes = []
@@ -1976,8 +2516,12 @@ class scDEF(object):
             # Learn with frozen root
             optimize_layers = list(range(self.n_layers - 1))
 
-        stop_gene_budgets = not init_budgets
-        stop_cell_budgets = not init_budgets
+        if is_refit:
+            stop_gene_budgets = not learn_budgets_on_refit
+            stop_cell_budgets = not learn_budgets_on_refit
+        else:
+            stop_gene_budgets = False
+            stop_cell_budgets = False
         main_learn_kwargs = dict(kwargs)
         if int(root_epochs) > 0:
             # Defer factor filtering and adata annotation until after root refinement;
