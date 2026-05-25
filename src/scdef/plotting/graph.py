@@ -16,15 +16,34 @@ if TYPE_CHECKING:
 TECHNICAL_FACTOR_FONTCOLOR = "#404040"
 
 
-def _validate_top_genes(top_genes, n_layers):
+def _validate_top_genes(top_genes, n_layers, alternate_n_layers=None):
     """Validate and normalize top_genes parameter."""
     if top_genes is None:
         return [10] * n_layers
     elif isinstance(top_genes, (int, float)):
         return [int(top_genes)] * n_layers
+    valid_lengths = {n_layers}
+    if alternate_n_layers is not None:
+        valid_lengths.add(int(alternate_n_layers))
     elif len(top_genes) != n_layers:
         raise IndexError("top_genes list must be of size scDEF.n_layers")
+    if len(top_genes) not in valid_lengths:
+        expected = " or ".join(str(x) for x in sorted(valid_lengths))
+        raise IndexError(f"top_genes list must be of size {expected}")
+    top_genes = list(top_genes)
+    if len(top_genes) < n_layers:
+        top_genes = top_genes + [0] * (n_layers - len(top_genes))
     return top_genes
+
+
+def _shell_ignores_root(model: "scDEF", shell: Optional[bool]) -> bool:
+    """True when shell layout should omit the final width-1 root layer."""
+    return bool(
+        shell
+        and model.n_layers > 1
+        and int(model.layer_sizes[-1]) == 1
+        and len(model.factor_lists[-1]) == 1
+    )
 
 
 def _determine_style(filled, wedged, model):
@@ -892,7 +911,8 @@ def make_graph(
             (cross-layer assignment from :func:`~scdef.tools.factor.assign_confident`) instead of
             per-layer ``adata.obs[layer_name]``. Requires that column to exist.
         confident_key: ``key_added`` prefix used with ``assign_confident`` (default ``"confident"``).
-        shell: whether to use shell layout
+        shell: whether to use shell layout. If the model has a final width-1 root
+            layer, shell layout omits that root and plots the remaining hierarchy.
         r: radius parameter for shell layout
         r_decay: radius decay parameter for shell layout
         **fontsize_kwargs: keyword arguments to adjust the fontsizes according to the gene scores
@@ -908,7 +928,13 @@ def make_graph(
                 f"scd.tl.assign_confident(model, key_added={confident_key!r}) first."
             )
     # Validate and normalize inputs
-    top_genes = _validate_top_genes(top_genes, model.n_layers)
+    ignore_shell_root = _shell_ignores_root(model, shell)
+    visible_n_layers = model.n_layers - int(ignore_shell_root)
+    top_genes = _validate_top_genes(
+        top_genes,
+        model.n_layers,
+        alternate_n_layers=visible_n_layers if ignore_shell_root else None,
+    )
     gene_cmap = matplotlib.colormaps[gene_cmap]
     gene_scores_dict = _get_gene_scores(model, gene_score, drop_factors)
     style = (
@@ -971,8 +997,9 @@ def make_graph(
         if "global" in factor_obs.columns:
             global_factors = set(factor_obs.index[factor_obs["global"]].tolist())
 
-    # Process each layer
-    for layer_idx in range(model.n_layers):
+    # Process each layer. Shell plots preserve the old no-root visual style by
+    # omitting a final width-1 root layer.
+    for layer_idx in range(visible_n_layers):
         layer_name = model.layer_names[layer_idx]
 
         # Get factors and colors for this layer
