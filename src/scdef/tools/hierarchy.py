@@ -405,8 +405,7 @@ def find_sensible_top_layer(
             clear = np.isfinite(n_eff) & (n_eff <= float(n_eff_parents_max))
             if min_best_parent_prob is not None:
                 clear = clear & (
-                    np.isfinite(best_prob)
-                    & (best_prob >= float(min_best_parent_prob))
+                    np.isfinite(best_prob) & (best_prob >= float(min_best_parent_prob))
                 )
             rows["clear_merge"] = clear
             clear_fraction = float(np.mean(clear))
@@ -426,9 +425,7 @@ def find_sensible_top_layer(
                 "median_n_eff_parents": float(np.median(n_eff))
                 if len(n_eff) > 0
                 else np.nan,
-                "max_n_eff_parents": float(np.max(n_eff))
-                if len(n_eff) > 0
-                else np.nan,
+                "max_n_eff_parents": float(np.max(n_eff)) if len(n_eff) > 0 else np.nan,
                 "min_best_parent_prob": float(np.min(best_prob))
                 if len(best_prob) > 0
                 else np.nan,
@@ -531,7 +528,10 @@ def find_sensible_top_factors(
         names = (
             list(model.factor_names[layer_idx])
             if use_filtered
-            else [f"{model.layer_names[layer_idx]}_{i}" for i in range(model.layer_sizes[layer_idx])]
+            else [
+                f"{model.layer_names[layer_idx]}_{i}"
+                for i in range(model.layer_sizes[layer_idx])
+            ]
         )
         for name in names:
             name_to_layer[str(name)] = int(layer_idx)
@@ -590,7 +590,9 @@ def find_sensible_top_factors(
         )
 
     top_factor_layers = {
-        factor: int(name_to_layer[factor]) for factor in top_factors if factor in name_to_layer
+        factor: int(name_to_layer[factor])
+        for factor in top_factors
+        if factor in name_to_layer
     }
     paths = pd.DataFrame(path_rows)
     result = {

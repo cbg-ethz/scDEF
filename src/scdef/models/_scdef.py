@@ -294,7 +294,9 @@ class scDEF(object):
 
         init_z = None
         if copy_cell_z:
-            init_z = [np.ones((adata.n_obs, size), dtype=np.float32) for size in layer_sizes]
+            init_z = [
+                np.ones((adata.n_obs, size), dtype=np.float32) for size in layer_sizes
+            ]
             ref_pos = {
                 str(name): i for i, name in enumerate(reference_model.adata.obs_names)
             }
@@ -427,7 +429,11 @@ class scDEF(object):
         model_kwargs = dict(kwargs)
         model_kwargs.setdefault("layer_sizes", layer_sizes)
         model_kwargs.setdefault("n_factors", layer_sizes[0])
-        top_idx = len(layer_sizes) - 2 if len(layer_sizes) > 1 and layer_sizes[-1] == 1 else len(layer_sizes) - 1
+        top_idx = (
+            len(layer_sizes) - 2
+            if len(layer_sizes) > 1 and layer_sizes[-1] == 1
+            else len(layer_sizes) - 1
+        )
         model_kwargs.setdefault("top_factors", layer_sizes[top_idx])
         model = cls(
             adata,
@@ -1550,7 +1556,7 @@ class scDEF(object):
                 v = m / 100.0
 
                 if layer_idx > 0:
-                    v = m / 10.0                
+                    v = m / 10.0
             else:
                 m = jnp.clip(
                     tfd.Gamma(a, a / 1.0).sample(
@@ -1563,7 +1569,7 @@ class scDEF(object):
                 v = m / 100.0
 
                 if layer_idx > 0:
-                    v = m / 10.0                
+                    v = m / 10.0
                 # sd = 2.0  # tunable
                 # Lognormal with mean = 1 (corrected via -sd²/2 shift in log space)
                 # m = tfd.LogNormal(loc=-sd**2 / 2, scale=sd).sample(
@@ -2361,13 +2367,17 @@ class scDEF(object):
                     raise ValueError(
                         "Pass only one of refit_top_factors or refit_top_layer."
                     )
-                layer_sizes, init_z, init_w, init_brd, init_ard = (
-                    self._build_frontier_refit_init(
-                        refit_top_factors,
-                        factor_lists=old_factor_lists,
-                        factor_names=old_factor_names,
-                        layer_names=old_layer_names,
-                    )
+                (
+                    layer_sizes,
+                    init_z,
+                    init_w,
+                    init_brd,
+                    init_ard,
+                ) = self._build_frontier_refit_init(
+                    refit_top_factors,
+                    factor_lists=old_factor_lists,
+                    factor_names=old_factor_names,
+                    layer_names=old_layer_names,
                 )
                 old_keep = []
                 self.logger.info(
