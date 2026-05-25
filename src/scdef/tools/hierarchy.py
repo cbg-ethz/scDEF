@@ -333,6 +333,281 @@ def clarity_from_effective_parents(
     return clarity
 
 
+def find_sensible_top_layer(
+    model: "scDEF",
+    n_eff_parents_max: float = 1.5,
+    min_best_parent_prob: Optional[float] = None,
+    min_clear_fraction: float = 0.8,
+    ignore_root: bool = True,
+    use_filtered: bool = True,
+    store: bool = True,
+) -> Dict[str, Any]:
+    """Find the coarsest hierarchy layer supported by confident merges.
+
+    Uses existing ``factor_obs`` diagnostics (``n_eff_parents``,
+    ``best_parent_prob``, ``top_gap``, etc.), which are computed from the W
+    matrices by :func:`factor_diagnostics`. Moving upward stops at the first
+    transition whose child factors are too ambiguous to merge; the layer just
+    below that transition is reported as the sensible top.
+    """
+    n_layers = int(model.n_layers)
+    visible_n_layers = n_layers
+    if (
+        bool(ignore_root)
+        and n_layers > 1
+        and int(model.layer_sizes[-1]) == 1
+        and len(model.factor_lists[-1]) == 1
+    ):
+        visible_n_layers -= 1
+    if visible_n_layers < 1:
+        raise ValueError("Model must contain at least one visible layer.")
+    if "factor_obs" not in model.adata.uns:
+        from scdef.tools.factor import factor_diagnostics
+
+        factor_diagnostics(model)
+    factor_obs = model.adata.uns["factor_obs"]
+    required = {"child_layer", "n_eff_parents", "best_parent_prob", "parent_layer"}
+    missing = required.difference(factor_obs.columns)
+    if missing:
+        raise KeyError(
+            "factor_obs is missing required hierarchy diagnostics: "
+            + ", ".join(sorted(missing))
+            + ". Re-run scd.tl.factor_diagnostics(model)."
+        )
+
+    factor_rows = []
+    transition_rows = []
+    recommended_layer_idx = 0
+
+    for child_layer in range(visible_n_layers - 1):
+        parent_layer = child_layer + 1
+        child_name = model.layer_names[child_layer]
+        parent_name = model.layer_names[parent_layer]
+        if use_filtered:
+            child_factor_names = list(model.factor_names[child_layer])
+        else:
+            child_factor_names = factor_obs.index[
+                factor_obs["child_layer"] == child_name
+            ].tolist()
+        rows = factor_obs[
+            (factor_obs["child_layer"] == child_name)
+            & (factor_obs.index.isin(child_factor_names))
+        ].copy()
+        if len(rows) == 0:
+            clear_fraction = 0.0
+            transition_ok = False
+            n_eff = np.array([], dtype=float)
+            best_prob = np.array([], dtype=float)
+        else:
+            rows = rows.loc[child_factor_names]
+            n_eff = rows["n_eff_parents"].to_numpy(dtype=float)
+            best_prob = rows["best_parent_prob"].to_numpy(dtype=float)
+            clear = np.isfinite(n_eff) & (n_eff <= float(n_eff_parents_max))
+            if min_best_parent_prob is not None:
+                clear = clear & (
+                    np.isfinite(best_prob)
+                    & (best_prob >= float(min_best_parent_prob))
+                )
+            rows["clear_merge"] = clear
+            clear_fraction = float(np.mean(clear))
+            transition_ok = clear_fraction >= float(min_clear_fraction)
+
+        transition_rows.append(
+            {
+                "child_layer_idx": int(child_layer),
+                "child_layer": child_name,
+                "parent_layer_idx": int(parent_layer),
+                "parent_layer": parent_name,
+                "n_children": int(len(rows)),
+                "n_parents": int(rows["K_parents"].iloc[0])
+                if len(rows) > 0 and "K_parents" in rows.columns
+                else int(len(model.factor_lists[parent_layer])),
+                "clear_fraction": clear_fraction,
+                "median_n_eff_parents": float(np.median(n_eff))
+                if len(n_eff) > 0
+                else np.nan,
+                "max_n_eff_parents": float(np.max(n_eff))
+                if len(n_eff) > 0
+                else np.nan,
+                "min_best_parent_prob": float(np.min(best_prob))
+                if len(best_prob) > 0
+                else np.nan,
+                "transition_ok": bool(transition_ok),
+            }
+        )
+
+        if len(rows) > 0:
+            keep_cols = [
+                c
+                for c in [
+                    "parent_layer",
+                    "best_parent",
+                    "best_parent_prob",
+                    "top_gap",
+                    "n_eff_parents",
+                    "K_parents",
+                    "clear_merge",
+                ]
+                if c in rows.columns
+            ]
+            out_rows = rows[keep_cols].copy()
+            out_rows.insert(0, "child_factor", out_rows.index)
+            out_rows.insert(0, "child_layer", child_name)
+            out_rows.insert(0, "child_layer_idx", int(child_layer))
+            out_rows.insert(3, "parent_layer_idx", int(parent_layer))
+            factor_rows.extend(out_rows.to_dict(orient="records"))
+
+        if transition_ok:
+            recommended_layer_idx = parent_layer
+        else:
+            break
+
+    recommended_factors = list(model.factor_names[recommended_layer_idx])
+    transitions = pd.DataFrame(transition_rows)
+    per_factor = pd.DataFrame(factor_rows)
+    result = {
+        "recommended_layer_idx": int(recommended_layer_idx),
+        "recommended_layer": model.layer_names[recommended_layer_idx],
+        "recommended_factors": recommended_factors,
+        "n_eff_parents_max": float(n_eff_parents_max),
+        "min_best_parent_prob": min_best_parent_prob,
+        "min_clear_fraction": float(min_clear_fraction),
+        "transition_diagnostics": transitions,
+        "factor_diagnostics": per_factor,
+    }
+    if store:
+        model.adata.uns["sensible_top_layer"] = {
+            k: v
+            for k, v in result.items()
+            if k not in {"transition_diagnostics", "factor_diagnostics"}
+        }
+        model.adata.uns["sensible_top_transition_diagnostics"] = transitions
+        model.adata.uns["sensible_top_factor_diagnostics"] = per_factor
+    return result
+
+
+def find_sensible_top_factors(
+    model: "scDEF",
+    n_eff_parents_max: float = 1.5,
+    min_best_parent_prob: Optional[float] = None,
+    ignore_root: bool = True,
+    use_filtered: bool = True,
+    store: bool = True,
+) -> Dict[str, Any]:
+    """Find a mixed-depth frontier of factors whose upward merge is ambiguous.
+
+    Starting from each L0 factor, follows ``best_parent`` upward through
+    ``factor_obs`` while the merge is confident. The first factor before an
+    ambiguous merge becomes a top factor. This lets rare lineages stop at L0
+    while common lineages continue to coarser factors.
+    """
+    n_layers = int(model.n_layers)
+    visible_n_layers = n_layers
+    if (
+        bool(ignore_root)
+        and n_layers > 1
+        and int(model.layer_sizes[-1]) == 1
+        and len(model.factor_lists[-1]) == 1
+    ):
+        visible_n_layers -= 1
+    if visible_n_layers < 1:
+        raise ValueError("Model must contain at least one visible layer.")
+    if "factor_obs" not in model.adata.uns:
+        from scdef.tools.factor import factor_diagnostics
+
+        factor_diagnostics(model)
+    factor_obs = model.adata.uns["factor_obs"]
+    required = {"child_layer", "n_eff_parents", "best_parent_prob", "best_parent"}
+    missing = required.difference(factor_obs.columns)
+    if missing:
+        raise KeyError(
+            "factor_obs is missing required hierarchy diagnostics: "
+            + ", ".join(sorted(missing))
+            + ". Re-run scd.tl.factor_diagnostics(model)."
+        )
+
+    name_to_layer = {}
+    for layer_idx in range(visible_n_layers):
+        names = (
+            list(model.factor_names[layer_idx])
+            if use_filtered
+            else [f"{model.layer_names[layer_idx]}_{i}" for i in range(model.layer_sizes[layer_idx])]
+        )
+        for name in names:
+            name_to_layer[str(name)] = int(layer_idx)
+
+    def _is_clear(row: pd.Series) -> bool:
+        n_eff = float(row["n_eff_parents"])
+        best_prob = float(row["best_parent_prob"])
+        if not np.isfinite(n_eff) or n_eff > float(n_eff_parents_max):
+            return False
+        if min_best_parent_prob is not None and (
+            (not np.isfinite(best_prob)) or best_prob < float(min_best_parent_prob)
+        ):
+            return False
+        return True
+
+    top_factors = []
+    path_rows = []
+    for start in list(model.factor_names[0]):
+        cur = str(start)
+        path = [cur]
+        stop_reason = "top_visible_layer"
+        while True:
+            layer_idx = name_to_layer.get(cur)
+            if layer_idx is None:
+                stop_reason = "unknown_factor"
+                break
+            if layer_idx >= visible_n_layers - 1:
+                stop_reason = "top_visible_layer"
+                break
+            if cur not in factor_obs.index:
+                stop_reason = "missing_factor_obs"
+                break
+            row = factor_obs.loc[cur]
+            if not _is_clear(row):
+                stop_reason = "ambiguous_parent"
+                break
+            parent = str(row["best_parent"])
+            if parent not in name_to_layer or name_to_layer[parent] <= layer_idx:
+                stop_reason = "invalid_parent"
+                break
+            cur = parent
+            path.append(cur)
+        if cur not in top_factors:
+            top_factors.append(cur)
+        path_rows.append(
+            {
+                "start_factor": str(start),
+                "top_factor": cur,
+                "top_layer_idx": int(name_to_layer.get(cur, -1)),
+                "top_layer": model.layer_names[name_to_layer[cur]]
+                if cur in name_to_layer
+                else None,
+                "stop_reason": stop_reason,
+                "path": path,
+            }
+        )
+
+    top_factor_layers = {
+        factor: int(name_to_layer[factor]) for factor in top_factors if factor in name_to_layer
+    }
+    paths = pd.DataFrame(path_rows)
+    result = {
+        "top_factors": top_factors,
+        "top_factor_layers": top_factor_layers,
+        "n_eff_parents_max": float(n_eff_parents_max),
+        "min_best_parent_prob": min_best_parent_prob,
+        "paths": paths,
+    }
+    if store:
+        model.adata.uns["sensible_top_factors"] = {
+            k: v for k, v in result.items() if k != "paths"
+        }
+        model.adata.uns["sensible_top_factor_paths"] = paths
+    return result
+
+
 def make_biological_hierarchy(model: "scDEF") -> Dict[str, Sequence[str]]:
     """Make the biological hierarchy of the model.
 

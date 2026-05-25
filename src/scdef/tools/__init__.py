@@ -9,6 +9,8 @@ from .hierarchy import (
     make_global_hierarchy,
     compute_hierarchy_scores,
     add_l0_lineage_aggregate_scores,
+    find_sensible_top_layer,
+    find_sensible_top_factors,
 )
 from .factor import (
     assign_confident,
@@ -68,6 +70,8 @@ __all__ = [
     "gsea",
     "compute_hierarchy_scores",
     "add_l0_lineage_aggregate_scores",
+    "find_sensible_top_layer",
+    "find_sensible_top_factors",
     "umap",
     "build_differentiation_paths",
     "build_transition_paths",
