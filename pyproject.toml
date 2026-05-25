@@ -11,19 +11,20 @@ packages = [{include = "scdef", from = "src"}]
 [tool.poetry.dependencies]
 python = ">=3.10,<3.12"
 pandas = "^2.2.2"
-numpy = "^1.26.4"
-jax = ">=0.4.31"
-jaxlib = ">=0.4.31"
+numpy = ">=2,<3"
+jax = ">=0.4.31,<0.7"
+jaxlib = ">=0.4.31,<0.7"
 optax = "^0.2.3"
-tensorflow-probability = "^0.24.0"
+tensorflow-probability = "^0.25.0"
 scanpy = "^1.9.5"
 anndata = "^0.10.5"
 click = "^8.0.1"
 tqdm = "^4.64.0"
 graphviz = "^0.14.2"
 igraph = "^0.10.4"
-numba = "^0.60.0"
-decoupler = "^1.7.0"
+numba = "^0.61.0"
+decoupler = "^1.9.0"
+setuptools = ">=65,<81"
 
 [tool.poetry.group.extras]
 optional = true
