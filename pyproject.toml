@@ -25,6 +25,7 @@ igraph = "^0.10.4"
 numba = "^0.61.0"
 decoupler = "^1.9.0"
 setuptools = ">=65,<81"
+gseapy = "^1.2.1"
 
 [tool.poetry.group.extras]
 optional = true
