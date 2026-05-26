@@ -333,6 +333,14 @@ def clarity_from_effective_parents(
     return clarity
 
 
+def _technical_factor_names(factor_obs: pd.DataFrame) -> set[str]:
+    """Factor names marked technical in ``factor_obs``."""
+    if "technical" not in factor_obs.columns:
+        return set()
+    technical = factor_obs["technical"].fillna(False).astype(bool)
+    return set(factor_obs.index[technical].astype(str))
+
+
 def find_sensible_top_layer(
     model: "scDEF",
     n_eff_parents_max: float = 1.5,
@@ -374,6 +382,7 @@ def find_sensible_top_layer(
             + ", ".join(sorted(missing))
             + ". Re-run scd.tl.factor_diagnostics(model)."
         )
+    technical_factors = _technical_factor_names(factor_obs)
 
     factor_rows = []
     transition_rows = []
@@ -389,6 +398,9 @@ def find_sensible_top_layer(
             child_factor_names = factor_obs.index[
                 factor_obs["child_layer"] == child_name
             ].tolist()
+        child_factor_names = [
+            name for name in child_factor_names if str(name) not in technical_factors
+        ]
         rows = factor_obs[
             (factor_obs["child_layer"] == child_name)
             & (factor_obs.index.isin(child_factor_names))
@@ -459,7 +471,11 @@ def find_sensible_top_layer(
         else:
             break
 
-    recommended_factors = list(model.factor_names[recommended_layer_idx])
+    recommended_factors = [
+        name
+        for name in model.factor_names[recommended_layer_idx]
+        if str(name) not in technical_factors
+    ]
     transitions = pd.DataFrame(transition_rows)
     per_factor = pd.DataFrame(factor_rows)
     result = {
@@ -522,6 +538,7 @@ def find_sensible_top_factors(
             + ", ".join(sorted(missing))
             + ". Re-run scd.tl.factor_diagnostics(model)."
         )
+    technical_factors = _technical_factor_names(factor_obs)
 
     name_to_layer = {}
     for layer_idx in range(visible_n_layers):
@@ -534,6 +551,8 @@ def find_sensible_top_factors(
             ]
         )
         for name in names:
+            if str(name) in technical_factors:
+                continue
             name_to_layer[str(name)] = int(layer_idx)
 
     def _is_clear(row: pd.Series) -> bool:
@@ -549,7 +568,11 @@ def find_sensible_top_factors(
 
     top_factors = []
     path_rows = []
-    for start in list(model.factor_names[0]):
+    for start in [
+        name
+        for name in list(model.factor_names[0])
+        if str(name) not in technical_factors
+    ]:
         cur = str(start)
         path = [cur]
         stop_reason = "top_visible_layer"
