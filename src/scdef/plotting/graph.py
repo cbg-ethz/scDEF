@@ -1,3 +1,6 @@
+import html
+import re
+
 import numpy as np
 import pandas as pd
 import matplotlib
@@ -706,17 +709,39 @@ def _add_node_to_graph(
     g.node(factor_name, **node_kwargs)
 
 
-def _finalize_node_label(label: str, show_label: bool) -> str:
-    """Return a graphviz-safe label string.
+def _line_contains_html(line: str) -> bool:
+    html_markers = ("<FONT", "</FONT", "<B>", "</B>", "<I>", "</I>", "<U>", "</U>")
+    return any(marker in line for marker in html_markers)
 
-    Only wrap labels as HTML-like labels when they actually contain HTML markup.
-    """
+
+def _html_table_label_from_lines(label: str) -> str:
+    """Render a br-separated label as centered Graphviz HTML table rows."""
+    parts = re.split(r"<br\s*/?>", str(label))
+    rows = []
+    for part in parts:
+        if part == "":
+            rows.append('<TR><TD HEIGHT="6"></TD></TR>')
+            continue
+        cell = part if _line_contains_html(part) else html.escape(part)
+        rows.append(f'<TR><TD ALIGN="CENTER">{cell}</TD></TR>')
+    table = (
+        '<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="0">'
+        + "".join(rows)
+        + "</TABLE>"
+    )
+    return f"<{table}>"
+
+
+def _finalize_node_label(label: str, show_label: bool) -> str:
+    """Return a graphviz-safe label string."""
     if not show_label:
         return ""
     label = str(label)
-    html_markers = ("<br", "<FONT", "<TABLE", "<B>", "<I>", "<U>", "<SUB>", "<SUP>")
-    if any(marker in label for marker in html_markers):
+    if "<TABLE" in label:
         return f"<{label}>"
+    html_markers = ("<br", "<FONT", "<B>", "<I>", "<U>", "<SUB>", "<SUP>")
+    if any(marker in label for marker in html_markers):
+        return _html_table_label_from_lines(label)
     return label
 
 
