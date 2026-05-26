@@ -1475,7 +1475,7 @@ class scDEF(object):
             self.local_params = [self.local_params[0]]
             self.global_params = [self.global_params[0]]
         # BRD
-        m_brd = tfd.Gamma(100.0, 100.0 / (self.brd_mean * 0.1)).sample(
+        m_brd = tfd.Gamma(100.0, 100.0 / (self.brd_mean)).sample(
             seed=rngs[0],
             sample_shape=[self.layer_sizes[0], 1],
         )  # self.brd_mean
