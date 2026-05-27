@@ -456,7 +456,7 @@ def _add_enrichments_to_label(
         return label
     fontsizes = _map_scores_to_fontsizes(term_scores, **fontsize_kwargs)
     lines = [
-        f'<FONT POINT-SIZE="{fontsizes[j]}">{html.escape(term)}</FONT>'
+        f'<FONT POINT-SIZE="{fontsizes[j]}">{term}</FONT>'
         for j, term in enumerate(term_labels)
     ]
     label += "<br/><br/>" + "<br/>".join(lines)
@@ -714,45 +714,8 @@ def _line_contains_html(line: str) -> bool:
     return any(marker in line for marker in html_markers)
 
 
-def _strip_html_tags(text: str) -> str:
-    return re.sub(r"<[^>]+>", "", str(text))
-
-
-def _line_point_size(part: str, default_pt: float = 14.0) -> float:
-    match = re.search(r'POINT-SIZE="([0-9.]+)"', str(part))
-    if match is None:
-        return float(default_pt)
-    return float(match.group(1))
-
-
-def _estimate_label_table_width_pts(
-    parts: Sequence[str], default_pt: float = 14.0
-) -> int:
-    """Estimate a shared table width (points) so every row can center in the cell."""
-    widths: List[float] = []
-    for part in parts:
-        if not str(part).strip():
-            continue
-        plain = _strip_html_tags(part)
-        if not plain:
-            continue
-        pt = _line_point_size(part, default_pt=default_pt)
-        # Helvetica-like width ≈ 0.6 * point_size per character (conservative).
-        widths.append(len(plain) * 0.6 * pt + 10.0)
-    if not widths:
-        return 40
-    return int(max(widths) * 1.1 + 16.0)
-
-
 def _html_table_label_from_lines(label: str) -> str:
-    """Render a br-separated label as a centered Graphviz HTML table.
-
-    Graphviz does not reliably honor ``<BR ALIGN="CENTER"/>`` on lines that use
-    ``<FONT POINT-SIZE="...">`` (signatures, enrichments). Each line is placed
-    in its own ``<TR>`` and the table gets an explicit ``WIDTH`` from the
-    widest line (using each line's point size), so ``<TD ALIGN="CENTER">``
-    centers every row in the same column.
-    """
+    """Render a br-separated label as centered Graphviz HTML table rows."""
     parts = re.split(r"<br\s*/?>", str(label))
     rows: List[str] = []
     for part in parts:
@@ -760,11 +723,9 @@ def _html_table_label_from_lines(label: str) -> str:
             rows.append('<TR><TD HEIGHT="6"></TD></TR>')
             continue
         cell = part if _line_contains_html(part) else html.escape(part)
-        rows.append(f'<TR><TD ALIGN="CENTER">{cell}</TD></TR>')
-
-    width_pts = _estimate_label_table_width_pts(parts)
+        rows.append(f'<TR><TD ALIGN="CENTER" BALIGN="CENTER">{cell}</TD></TR>')
     table = (
-        f'<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="2" WIDTH="{width_pts}">'
+        '<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="0">'
         + "".join(rows)
         + "</TABLE>"
     )
@@ -772,13 +733,23 @@ def _html_table_label_from_lines(label: str) -> str:
 
 
 def _finalize_node_label(label: str, show_label: bool) -> str:
-    """Return a graphviz-safe label string."""
+    """Return a graphviz-safe label string.
+
+    Only wrap labels as HTML-like labels when they actually contain HTML markup.
+    """
     if not show_label:
         return ""
     label = str(label)
     if "<TABLE" in label:
         return f"<{label}>"
-    html_markers = ("<br", "<FONT", "<B>", "<I>", "<U>", "<SUB>", "<SUP>")
+    # If the label only uses <br/> line breaks (no rich HTML tags), emit a plain
+    # multiline Graphviz label so each line is centered by dot/neato.
+    if "<br" in label and not any(
+        marker in label
+        for marker in ("<FONT", "<TABLE", "<B>", "<I>", "<U>", "<SUB>", "<SUP>")
+    ):
+        return re.sub(r"<br\s*/?>", "\n", label)
+    html_markers = ("<br", "<FONT", "<TABLE", "<B>", "<I>", "<U>", "<SUB>", "<SUP>")
     if any(marker in label for marker in html_markers):
         return _html_table_label_from_lines(label)
     return label
