@@ -456,7 +456,7 @@ def _add_enrichments_to_label(
         return label
     fontsizes = _map_scores_to_fontsizes(term_scores, **fontsize_kwargs)
     lines = [
-        f'<FONT POINT-SIZE="{fontsizes[j]}">{term}</FONT>'
+        f'<FONT POINT-SIZE="{fontsizes[j]}">{html.escape(term)}</FONT>'
         for j, term in enumerate(term_labels)
     ]
     label += "<br/><br/>" + "<br/>".join(lines)
@@ -714,39 +714,57 @@ def _line_contains_html(line: str) -> bool:
     return any(marker in line for marker in html_markers)
 
 
+def _strip_html_tags(text: str) -> str:
+    return re.sub(r"<[^>]+>", "", str(text))
+
+
+def _line_point_size(part: str, default_pt: float = 14.0) -> float:
+    match = re.search(r'POINT-SIZE="([0-9.]+)"', str(part))
+    if match is None:
+        return float(default_pt)
+    return float(match.group(1))
+
+
+def _estimate_label_table_width_pts(parts: Sequence[str], default_pt: float = 14.0) -> int:
+    """Estimate a shared table width (points) so every row can center in the cell."""
+    widths: List[float] = []
+    for part in parts:
+        if not str(part).strip():
+            continue
+        plain = _strip_html_tags(part)
+        if not plain:
+            continue
+        pt = _line_point_size(part, default_pt=default_pt)
+        # Helvetica-like width ≈ 0.6 * point_size per character (conservative).
+        widths.append(len(plain) * 0.6 * pt + 10.0)
+    if not widths:
+        return 40
+    return int(max(widths) * 1.1 + 16.0)
+
+
 def _html_table_label_from_lines(label: str) -> str:
-    """Render a br-separated label as a single centered Graphviz HTML cell.
+    """Render a br-separated label as a centered Graphviz HTML table.
 
-    All lines live inside one ``<TD>`` so Graphviz lays them out as a text
-    block aligned by the widest line, then centers that block in the cell.
-    Splitting lines into one ``<TR>`` each lets per-row ``<TD>`` widths shrink
-    to local content (especially with ``CELLPADDING=0``), which makes
-    ``<FONT POINT-SIZE=...>`` rows visibly left-skewed relative to the
-    default-font factor name row.
-
-    Notes:
-        - ``BALIGN="CENTER"`` sets the default alignment for ``<BR>`` tags in
-          the cell.
-        - Each ``<BR>`` is emitted with an explicit ``ALIGN="CENTER"`` and a
-          trailing ``<BR ALIGN="CENTER"/>`` is appended, because Graphviz
-          applies a ``<BR>``'s alignment to the **preceding** line; without
-          the trailing tag the last line falls back to the cell's default
-          alignment instead.
+    Graphviz does not reliably honor ``<BR ALIGN="CENTER"/>`` on lines that use
+    ``<FONT POINT-SIZE="...">`` (signatures, enrichments). Each line is placed
+    in its own ``<TR>`` and the table gets an explicit ``WIDTH`` from the
+    widest line (using each line's point size), so ``<TD ALIGN="CENTER">``
+    centers every row in the same column.
     """
     parts = re.split(r"<br\s*/?>", str(label))
-    processed: List[str] = []
+    rows: List[str] = []
     for part in parts:
         if part == "":
-            processed.append("")
+            rows.append('<TR><TD HEIGHT="6"></TD></TR>')
             continue
         cell = part if _line_contains_html(part) else html.escape(part)
-        processed.append(cell)
+        rows.append(f'<TR><TD ALIGN="CENTER">{cell}</TD></TR>')
 
-    content = '<BR ALIGN="CENTER"/>'.join(processed) + '<BR ALIGN="CENTER"/>'
+    width_pts = _estimate_label_table_width_pts(parts)
     table = (
-        '<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="0">'
-        f'<TR><TD ALIGN="CENTER" BALIGN="CENTER">{content}</TD></TR>'
-        "</TABLE>"
+        f'<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="2" WIDTH="{width_pts}">'
+        + "".join(rows)
+        + "</TABLE>"
     )
     return f"<{table}>"
 
