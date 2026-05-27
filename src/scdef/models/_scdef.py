@@ -2008,7 +2008,7 @@ class scDEF(object):
 
             alpha_layer = alpha_value  # * (self.layer_sizes[0] / self.layer_sizes[idx])
             alpha_layer = jnp.maximum(
-                alpha_layer * self.cell_alpha_factor[indices][:, None], 1.0
+                alpha_layer * self.cell_alpha_factor[indices][:, None], 0.1
             )
             # Top-layer prior: ``top_alpha`` on the layer that is currently the "active top"
             # in the optimization schedule (via ``stop_gradients`` on the root).
