@@ -341,6 +341,131 @@ def _technical_factor_names(factor_obs: pd.DataFrame) -> set[str]:
     return set(factor_obs.index[technical].astype(str))
 
 
+def _transition_weight_matrix(
+    model: "scDEF",
+    child_layer_idx: int,
+    use_filtered: bool,
+) -> Tuple[np.ndarray, list[str], list[str]]:
+    """Parent-by-child ``W`` block for one hierarchy transition."""
+    parent_layer_idx = child_layer_idx + 1
+    parent_layer_name = model.layer_names[parent_layer_idx]
+    mat = np.asarray(model.pmeans[f"{parent_layer_name}W"], dtype=float)
+    if use_filtered:
+        parent_idx = np.asarray(model.factor_lists[parent_layer_idx], dtype=int)
+        child_idx = np.asarray(model.factor_lists[child_layer_idx], dtype=int)
+        mat = mat[np.ix_(parent_idx, child_idx)]
+    parent_names = [
+        str(name)
+        for name in (
+            model.factor_names[parent_layer_idx]
+            if use_filtered
+            else [
+                f"{parent_layer_name}_{i}"
+                for i in range(model.layer_sizes[parent_layer_idx])
+            ]
+        )
+    ]
+    child_layer_name = model.layer_names[child_layer_idx]
+    child_names = [
+        str(name)
+        for name in (
+            model.factor_names[child_layer_idx]
+            if use_filtered
+            else [
+                f"{child_layer_name}_{i}"
+                for i in range(model.layer_sizes[child_layer_idx])
+            ]
+        )
+    ]
+    return mat, parent_names, child_names
+
+
+def _child_n_eff_by_name(
+    factor_obs: pd.DataFrame,
+    child_layer: str,
+    child_names: Sequence[str],
+    technical_factors: set[str],
+) -> Dict[str, float]:
+    """Map child factor name to ``n_eff_parents`` at ``child_layer``."""
+    rows = factor_obs[factor_obs["child_layer"] == child_layer]
+    out: Dict[str, float] = {}
+    for name in child_names:
+        if str(name) in technical_factors:
+            continue
+        if name not in rows.index:
+            continue
+        val = float(rows.loc[name, "n_eff_parents"])
+        if np.isfinite(val):
+            out[str(name)] = val
+    return out
+
+
+def _parent_weighted_child_n_eff(
+    parent_row: np.ndarray,
+    child_names: Sequence[str],
+    child_n_eff: Dict[str, float],
+) -> float:
+    """Effective parents of children below a parent, weighted by normalized ``W`` row."""
+    weights = np.maximum(np.asarray(parent_row, dtype=float), 0.0)
+    mask = np.array([str(name) in child_n_eff for name in child_names], dtype=bool)
+    weights = weights * mask
+    if weights.size == 0 or float(weights.sum()) <= 0.0:
+        return np.nan
+    weights = weights / float(weights.sum())
+    total = 0.0
+    for idx, name in enumerate(child_names):
+        neff = child_n_eff.get(str(name))
+        if neff is None:
+            continue
+        total += float(weights[idx]) * float(neff)
+    return float(total)
+
+
+def _transition_parent_ambiguity_table(
+    model: "scDEF",
+    child_layer_idx: int,
+    factor_obs: pd.DataFrame,
+    technical_factors: set[str],
+    use_filtered: bool,
+) -> pd.DataFrame:
+    """Per-parent weighted child ``n_eff_parents`` for one transition."""
+    child_layer = model.layer_names[child_layer_idx]
+    parent_layer = model.layer_names[child_layer_idx + 1]
+    mat, parent_names, child_names = _transition_weight_matrix(
+        model, child_layer_idx, use_filtered=use_filtered
+    )
+    child_n_eff = _child_n_eff_by_name(
+        factor_obs, child_layer, child_names, technical_factors
+    )
+    rows = []
+    for parent_idx, parent_name in enumerate(parent_names):
+        if str(parent_name) in technical_factors:
+            continue
+        weighted = _parent_weighted_child_n_eff(
+            mat[parent_idx], child_names, child_n_eff
+        )
+        rows.append(
+            {
+                "child_layer_idx": int(child_layer_idx),
+                "child_layer": child_layer,
+                "parent_layer_idx": int(child_layer_idx + 1),
+                "parent_layer": parent_layer,
+                "parent_factor": str(parent_name),
+                "weighted_child_n_eff": weighted,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _is_clear_parent_candidate(
+    weighted_child_n_eff: float,
+    n_eff_parents_max: float,
+) -> bool:
+    return np.isfinite(weighted_child_n_eff) and weighted_child_n_eff <= float(
+        n_eff_parents_max
+    )
+
+
 def find_sensible_top_layer(
     model: "scDEF",
     n_eff_parents_max: float = 1.5,
@@ -352,11 +477,10 @@ def find_sensible_top_layer(
 ) -> Dict[str, Any]:
     """Find the coarsest hierarchy layer supported by confident merges.
 
-    Uses existing ``factor_obs`` diagnostics (``n_eff_parents``,
-    ``best_parent_prob``, ``top_gap``, etc.), which are computed from the W
-    matrices by :func:`factor_diagnostics`. Moving upward stops at the first
-    transition whose child factors are too ambiguous to merge; the layer just
-    below that transition is reported as the sensible top.
+    At each transition, every candidate parent is scored by the effective
+    number of parents of its immediate children (from ``factor_obs``), weighted
+    by the parent row of normalized ``W``. The transition is accepted only when
+    enough parents pass ``n_eff_parents_max``.
     """
     n_layers = int(model.n_layers)
     visible_n_layers = n_layers
@@ -384,7 +508,7 @@ def find_sensible_top_layer(
         )
     technical_factors = _technical_factor_names(factor_obs)
 
-    factor_rows = []
+    parent_rows = []
     transition_rows = []
     recommended_layer_idx = 0
 
@@ -392,36 +516,24 @@ def find_sensible_top_layer(
         parent_layer = child_layer + 1
         child_name = model.layer_names[child_layer]
         parent_name = model.layer_names[parent_layer]
-        if use_filtered:
-            child_factor_names = list(model.factor_names[child_layer])
-        else:
-            child_factor_names = factor_obs.index[
-                factor_obs["child_layer"] == child_name
-            ].tolist()
-        child_factor_names = [
-            name for name in child_factor_names if str(name) not in technical_factors
-        ]
-        rows = factor_obs[
-            (factor_obs["child_layer"] == child_name)
-            & (factor_obs.index.isin(child_factor_names))
-        ].copy()
-        if len(rows) == 0:
+        parent_table = _transition_parent_ambiguity_table(
+            model,
+            child_layer,
+            factor_obs,
+            technical_factors,
+            use_filtered=use_filtered,
+        )
+        if len(parent_table) == 0:
             clear_fraction = 0.0
             transition_ok = False
-            n_eff = np.array([], dtype=float)
-            best_prob = np.array([], dtype=float)
         else:
-            rows = rows.loc[child_factor_names]
-            n_eff = rows["n_eff_parents"].to_numpy(dtype=float)
-            best_prob = rows["best_parent_prob"].to_numpy(dtype=float)
-            clear = np.isfinite(n_eff) & (n_eff <= float(n_eff_parents_max))
-            if min_best_parent_prob is not None:
-                clear = clear & (
-                    np.isfinite(best_prob) & (best_prob >= float(min_best_parent_prob))
-                )
-            rows["clear_merge"] = clear
-            clear_fraction = float(np.mean(clear))
+            parent_table = parent_table.copy()
+            parent_table["clear_parent"] = parent_table["weighted_child_n_eff"].map(
+                lambda v: _is_clear_parent_candidate(v, n_eff_parents_max)
+            )
+            clear_fraction = float(parent_table["clear_parent"].mean())
             transition_ok = clear_fraction >= float(min_clear_fraction)
+            parent_rows.extend(parent_table.to_dict(orient="records"))
 
         transition_rows.append(
             {
@@ -429,42 +541,21 @@ def find_sensible_top_layer(
                 "child_layer": child_name,
                 "parent_layer_idx": int(parent_layer),
                 "parent_layer": parent_name,
-                "n_children": int(len(rows)),
-                "n_parents": int(rows["K_parents"].iloc[0])
-                if len(rows) > 0 and "K_parents" in rows.columns
-                else int(len(model.factor_lists[parent_layer])),
+                "n_parents": int(len(parent_table)),
                 "clear_fraction": clear_fraction,
-                "median_n_eff_parents": float(np.median(n_eff))
-                if len(n_eff) > 0
+                "median_weighted_child_n_eff": float(
+                    parent_table["weighted_child_n_eff"].median()
+                )
+                if len(parent_table) > 0
                 else np.nan,
-                "max_n_eff_parents": float(np.max(n_eff)) if len(n_eff) > 0 else np.nan,
-                "min_best_parent_prob": float(np.min(best_prob))
-                if len(best_prob) > 0
+                "max_weighted_child_n_eff": float(
+                    parent_table["weighted_child_n_eff"].max()
+                )
+                if len(parent_table) > 0
                 else np.nan,
                 "transition_ok": bool(transition_ok),
             }
         )
-
-        if len(rows) > 0:
-            keep_cols = [
-                c
-                for c in [
-                    "parent_layer",
-                    "best_parent",
-                    "best_parent_prob",
-                    "top_gap",
-                    "n_eff_parents",
-                    "K_parents",
-                    "clear_merge",
-                ]
-                if c in rows.columns
-            ]
-            out_rows = rows[keep_cols].copy()
-            out_rows.insert(0, "child_factor", out_rows.index)
-            out_rows.insert(0, "child_layer", child_name)
-            out_rows.insert(0, "child_layer_idx", int(child_layer))
-            out_rows.insert(3, "parent_layer_idx", int(parent_layer))
-            factor_rows.extend(out_rows.to_dict(orient="records"))
 
         if transition_ok:
             recommended_layer_idx = parent_layer
@@ -477,7 +568,7 @@ def find_sensible_top_layer(
         if str(name) not in technical_factors
     ]
     transitions = pd.DataFrame(transition_rows)
-    per_factor = pd.DataFrame(factor_rows)
+    parent_diagnostics = pd.DataFrame(parent_rows)
     result = {
         "recommended_layer_idx": int(recommended_layer_idx),
         "recommended_layer": model.layer_names[recommended_layer_idx],
@@ -486,16 +577,16 @@ def find_sensible_top_layer(
         "min_best_parent_prob": min_best_parent_prob,
         "min_clear_fraction": float(min_clear_fraction),
         "transition_diagnostics": transitions,
-        "factor_diagnostics": per_factor,
+        "parent_diagnostics": parent_diagnostics,
     }
     if store:
         model.adata.uns["sensible_top_layer"] = {
             k: v
             for k, v in result.items()
-            if k not in {"transition_diagnostics", "factor_diagnostics"}
+            if k not in {"transition_diagnostics", "parent_diagnostics"}
         }
         model.adata.uns["sensible_top_transition_diagnostics"] = transitions
-        model.adata.uns["sensible_top_factor_diagnostics"] = per_factor
+        model.adata.uns["sensible_top_parent_diagnostics"] = parent_diagnostics
     return result
 
 
@@ -509,10 +600,10 @@ def find_sensible_top_factors(
 ) -> Dict[str, Any]:
     """Find a mixed-depth frontier of factors whose upward merge is ambiguous.
 
-    Starting from each L0 factor, follows ``best_parent`` upward through
-    ``factor_obs`` while the merge is confident. The first factor before an
-    ambiguous merge becomes a top factor. This lets rare lineages stop at L0
-    while common lineages continue to coarser factors.
+    Starting from each L0 factor, follows ``best_parent`` upward while the
+    child merge is confident and the proposed parent passes a weighted-child
+    ambiguity check using ``n_eff_parents_max`` (``n_eff_parents`` of immediate
+    children, weighted by the normalized parent row of ``W``).
     """
     n_layers = int(model.n_layers)
     visible_n_layers = n_layers
@@ -566,6 +657,25 @@ def find_sensible_top_factors(
             return False
         return True
 
+    parent_ambiguity_by_transition: Dict[int, Dict[str, float]] = {}
+
+    def _parent_weighted_child_n_eff(parent_name: str, child_layer_idx: int) -> float:
+        if child_layer_idx not in parent_ambiguity_by_transition:
+            table = _transition_parent_ambiguity_table(
+                model,
+                child_layer_idx,
+                factor_obs,
+                technical_factors,
+                use_filtered=use_filtered,
+            )
+            parent_ambiguity_by_transition[child_layer_idx] = {
+                str(row["parent_factor"]): float(row["weighted_child_n_eff"])
+                for _, row in table.iterrows()
+            }
+        return parent_ambiguity_by_transition[child_layer_idx].get(
+            str(parent_name), np.nan
+        )
+
     top_factors = []
     path_rows = []
     for start in [
@@ -594,6 +704,10 @@ def find_sensible_top_factors(
             parent = str(row["best_parent"])
             if parent not in name_to_layer or name_to_layer[parent] <= layer_idx:
                 stop_reason = "invalid_parent"
+                break
+            weighted_child_n_eff = _parent_weighted_child_n_eff(parent, layer_idx)
+            if not _is_clear_parent_candidate(weighted_child_n_eff, n_eff_parents_max):
+                stop_reason = "ambiguous_parent_children"
                 break
             cur = parent
             path.append(cur)
