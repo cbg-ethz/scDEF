@@ -725,7 +725,9 @@ def _line_point_size(part: str, default_pt: float = 14.0) -> float:
     return float(match.group(1))
 
 
-def _estimate_label_table_width_pts(parts: Sequence[str], default_pt: float = 14.0) -> int:
+def _estimate_label_table_width_pts(
+    parts: Sequence[str], default_pt: float = 14.0
+) -> int:
     """Estimate a shared table width (points) so every row can center in the cell."""
     widths: List[float] = []
     for part in parts:
