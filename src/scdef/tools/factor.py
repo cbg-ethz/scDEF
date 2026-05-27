@@ -372,6 +372,11 @@ def factor_diagnostics(
     model: "scDEF",
     recompute: bool = False,
     batch_key: Optional[str] = None,
+    sensible_top_n_eff_parents_max: float = 1.5,
+    sensible_top_min_best_parent_prob: Optional[float] = None,
+    sensible_top_min_clear_children: int = 2,
+    sensible_top_ignore_root: bool = True,
+    sensible_top_use_filtered: bool = True,
 ) -> None:
     """Compute/store factor diagnostics in ``model.adata.uns['factor_obs']``.
 
@@ -385,6 +390,18 @@ def factor_diagnostics(
             For each layer, cells are assigned to the factor with maximal
             variational ``z`` loading, and purity is defined as
             ``1 - batch_entropy / log(n_batches)``.
+        sensible_top_n_eff_parents_max: threshold used to classify
+            sensible-top factors on the hierarchy walk.
+        sensible_top_min_best_parent_prob: optional best-parent probability
+            threshold used alongside ``n_eff_parents_max`` when deciding
+            whether a child merge is clear.
+        sensible_top_min_clear_children: parent escape-hatch count; a parent
+            is accepted if it owns at least this many clear best-parent
+            children, even when weighted ambiguity is high.
+        sensible_top_ignore_root: whether to ignore a width-1 final root layer
+            when classifying sensible-top factors.
+        sensible_top_use_filtered: whether to use ``model.factor_lists`` /
+            ``model.factor_names`` for hierarchy transitions.
     """
     # Keep layer 0 unfiltered, but use a fixed filtered subset on upper layers.
     # Cache and reuse upper-layer factor lists so diagnostics remain stable across
@@ -570,6 +587,28 @@ def factor_diagnostics(
         model.adata.uns["factor_diagnostics"]["batch_values"] = [
             str(b) for b in unique_batches
         ]
+
+    from scdef.tools.hierarchy import _annotate_sensible_top_factors
+
+    factor_obs = _annotate_sensible_top_factors(
+        model,
+        factor_obs,
+        n_eff_parents_max=sensible_top_n_eff_parents_max,
+        min_best_parent_prob=sensible_top_min_best_parent_prob,
+        min_clear_children=sensible_top_min_clear_children,
+        ignore_root=sensible_top_ignore_root,
+        use_filtered=sensible_top_use_filtered,
+    )
+    model.adata.uns["factor_obs"] = factor_obs
+    if "factor_diagnostics" not in model.adata.uns:
+        model.adata.uns["factor_diagnostics"] = {}
+    model.adata.uns["factor_diagnostics"]["sensible_top"] = {
+        "n_eff_parents_max": float(sensible_top_n_eff_parents_max),
+        "min_best_parent_prob": sensible_top_min_best_parent_prob,
+        "min_clear_children": int(sensible_top_min_clear_children),
+        "ignore_root": bool(sensible_top_ignore_root),
+        "use_filtered": bool(sensible_top_use_filtered),
+    }
 
     # Cache a complete snapshot of factor_obs keyed by (child_layer,
     # original_factor_idx). This is the source of truth for filtering
