@@ -715,19 +715,38 @@ def _line_contains_html(line: str) -> bool:
 
 
 def _html_table_label_from_lines(label: str) -> str:
-    """Render a br-separated label as centered Graphviz HTML table rows."""
+    """Render a br-separated label as a single centered Graphviz HTML cell.
+
+    All lines live inside one ``<TD>`` so Graphviz lays them out as a text
+    block aligned by the widest line, then centers that block in the cell.
+    Splitting lines into one ``<TR>`` each lets per-row ``<TD>`` widths shrink
+    to local content (especially with ``CELLPADDING=0``), which makes
+    ``<FONT POINT-SIZE=...>`` rows visibly left-skewed relative to the
+    default-font factor name row.
+
+    Notes:
+        - ``BALIGN="CENTER"`` sets the default alignment for ``<BR>`` tags in
+          the cell.
+        - Each ``<BR>`` is emitted with an explicit ``ALIGN="CENTER"`` and a
+          trailing ``<BR ALIGN="CENTER"/>`` is appended, because Graphviz
+          applies a ``<BR>``'s alignment to the **preceding** line; without
+          the trailing tag the last line falls back to the cell's default
+          alignment instead.
+    """
     parts = re.split(r"<br\s*/?>", str(label))
-    rows = []
+    processed: List[str] = []
     for part in parts:
         if part == "":
-            rows.append('<TR><TD HEIGHT="6"></TD></TR>')
+            processed.append("")
             continue
         cell = part if _line_contains_html(part) else html.escape(part)
-        rows.append(f'<TR><TD ALIGN="CENTER">{cell}</TD></TR>')
+        processed.append(cell)
+
+    content = '<BR ALIGN="CENTER"/>'.join(processed) + '<BR ALIGN="CENTER"/>'
     table = (
         '<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="0">'
-        + "".join(rows)
-        + "</TABLE>"
+        f'<TR><TD ALIGN="CENTER" BALIGN="CENTER">{content}</TD></TR>'
+        "</TABLE>"
     )
     return f"<{table}>"
 
