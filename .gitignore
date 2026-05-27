@@ -14,3 +14,5 @@ dist/
 *.csv
 *.h5ad
 *.pkl
+.numba_cache/
+.cursor-preview/
