@@ -688,9 +688,20 @@ def _annotate_sensible_top_factors(
 ) -> pd.DataFrame:
     """Add sensible-top annotations to ``factor_obs`` and return a copy.
 
-    Adds two columns:
-    * ``top_score``: fraction of non-technical L0 starts that terminate at this factor.
-    * ``is_sensible_top_factor``: ``top_score > 0``.
+    Adds ``is_sensible_top_factor``: whether the factor is reached as a
+    terminal sensible top factor from at least one non-technical L0 start.
+
+    Also adds per-factor gate diagnostics for the *next parent hop* checked
+    during the upward walk:
+    * ``top_local_gate_pass``: whether this factor itself passes the local
+      child clarity gate.
+    * ``top_parent_weighted_child_n_eff``: weighted-average gate value for the
+      candidate parent (NaN when parent is unavailable).
+    * ``top_parent_n_clear_children``: count-gate value for the candidate
+      parent (NaN when parent is unavailable).
+    * ``top_parent_weighted_gate_pass`` / ``top_parent_count_gate_pass``:
+      individual parent gate pass/fail flags.
+    * ``top_parent_gate_pass``: OR of the two parent gates.
     """
     n_layers = int(model.n_layers)
     visible_n_layers = n_layers
@@ -765,13 +776,12 @@ def _annotate_sensible_top_factors(
 
     top_factors: list[str] = []
     top_counts: Dict[str, int] = {}
-    n_starts = 0
+    gate_diag_by_factor: Dict[str, Dict[str, Any]] = {}
     for start in [
         name
         for name in list(model.factor_names[0])
         if str(name) not in technical_factors
     ]:
-        n_starts += 1
         cur = str(start)
         while True:
             layer_idx = name_to_layer.get(cur)
@@ -782,12 +792,29 @@ def _annotate_sensible_top_factors(
             if cur not in factor_obs.index:
                 break
             row = factor_obs.loc[cur]
-            if not _is_clear(row):
+            local_gate_pass = bool(_is_clear(row))
+            diag = gate_diag_by_factor.get(cur, {})
+            diag["top_local_gate_pass"] = local_gate_pass
+            if not local_gate_pass:
+                gate_diag_by_factor[cur] = diag
                 break
             parent = str(row["best_parent"])
             if parent not in name_to_layer or name_to_layer[parent] <= layer_idx:
+                gate_diag_by_factor[cur] = diag
                 break
             weighted_child_n_eff, n_clear_children = _parent_scores(parent, layer_idx)
+            weighted_gate_pass = bool(
+                np.isfinite(weighted_child_n_eff)
+                and weighted_child_n_eff <= float(n_eff_parents_max)
+            )
+            count_gate_pass = bool(int(n_clear_children) >= int(min_clear_children))
+            parent_gate_pass = bool(weighted_gate_pass or count_gate_pass)
+            diag["top_parent_weighted_child_n_eff"] = float(weighted_child_n_eff)
+            diag["top_parent_n_clear_children"] = int(n_clear_children)
+            diag["top_parent_weighted_gate_pass"] = weighted_gate_pass
+            diag["top_parent_count_gate_pass"] = count_gate_pass
+            diag["top_parent_gate_pass"] = parent_gate_pass
+            gate_diag_by_factor[cur] = diag
             if not _is_clear_parent_candidate(
                 weighted_child_n_eff,
                 n_clear_children,
@@ -801,12 +828,24 @@ def _annotate_sensible_top_factors(
         top_counts[cur] = top_counts.get(cur, 0) + 1
 
     out = factor_obs.copy()
-    out["top_score"] = 0.0
     out["is_sensible_top_factor"] = False
-    denom = float(max(n_starts, 1))
-    for factor_name, count in top_counts.items():
+    out["top_local_gate_pass"] = pd.Series(pd.NA, index=out.index, dtype="boolean")
+    out["top_parent_weighted_child_n_eff"] = np.nan
+    out["top_parent_n_clear_children"] = np.nan
+    out["top_parent_weighted_gate_pass"] = pd.Series(
+        pd.NA, index=out.index, dtype="boolean"
+    )
+    out["top_parent_count_gate_pass"] = pd.Series(
+        pd.NA, index=out.index, dtype="boolean"
+    )
+    out["top_parent_gate_pass"] = pd.Series(pd.NA, index=out.index, dtype="boolean")
+    for factor_name, diag in gate_diag_by_factor.items():
+        if factor_name not in out.index:
+            continue
+        for key, value in diag.items():
+            out.at[factor_name, key] = value
+    for factor_name in top_counts:
         if factor_name in out.index:
-            out.at[factor_name, "top_score"] = float(count) / denom
             out.at[factor_name, "is_sensible_top_factor"] = True
     return out
 
@@ -818,19 +857,21 @@ def find_sensible_top_factors(
     min_clear_children: int = 2,
     ignore_root: bool = True,
     use_filtered: bool = True,
+    recompute: bool = False,
     store: bool = True,
 ) -> list[str]:
     """Return factors marked as sensible top factors in ``factor_obs``.
 
     The annotation is computed in ``scdef.tools.factor.factor_diagnostics`` and
     materialized on ``model.adata.uns['factor_obs']`` as
-    ``is_sensible_top_factor`` / ``top_score``.
+    ``is_sensible_top_factor``.
     """
-    if "factor_obs" not in model.adata.uns:
+    if bool(recompute) or "factor_obs" not in model.adata.uns:
         from scdef.tools.factor import factor_diagnostics
 
         factor_diagnostics(
             model,
+            recompute=bool(recompute),
             sensible_top_n_eff_parents_max=n_eff_parents_max,
             sensible_top_min_best_parent_prob=min_best_parent_prob,
             sensible_top_min_clear_children=min_clear_children,
