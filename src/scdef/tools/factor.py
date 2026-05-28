@@ -9,7 +9,17 @@ from scipy.spatial.distance import pdist
 from sklearn.preprocessing import minmax_scale
 import pandas as pd
 from .hierarchy import get_hierarchy, compute_hierarchy_scores
-from typing import Optional, Sequence, Dict, List, Tuple, Union, TYPE_CHECKING, Literal
+from typing import (
+    Optional,
+    Sequence,
+    Dict,
+    List,
+    Tuple,
+    Union,
+    TYPE_CHECKING,
+    Literal,
+    Mapping,
+)
 
 if TYPE_CHECKING:
     from scdef.models._scdef import scDEF
@@ -1567,6 +1577,76 @@ def _resolve_factor_obs_names(
         else:
             unknown.append(name)
     return resolved, unknown
+
+
+def annotate_factors(
+    model: "scDEF",
+    annotations: Mapping[str, str],
+) -> pd.DataFrame:
+    """Attach descriptive annotations to factors in ``adata.uns['factor_obs']``.
+
+    Annotations are stored in the ``annotation`` column of ``factor_obs``, keyed
+    by the resolved factor rows (see :func:`_resolve_factor_obs_names`). Factor
+    names may be current model names (e.g. ``L0_4``) even after filtering.
+
+    Args:
+        model: scDEF model instance.
+        annotations: mapping ``{factor_name: description}``.
+
+    Returns:
+        Updated ``factor_obs`` dataframe.
+    """
+    if len(annotations) == 0:
+        raise ValueError("annotations must contain at least one factor.")
+    if "factor_obs" not in model.adata.uns:
+        factor_diagnostics(model)
+    factor_obs = model.adata.uns["factor_obs"]
+    if "annotation" not in factor_obs.columns:
+        factor_obs["annotation"] = pd.Series(
+            pd.NA, index=factor_obs.index, dtype="object"
+        )
+    names = [str(k) for k in annotations.keys()]
+    resolved, unknown = _resolve_factor_obs_names(model, names)
+    if len(unknown) > 0:
+        raise ValueError(
+            "Unknown factor name(s) in `annotations`: " + ", ".join(map(str, unknown))
+        )
+    for user_name, obs_name in zip(names, resolved):
+        factor_obs.loc[obs_name, "annotation"] = str(annotations[user_name])
+    model.adata.uns["factor_obs"] = factor_obs
+    return factor_obs
+
+
+def get_factor_annotations(
+    model: "scDEF",
+    factor_names: Sequence[str],
+) -> List[Optional[str]]:
+    """Look up ``factor_obs['annotation']`` values for factor names.
+
+    Args:
+        model: scDEF model instance.
+        factor_names: factor names as in ``model.factor_names[layer]``.
+
+    Returns:
+        List parallel to ``factor_names`` with annotation strings or ``None``.
+    """
+    if "factor_obs" not in model.adata.uns:
+        return [None for _ in factor_names]
+    factor_obs = model.adata.uns["factor_obs"]
+    if "annotation" not in factor_obs.columns:
+        return [None for _ in factor_names]
+    resolved, unknown = _resolve_factor_obs_names(model, [str(n) for n in factor_names])
+    out: List[Optional[str]] = []
+    for i, name in enumerate(factor_names):
+        if str(name) in unknown:
+            out.append(None)
+            continue
+        val = factor_obs.loc[resolved[i], "annotation"]
+        if pd.isna(val) or str(val).strip() == "":
+            out.append(None)
+        else:
+            out.append(str(val))
+    return out
 
 
 def set_technical_factors(

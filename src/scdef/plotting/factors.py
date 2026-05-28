@@ -7,6 +7,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
 import scanpy as sc
 import copy
 from scipy.cluster.hierarchy import ward, leaves_list
@@ -202,6 +203,443 @@ def obs_factor_dotplot(
     plt.grid("off")
     if show:
         plt.show()
+
+
+def _hierarchical_row_order(data: np.ndarray) -> np.ndarray:
+    """Return row indices that sort ``data`` by Ward hierarchical clustering."""
+    n_rows = data.shape[0]
+    if n_rows <= 1:
+        return np.arange(n_rows, dtype=int)
+    if np.allclose(data, data[0:1], rtol=0.0, atol=0.0, equal_nan=True):
+        return np.arange(n_rows, dtype=int)
+    Z = ward(pdist(data))
+    return leaves_list(Z)
+
+
+def _ordered_group_labels(
+    group_labels: pd.Series,
+    group_order: Optional[Sequence[str]],
+    group_obs_key: str,
+) -> List[str]:
+    present_groups = group_labels.unique().tolist()
+    if group_order is not None:
+        ordered_groups = []
+        for g in group_order:
+            gs = str(g)
+            if gs not in present_groups:
+                raise ValueError(
+                    f"group_order value {gs!r} not present in "
+                    f"{group_obs_key} for the selected cells."
+                )
+            ordered_groups.append(gs)
+        extra = [g for g in present_groups if g not in ordered_groups]
+        return ordered_groups + extra
+    if hasattr(group_labels, "cat"):
+        ordered_groups = [
+            str(c) for c in group_labels.cat.categories if str(c) in present_groups
+        ]
+        extra = [g for g in present_groups if g not in ordered_groups]
+        return ordered_groups + extra
+    return sorted(present_groups)
+
+
+def _group_obs_colors(
+    model: "scDEF",
+    group_obs_key: str,
+    ordered_groups: Sequence[str],
+) -> Dict[str, Tuple[float, float, float]]:
+    cat_to_color: Dict[str, Tuple[float, float, float]] = {}
+    uns_colors_key = f"{group_obs_key}_colors"
+    if uns_colors_key in model.adata.uns and hasattr(
+        model.adata.obs[group_obs_key], "cat"
+    ):
+        categories = list(model.adata.obs[group_obs_key].cat.categories)
+        colors = model.adata.uns[uns_colors_key]
+        cat_to_color = {
+            str(cat): mcolors.to_rgb(colors[i])
+            for i, cat in enumerate(categories)
+            if i < len(colors)
+        }
+    cmap_groups = plt.get_cmap("tab10", max(len(ordered_groups), 1))
+    for i, grp in enumerate(ordered_groups):
+        if grp not in cat_to_color:
+            cat_to_color[grp] = cmap_groups(i)[:3]
+    return cat_to_color
+
+
+def _resolve_layer_factor_columns(
+    model: "scDEF",
+    layer_idx: int,
+    n_columns: int,
+    factors: Optional[Sequence[Union[str, int]]],
+    sort_layer_factors: bool,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Return column indices and display labels for a layer matrix."""
+    layer_names = list(model.factor_names[layer_idx])
+    name_to_idx = {name: i for i, name in enumerate(layer_names)}
+
+    if factors is not None:
+        if len(factors) == 0:
+            raise ValueError("factors must contain at least one factor.")
+        col_indices: List[int] = []
+        labels: List[str] = []
+        for fac in factors:
+            if isinstance(fac, int):
+                idx = int(fac)
+                if idx < 0 or idx >= len(layer_names):
+                    raise IndexError(
+                        f"Factor index {idx} out of bounds for layer {layer_idx} "
+                        f"({len(layer_names)} factors)."
+                    )
+                col_indices.append(idx)
+                labels.append(layer_names[idx])
+            else:
+                name = str(fac)
+                if name not in name_to_idx:
+                    raise ValueError(
+                        f"Factor {name!r} not found in layer {layer_idx} "
+                        f"({layer_names})."
+                    )
+                col_indices.append(name_to_idx[name])
+                labels.append(name)
+        return np.array(col_indices, dtype=int), np.array(labels, dtype=object)
+
+    if sort_layer_factors:
+        order = model.get_layer_factor_orders()[layer_idx]
+    else:
+        order = np.arange(n_columns, dtype=int)
+    return order, np.array(layer_names, dtype=object)[order]
+
+
+def _build_obs_cell_factor_panel(
+    cell_matrix: np.ndarray,
+    group_labels: pd.Series,
+    ordered_groups: Sequence[str],
+    cat_to_color: Mapping[str, Tuple[float, float, float]],
+    cluster_cells: bool,
+) -> Tuple[np.ndarray, np.ndarray, List[int]]:
+    """Return heatmap, group color strip, and row boundaries for one panel."""
+    row_blocks: List[np.ndarray] = []
+    group_track_colors: List[np.ndarray] = []
+    group_boundaries: List[int] = []
+    current_row = 0
+    for grp in ordered_groups:
+        grp_mask = (group_labels == grp).to_numpy()
+        if not np.any(grp_mask):
+            continue
+        block = cell_matrix[grp_mask]
+        if cluster_cells:
+            block = block[_hierarchical_row_order(block)]
+        row_blocks.append(block)
+        n_rows_block = block.shape[0]
+        group_track_colors.append(np.tile(cat_to_color[grp], (n_rows_block, 1)))
+        current_row += n_rows_block
+        group_boundaries.append(current_row)
+    if len(row_blocks) == 0:
+        raise ValueError("No cells left after grouping.")
+    return (
+        np.vstack(row_blocks),
+        np.vstack(group_track_colors),
+        group_boundaries,
+    )
+
+
+def obs_cell_factor_heatmap(
+    model: "scDEF",
+    subset_obs_key: str,
+    subset_obs: Union[str, Sequence[str]],
+    group_obs_key: str,
+    layer_idx: int = 0,
+    factors: Optional[Sequence[Union[str, int]]] = None,
+    values: Literal["score", "prob"] = "score",
+    cluster_cells: bool = True,
+    sort_layer_factors: bool = True,
+    group_order: Optional[Sequence[str]] = None,
+    show_group_track: bool = True,
+    figsize: Optional[Tuple[float, float]] = None,
+    figwidth: float = 10.0,
+    row_height: float = 0.004,
+    group_track_width: float = 0.05,
+    cmap: Union[str, mcolors.Colormap] = "viridis",
+    norm: Optional[mcolors.Normalize] = None,
+    vmin: Optional[float] = None,
+    vmax: Optional[float] = None,
+    colorbar_label: Optional[str] = None,
+    group_separator_linewidth: float = 1.0,
+    group_separator_color: str = "white",
+    group_separator_alpha: float = 0.9,
+    xlabel: str = "Factors",
+    factor_label_rotation: float = 90.0,
+    factor_fontsize: int = 8,
+    label_fontsize: int = 10,
+    colorbar_label_fontsize: int = 9,
+    colorbar_tick_fontsize: int = 8,
+    show_annotations: bool = False,
+    annotation_fontsize: int = 8,
+    annotation_rotation: float = 45.0,
+    save: Optional[str] = None,
+    show: bool = True,
+) -> Optional[Figure]:
+    """Heatmap of per-cell factor scores or probabilities for one or more obs subsets.
+
+    Restricts to cells matching ``subset_obs`` in ``subset_obs_key`` (for example
+    one patient or coarse cell type), orders rows by ``group_obs_key`` (for example
+    treatment or subtype), and within each group optionally sorts cells by Ward
+    hierarchical clustering on the displayed factor vectors. Columns are factors
+    from ``layer_idx``. By default columns follow the hierarchy graph
+    (``model.get_layer_factor_orders()``); pass ``factors`` to select and order
+    columns explicitly.
+
+    When ``subset_obs`` contains multiple values, one heatmap panel is drawn per
+    value as a vertical stack of subplots with a shared x-axis (factor columns).
+    The ``group_obs_key`` color strip is drawn to the **left** of each heatmap.
+
+    Requires ``model.annotate()`` (or equivalent) so layer scores and/or
+    probabilities are stored in ``adata.obsm`` as ``X_<layer>`` and
+    ``X_<layer>_probs``.
+
+    Args:
+        model: scDEF model instance.
+        subset_obs_key: ``adata.obs`` column selecting the outer group (e.g. patient).
+        subset_obs: Value or values of ``subset_obs_key`` to include.
+        group_obs_key: ``adata.obs`` column defining row blocks (e.g. treatment).
+        layer_idx: Layer whose factors form the heatmap columns.
+        factors: Optional list of factor names (or indices within the layer) to
+            plot. Columns appear in this order; overrides ``sort_layer_factors``.
+        values: ``"score"`` for raw cell factor scores; ``"prob"`` for normalized
+            probabilities from ``X_<layer>_probs``.
+        cluster_cells: If True, hierarchically cluster cells within each
+            ``group_obs_key`` block (Ward linkage on Euclidean distance).
+        sort_layer_factors: If True and ``factors`` is None, order columns with
+            ``model.get_layer_factor_orders()``.
+        group_order: Optional explicit order of ``group_obs_key`` categories;
+            default uses categorical order when available, else sorted unique values.
+        show_group_track: Draw a narrow color strip for ``group_obs_key`` to the
+            left of each heatmap.
+        figsize: Figure size ``(width, height)`` in inches. If None, inferred from
+            ``figwidth``, ``row_height``, and the number of cells per panel.
+        figwidth: Figure width in inches when ``figsize`` is None.
+        row_height: Height in inches per cell row when ``figsize`` is None.
+        group_track_width: Gridspec width ratio for the group strip (default matches
+            the colorbar column width).
+        cmap: Matplotlib colormap name or ``Colormap`` instance for the heatmap.
+        norm: Optional normalization for the heatmap colormap (e.g.
+            ``matplotlib.colors.Normalize``). If set, overrides ``vmin``/``vmax``.
+        vmin: Optional lower bound for the color scale (ignored when ``norm`` is set).
+        vmax: Optional upper bound for the color scale (ignored when ``norm`` is set).
+        colorbar_label: Optional colorbar title; inferred from ``values`` if None.
+        group_separator_linewidth: Line width of horizontal separators between
+            ``group_obs_key`` blocks.
+        group_separator_color: Color of subgroup separator lines.
+        group_separator_alpha: Alpha of subgroup separator lines.
+        xlabel: X-axis label.
+        factor_label_rotation: Rotation of factor names on the x-axis.
+        factor_fontsize: Font size for factor name tick labels.
+        label_fontsize: Font size for the x-axis label.
+        colorbar_label_fontsize: Font size for the colorbar title.
+        colorbar_tick_fontsize: Font size for colorbar tick labels.
+        show_annotations: If True, show ``factor_obs['annotation']`` labels on a
+            secondary x-axis at the top of the first (top-row) heatmap panel
+            (45° by default).
+        annotation_fontsize: Font size for top annotation labels.
+        annotation_rotation: Rotation of top annotation labels in degrees.
+        save: If set, save the figure to this path (in addition to returning it when
+            ``show=False``).
+        show: Whether to call ``plt.show()`` and return ``None``. If ``False``, returns
+            the ``Figure`` so it can be saved or further customized.
+
+    Returns:
+        ``Figure`` if ``show`` is ``False``, else ``None``.
+    """
+    if subset_obs_key not in model.adata.obs.columns:
+        raise KeyError(f"{subset_obs_key} not found in adata.obs.")
+    if group_obs_key not in model.adata.obs.columns:
+        raise KeyError(f"{group_obs_key} not found in adata.obs.")
+    if layer_idx < 0 or layer_idx >= model.n_layers:
+        raise ValueError(f"layer_idx must be in [0, {model.n_layers - 1}].")
+    if values not in ("score", "prob"):
+        raise ValueError("values must be 'score' or 'prob'.")
+    if group_separator_linewidth < 0:
+        raise ValueError("group_separator_linewidth must be >= 0.")
+
+    layer_name = model.layer_names[layer_idx]
+    if values == "score":
+        matrix_key = f"X_{layer_name}"
+        default_cbar = "Cell factor score"
+    else:
+        matrix_key = f"X_{layer_name}_probs"
+        default_cbar = "Cell factor probability"
+    if matrix_key not in model.adata.obsm:
+        raise KeyError(
+            f"{matrix_key} not found in adata.obsm. "
+            "Run model.annotate() (or model.normalize_cellscores() for probabilities) first."
+        )
+
+    if isinstance(subset_obs, str):
+        subset_vals = [subset_obs]
+    else:
+        subset_vals = [str(v) for v in subset_obs]
+    if len(subset_vals) == 0:
+        raise ValueError("subset_obs must contain at least one value.")
+
+    full_matrix = np.asarray(model.adata.obsm[matrix_key], dtype=float)
+    factor_order, factor_labels = _resolve_layer_factor_columns(
+        model,
+        layer_idx,
+        full_matrix.shape[1],
+        factors,
+        sort_layer_factors,
+    )
+    full_matrix = full_matrix[:, factor_order]
+    n_cols = len(factor_labels)
+
+    top_annotation_labels: Optional[List[str]] = None
+    if show_annotations:
+        from ..tools.factor import get_factor_annotations
+
+        ann = get_factor_annotations(model, [str(f) for f in factor_labels])
+        top_annotation_labels = [
+            a if a is not None else str(f) for a, f in zip(ann, factor_labels)
+        ]
+
+    panels: List[Dict[str, Any]] = []
+    obs_str = model.adata.obs[subset_obs_key].astype(str)
+    for subset_val in subset_vals:
+        subset_mask = obs_str == str(subset_val)
+        if not np.any(subset_mask):
+            raise ValueError(f"No cells found for {subset_obs_key}={subset_val!r}.")
+        group_labels = model.adata.obs.loc[subset_mask, group_obs_key].astype(str)
+        ordered_groups = _ordered_group_labels(group_labels, group_order, group_obs_key)
+        cat_to_color = _group_obs_colors(model, group_obs_key, ordered_groups)
+        heatmap, group_rgb, boundaries = _build_obs_cell_factor_panel(
+            full_matrix[subset_mask],
+            group_labels,
+            ordered_groups,
+            cat_to_color,
+            cluster_cells,
+        )
+        panels.append(
+            {
+                "subset_val": str(subset_val),
+                "heatmap": heatmap,
+                "group_rgb": group_rgb,
+                "boundaries": boundaries,
+                "ordered_groups": ordered_groups,
+                "cat_to_color": cat_to_color,
+                "n_rows": heatmap.shape[0],
+            }
+        )
+
+    n_panels = len(panels)
+    if figsize is None:
+        total_rows = sum(p["n_rows"] for p in panels)
+        panel_pad = 0.35 * n_panels
+        fig_height = max(total_rows * row_height + panel_pad + 0.8, 2.0)
+        figsize = (figwidth, fig_height)
+
+    height_ratios = [max(p["n_rows"], 1) for p in panels]
+    cbar_width = 0.05
+    if show_group_track:
+        width_ratios = [group_track_width, 1.0, cbar_width]
+        n_gs_cols = 3
+    else:
+        width_ratios = [1.0, cbar_width]
+        n_gs_cols = 2
+
+    fig = plt.figure(figsize=figsize)
+    gs = fig.add_gridspec(
+        n_panels,
+        n_gs_cols,
+        width_ratios=width_ratios,
+        height_ratios=height_ratios,
+        wspace=0.06,
+        hspace=0.12 if n_panels > 1 else 0.0,
+    )
+
+    ax_hm_first = None
+    im_ref = None
+    for row_idx, panel in enumerate(panels):
+        hm_col = 1 if show_group_track else 0
+        cb_col = n_gs_cols - 1
+
+        if ax_hm_first is None:
+            ax_hm = fig.add_subplot(gs[row_idx, hm_col])
+            ax_hm_first = ax_hm
+        else:
+            ax_hm = fig.add_subplot(gs[row_idx, hm_col], sharex=ax_hm_first)
+
+        if show_group_track:
+            ax_grp = fig.add_subplot(gs[row_idx, 0], sharey=ax_hm)
+
+        imshow_kwargs: Dict[str, Any] = {
+            "aspect": "auto",
+            "cmap": cmap,
+            "interpolation": "nearest",
+            "origin": "upper",
+        }
+        if norm is not None:
+            imshow_kwargs["norm"] = norm
+        else:
+            imshow_kwargs["vmin"] = vmin
+            imshow_kwargs["vmax"] = vmax
+        im_ref = ax_hm.imshow(panel["heatmap"], **imshow_kwargs)
+        if show_group_track:
+            ax_grp.imshow(
+                panel["group_rgb"][:, np.newaxis, :],
+                aspect="auto",
+                interpolation="nearest",
+                origin="upper",
+            )
+            ax_grp.set_xticks([])
+            ax_grp.set_yticks([])
+            for spine in ax_grp.spines.values():
+                spine.set_visible(False)
+
+        ax_hm.set_yticks([])
+        if row_idx == 0 and show_annotations and top_annotation_labels is not None:
+            secax = ax_hm.secondary_xaxis("top")
+            secax.set_xticks(np.arange(n_cols))
+            secax.set_xticklabels(
+                top_annotation_labels,
+                rotation=annotation_rotation,
+                ha="left",
+                fontsize=annotation_fontsize,
+            )
+            secax.tick_params(length=0)
+            secax.set_xlabel("")
+        if row_idx < n_panels - 1:
+            ax_hm.set_xlabel("")
+            plt.setp(ax_hm.get_xticklabels(), visible=False)
+        else:
+            ax_hm.set_xticks(np.arange(n_cols))
+            ax_hm.set_xticklabels(
+                factor_labels,
+                rotation=factor_label_rotation,
+                fontsize=factor_fontsize,
+            )
+            ax_hm.set_xlabel(xlabel, fontsize=label_fontsize)
+
+        sep_kwargs = {
+            "color": group_separator_color,
+            "linewidth": group_separator_linewidth,
+            "alpha": group_separator_alpha,
+        }
+        for boundary in panel["boundaries"][:-1]:
+            ax_hm.axhline(boundary - 0.5, **sep_kwargs)
+            if show_group_track:
+                ax_grp.axhline(boundary - 0.5, **sep_kwargs)
+
+    ax_cb = fig.add_subplot(gs[:, cb_col])
+    cbar = fig.colorbar(im_ref, cax=ax_cb)
+    cbar.set_label(colorbar_label or default_cbar, fontsize=colorbar_label_fontsize)
+    cbar.ax.tick_params(labelsize=colorbar_tick_fontsize)
+
+    if save is not None:
+        fig.savefig(save, bbox_inches="tight")
+    if show:
+        plt.show()
+        return None
+    return fig
 
 
 from .trajectory import multilevel_paga  # noqa: E402,F401

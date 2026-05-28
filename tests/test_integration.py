@@ -854,7 +854,7 @@ def test_scdef_path_pipeline_and_plotting():
         plt.close(fig)
 
         scd.tl.set_confident_signatures(model)
-        fig_ph = scd.pl.plot_path_trajectory_heatmap(
+        fig_ph = scd.pl.path_trajectory_heatmap(
             model,
             path_id=0,
             paths_key="differentiation_paths",
@@ -866,7 +866,7 @@ def test_scdef_path_pipeline_and_plotting():
         plt.close(fig_ph)
 
         g1, g2 = list(model.adata.var_names[:2])
-        fig_pg = scd.pl.plot_path_trajectory_heatmap(
+        fig_pg = scd.pl.path_trajectory_heatmap(
             model,
             path_id=0,
             paths_key="differentiation_paths",
@@ -914,7 +914,7 @@ def test_scdef_load_and_plotting_pipeline():
     if len(loaded.factor_names[0]) >= 2:
         scd.tl.set_confident_signatures(loaded)
         factor_path = loaded.factor_names[0][: min(3, len(loaded.factor_names[0]))]
-        scd.pl.plot_trajectory_heatmap(
+        scd.pl.trajectory_heatmap(
             loaded,
             factor_path=factor_path,
             layer_idx=0,

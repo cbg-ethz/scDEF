@@ -9,6 +9,7 @@ from .graph import (
 )
 from .factors import (
     obs_factor_dotplot,
+    obs_cell_factor_heatmap,
     layers_obs,
     pathway_scores,
     signatures_scores,
@@ -24,8 +25,8 @@ from .factors import (
 )
 from .trajectory import (
     multilevel_paga,
-    plot_trajectory_heatmap,
-    plot_path_trajectory_heatmap,
+    trajectory_heatmap,
+    path_trajectory_heatmap,
     path_embedding,
 )
 from .qc import (
@@ -44,9 +45,10 @@ __all__ = [
     "global_hierarchy",
     "biological_hierarchy",
     "obs_factor_dotplot",
+    "obs_cell_factor_heatmap",
     "multilevel_paga",
-    "plot_trajectory_heatmap",
-    "plot_path_trajectory_heatmap",
+    "trajectory_heatmap",
+    "path_trajectory_heatmap",
     "path_embedding",
     "layers_obs",
     "pathway_scores",

@@ -14,6 +14,8 @@ from .hierarchy import (
 )
 from .factor import (
     assign_confident,
+    annotate_factors,
+    get_factor_annotations,
     compute_within_group_pairwise_dissimilarity,
     factor_diagnostics,
     get_obs_score_rankings,
@@ -45,6 +47,8 @@ from .lineage import get_lineage_factors, get_global_factors
 
 __all__ = [
     "assign_confident",
+    "annotate_factors",
+    "get_factor_annotations",
     "multilayer_umap",
     "get_hierarchy",
     "make_hierarchies",
