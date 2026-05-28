@@ -1110,7 +1110,13 @@ class scDEF(object):
         factor_names: Optional[Sequence[Sequence[str]]] = None,
         layer_names: Optional[Sequence[str]] = None,
     ) -> Tuple[List[int], List[np.ndarray], List[np.ndarray], np.ndarray, np.ndarray]:
-        """Warm-start a geometric hierarchy whose top layer is a mixed-depth frontier."""
+        """Warm-start a geometric hierarchy whose top layer is a mixed-depth frontier.
+
+        The rebuilt hierarchy preserves the current fitted depth (non-root
+        layer count, and root presence when width-1 root exists), instead of
+        using ``n_layers_schedule`` directly. This keeps the selected frontier
+        factors on the same top non-root layer index as before refit.
+        """
         fl = [
             np.asarray(f, dtype=int)
             for f in (factor_lists if factor_lists is not None else self.factor_lists)
@@ -1130,8 +1136,10 @@ class scDEF(object):
         ]
         n_l0 = len(fl[0])
         n_top = len(resolved)
+        has_old_root = len(fl) > 1 and int(len(fl[-1])) == 1
+        n_layers_target = len(fl) - 1 if has_old_root else len(fl)
         layer_sizes, _ = self._sanitize_layer_sizes(
-            self._geometric_layer_sizes_for(n_l0, n_top, int(self.n_layers_schedule))
+            self._geometric_layer_sizes_for(n_l0, n_top, int(n_layers_target))
         )
         has_root = len(layer_sizes) > 1 and int(layer_sizes[-1]) == 1
         top_layer_idx = len(layer_sizes) - 2 if has_root else len(layer_sizes) - 1
