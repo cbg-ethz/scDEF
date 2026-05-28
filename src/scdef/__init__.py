@@ -1,3 +1,11 @@
+import os as _os
+
+# Silence noisy XLA/TF C++ logs (e.g. GPU autotuner "All configs were filtered out…"
+# and "Compiling N configs for ..." warnings) that appear during scDEF.fit(). Must be
+# set before jax/XLA is imported. Users can override by exporting TF_CPP_MIN_LOG_LEVEL
+# themselves before importing scdef.
+_os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
+
 from .models import scDEF as scDEF, iscDEF as iscDEF, sscDEF as sscDEF
 from .utils import (
     hierarchy_utils as hierarchy_utils,
