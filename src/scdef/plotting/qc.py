@@ -742,9 +742,8 @@ def factor_diagnostics(
             cbar_min, cbar_max = float(np.min(finite_vals)), float(np.max(finite_vals))
     if cbar_min < cbar_thresh < cbar_max:
         cb_ax = cbar.ax
-        rel_pos = (cbar_thresh - cbar_min) / (cbar_max - cbar_min)
         cb_ax.axhline(
-            rel_pos,
+            cbar_thresh,
             color=plt.rcParams["axes.prop_cycle"].by_key()["color"][0],
             linestyle="--",
             linewidth=5,
