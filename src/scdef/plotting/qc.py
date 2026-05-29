@@ -530,8 +530,9 @@ def factor_diagnostics(
             ``avg_n_eff_parents`` (local-L0 mode or fallback to L0 ``n_eff_parents``):
             cutoff is ``effective_parents_from_clarity(clarity_min, K_parents)``.
         batch_purity_min: optional threshold for batch purity. If provided,
-            an additional panel is shown with ``batch_purity`` on the x-axis and
-            the same y-axis as the default panel. Requires
+            the scatter is colored by ``batch_purity`` (with the colorbar
+            threshold drawn at ``batch_purity_min``) and dot sizes are scaled
+            by ``ARD``. Requires
             ``scdef.tools.factor_diagnostics(..., batch_key=...)``.
         n_eff_parents_max: used **only** when the y-axis is lineage
             ``avg_n_eff_parents`` (``local_l0_scores=False`` and column present): dashed
@@ -651,21 +652,30 @@ def factor_diagnostics(
             & (batch_purity >= float(batch_purity_min))
         )[0]
 
+    if ax is None:
+        fig, ax = plt.subplots(1, 1, figsize=figsize)
+
+    ard_thresh = ard_min * ard_total
     if batch_purity is None:
-        if ax is None:
-            fig, ax = plt.subplots(1, 1, figsize=figsize)
+        sizes = None
         im = ax.scatter(x, y, c=z, cmap="viridis")
-        axes = [ax]
+        cbar_label = "ARD"
+        cbar_thresh = ard_thresh
+        cbar_values = z
     else:
-        if ax is not None:
-            raise ValueError(
-                "When batch_purity_min is provided, pass ax=None to allow a "
-                "2-panel layout."
-            )
-        fig, axes_arr = plt.subplots(1, 2, figsize=(figsize[0] * 2, figsize[1]))
-        axes = list(np.atleast_1d(axes_arr))
-        ax = axes[0]
-        im = ax.scatter(x, y, c=z, cmap="viridis")
+        z_finite = z[np.isfinite(z)]
+        if z_finite.size > 0 and np.nanmax(z_finite) > np.nanmin(z_finite):
+            z_min = float(np.nanmin(z_finite))
+            z_max = float(np.nanmax(z_finite))
+            sizes = 20.0 + 280.0 * (z - z_min) / (z_max - z_min)
+            sizes = np.where(np.isfinite(sizes), sizes, 20.0)
+        else:
+            sizes = np.full_like(z, 50.0, dtype=float)
+        im = ax.scatter(x, y, c=batch_purity, s=sizes, cmap="viridis")
+        cbar_label = "Batch purity"
+        cbar_thresh = float(batch_purity_min)
+        cbar_values = batch_purity
+
     if annotate_factors:
         for i in range(len(labels)):
             if np.isfinite(x[i]) and np.isfinite(y[i]):
@@ -678,10 +688,11 @@ def factor_diagnostics(
                 )
     # Draw blue circle around dots that pass filters
     if len(factors_pass) > 0:
+        keep_sizes = 100 if sizes is None else sizes[factors_pass] + 40
         ax.scatter(
             x[factors_pass],
             y[factors_pass],
-            s=80,
+            s=keep_sizes,
             facecolors="none",
             edgecolors=plt.rcParams["axes.prop_cycle"].by_key()["color"][
                 0
@@ -701,69 +712,77 @@ def factor_diagnostics(
         linestyle="--",
         color=plt.rcParams["axes.prop_cycle"].by_key()["color"][0],
     )
-    # Add ARD colorbar with threshold line
-    cbar = plt.colorbar(im, ax=ax, label="ARD")
-    ard_thresh = ard_min * ard_total
-    # ARD color range
+    cbar = plt.colorbar(im, ax=ax, label=cbar_label)
     norm = im.norm
     cbar_min, cbar_max = norm.vmin, norm.vmax
     if cbar_min == cbar_max:
-        cbar_min, cbar_max = np.min(z), np.max(z)
-    # Only draw threshold line if in colorbar range
-    if cbar_min < ard_thresh < cbar_max:
+        finite_vals = cbar_values[np.isfinite(cbar_values)]
+        if finite_vals.size > 0:
+            cbar_min, cbar_max = float(np.min(finite_vals)), float(np.max(finite_vals))
+    if cbar_min < cbar_thresh < cbar_max:
         cb_ax = cbar.ax
-        rel_pos = (ard_thresh - cbar_min) / (cbar_max - cbar_min)
+        rel_pos = (cbar_thresh - cbar_min) / (cbar_max - cbar_min)
         cb_ax.axhline(
             rel_pos,
             color=plt.rcParams["axes.prop_cycle"].by_key()["color"][0],
             linestyle="--",
             linewidth=5,
-            # label='ARD threshold'
         )
+
+    # When sizes encode ARD, add a size legend with reference markers.
+    if sizes is not None:
+        z_finite = z[np.isfinite(z)]
+        if z_finite.size > 0:
+            z_min = float(np.nanmin(z_finite))
+            z_max = float(np.nanmax(z_finite))
+            if z_max > z_min:
+                from matplotlib.lines import Line2D
+
+                ref_vals = np.nanpercentile(z_finite, [10, 50, 90])
+                ref_labels = ["10%", "50%", "90%"]
+                handles = []
+                for val, label in zip(ref_vals, ref_labels):
+                    s_val = 20.0 + 280.0 * (val - z_min) / (z_max - z_min)
+                    handles.append(
+                        Line2D(
+                            [0],
+                            [0],
+                            marker="o",
+                            linestyle="",
+                            markerfacecolor="lightgray",
+                            markeredgecolor="gray",
+                            markersize=float(np.sqrt(s_val)),
+                            label=label,
+                        )
+                    )
+                size_legend = ax.legend(
+                    handles=handles,
+                    title="Size (ARD)",
+                    loc="upper right",
+                    fontsize=8,
+                    title_fontsize=8,
+                    labelspacing=1.2,
+                    borderpad=1.0,
+                    handletextpad=1.2,
+                    frameon=True,
+                )
+                ax.add_artist(size_legend)
+
     ax.set_title(f"{len(factors_pass)} factors pass filters")
     if len(factors_pass) > 0:
-        ax.legend()
+        from matplotlib.lines import Line2D
 
-    if batch_purity is not None:
-        ax_bp = axes[1]
-        im_bp = ax_bp.scatter(batch_purity, y, c=z, cmap="viridis")
-        if annotate_factors:
-            for i in range(len(labels)):
-                if np.isfinite(batch_purity[i]) and np.isfinite(y[i]):
-                    ax_bp.text(
-                        batch_purity[i],
-                        y[i],
-                        str(labels[i]),
-                        fontsize=annotation_fontsize,
-                        alpha=annotation_alpha,
-                    )
-        if len(factors_pass) > 0:
-            ax_bp.scatter(
-                batch_purity[factors_pass],
-                y[factors_pass],
-                s=80,
-                facecolors="none",
-                edgecolors=plt.rcParams["axes.prop_cycle"].by_key()["color"][0],
-                marker="o",
-                label="Keep",
-            )
-        ax_bp.set_xlabel("Batch purity")
-        ax_bp.set_ylabel(y_label)
-        ax_bp.set_xlim(-0.02, 1.02)
-        ax_bp.axvline(
-            float(batch_purity_min),
-            linestyle="--",
-            color=plt.rcParams["axes.prop_cycle"].by_key()["color"][0],
+        keep_handle = Line2D(
+            [0],
+            [0],
+            marker="o",
+            color="w",
+            markerfacecolor="none",
+            markeredgecolor=plt.rcParams["axes.prop_cycle"].by_key()["color"][0],
+            markersize=10,
+            label="Keep",
         )
-        ax_bp.axhline(
-            neffective_parents_max,
-            linestyle="--",
-            color=plt.rcParams["axes.prop_cycle"].by_key()["color"][0],
-        )
-        ax_bp.set_title("Batch purity diagnostics")
-        if len(factors_pass) > 0:
-            ax_bp.legend()
-        plt.colorbar(im_bp, ax=ax_bp, label="ARD")
+        ax.legend(handles=[keep_handle], loc="best")
 
     if show:
         plt.show()
