@@ -979,7 +979,10 @@ class iscDEF(scDEF):
         if getattr(self, "add_root", False) and int(root_epochs) == 0:
             root_epochs = 10
         self.root_epochs = int(root_epochs)
-        if getattr(self, "_has_fit", False):
+        refit_rescale_relevance = bool(kwargs.pop("refit_rescale_relevance", True))
+        refit_relevance_max_ratio = kwargs.pop("refit_relevance_max_ratio", 50.0)
+        is_refit = bool(getattr(self, "_has_fit", False))
+        if is_refit:
             old_factor_lists = [
                 np.array(factors, dtype=int).copy() for factors in self.factor_lists
             ]
@@ -1055,6 +1058,13 @@ class iscDEF(scDEF):
                     self.logger.info(
                         "Initialized layer-0 z from scanpy.tl.score_genes on typed marker sets."
                     )
+        if is_refit:
+            init_brd, init_ard = self._prepare_refit_relevance_inits(
+                init_brd,
+                init_ard,
+                refit_rescale_relevance=refit_rescale_relevance,
+                refit_relevance_max_ratio=refit_relevance_max_ratio,
+            )
         self.init_var_params(
             init_budgets=init_budgets,
             init_alpha=init_alpha,

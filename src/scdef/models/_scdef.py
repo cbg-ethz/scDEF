@@ -995,6 +995,87 @@ class scDEF(object):
             )
         return np.clip(w, 1e-8, None).astype(np.float32)
 
+    def _rescale_relevance_init(
+        self,
+        values: np.ndarray,
+        target_mean: float,
+        *,
+        max_ratio: Optional[float] = 50.0,
+        eps: float = 1e-8,
+    ) -> np.ndarray:
+        """Rescale positive per-factor BRD/ARD warm starts preserving ratios.
+
+        Centers the geometric mean on ``target_mean`` (``brd_mean`` / ``shrinkage_mean``).
+        Optionally limits the max/min ratio across factors via ``max_ratio``.
+        """
+        arr = np.asarray(values, dtype=np.float64)
+        flat = arr.ravel()
+        target = max(float(target_mean), eps)
+        if flat.size == 0:
+            return arr.astype(np.float32)
+        positive = flat > eps
+        if not np.any(positive):
+            return np.full(arr.shape, target, dtype=np.float32)
+
+        log_v = np.log(np.clip(flat[positive], eps, None))
+        log_target = np.log(target)
+        log_scaled = log_v - np.mean(log_v) + log_target
+        if max_ratio is not None and float(max_ratio) > 1.0:
+            half_span = 0.5 * np.log(float(max_ratio))
+            log_scaled = np.clip(
+                log_scaled, log_target - half_span, log_target + half_span
+            )
+        out = flat.copy()
+        out[positive] = np.exp(log_scaled)
+        out[~positive] = target
+        return out.reshape(arr.shape).astype(np.float32)
+
+    def _prepare_refit_relevance_inits(
+        self,
+        init_brd,
+        init_ard,
+        *,
+        refit_rescale_relevance: bool = True,
+        refit_relevance_max_ratio: Optional[float] = 50.0,
+    ):
+        """Rescale BRD/ARD warm starts on refit (see ``_rescale_relevance_init``)."""
+        if not refit_rescale_relevance:
+            return init_brd, init_ard
+        max_ratio = (
+            None
+            if refit_relevance_max_ratio is None
+            else float(refit_relevance_max_ratio)
+        )
+        if init_brd is not None and self.use_brd:
+            before = np.asarray(init_brd, dtype=np.float64)
+            init_brd = self._rescale_relevance_init(
+                init_brd, self.brd_mean, max_ratio=max_ratio
+            )
+            self.logger.info(
+                "Refit: rescaled BRD warm start to geometric mean %.3g "
+                "(range %.3g–%.3g -> %.3g–%.3g).",
+                float(self.brd_mean),
+                float(np.min(before)),
+                float(np.max(before)),
+                float(np.min(init_brd)),
+                float(np.max(init_brd)),
+            )
+        if init_ard is not None:
+            before = np.asarray(init_ard, dtype=np.float64)
+            init_ard = self._rescale_relevance_init(
+                init_ard, self.shrinkage_mean, max_ratio=max_ratio
+            )
+            self.logger.info(
+                "Refit: rescaled ARD warm start to geometric mean %.3g "
+                "(range %.3g–%.3g -> %.3g–%.3g).",
+                float(self.shrinkage_mean),
+                float(np.min(before)),
+                float(np.max(before)),
+                float(np.min(init_ard)),
+                float(np.max(init_ard)),
+            )
+        return init_brd, init_ard
+
     def _build_collapsed_refit_init(
         self,
         old_keep: Sequence[int],
@@ -2383,6 +2464,8 @@ class scDEF(object):
         learn_budgets_on_refit: bool = False,
         refit_top_layer: Optional[Union[int, str]] = None,
         refit_top_factors: Optional[Sequence[str]] = None,
+        refit_rescale_relevance: bool = True,
+        refit_relevance_max_ratio: float = 50.0,
         **kwargs: Any,
     ) -> None:
         """Fit scDEF, warm-starting from a previous fit when available.
@@ -2425,6 +2508,12 @@ class scDEF(object):
             refit_top_factors: on refit only, rebuild a geometric hierarchy using
                 these mixed-depth factors as the top non-root layer. Intermediate
                 layer sizes follow the existing ``n_layers_schedule``.
+            refit_rescale_relevance: on refit only, rescale ``init_ard`` / ``init_brd``
+                warm starts so their geometric mean matches ``shrinkage_mean`` /
+                ``brd_mean`` while preserving relative differences across factors
+                (optionally capped by ``refit_relevance_max_ratio``).
+            refit_relevance_max_ratio: max/min ratio across factors after relevance
+                rescaling on refit. Set to ``None`` to disable the ratio cap.
             **kwargs: additional keyword arguments.
 
             On the first call, parameters are initialized from priors (or NMF if enabled).
@@ -2567,6 +2656,13 @@ class scDEF(object):
                 init_ard = pending_reference_init.get("init_ard")
                 nmf_init = False
                 z_init_concentration = 100.0
+        if is_refit:
+            init_brd, init_ard = self._prepare_refit_relevance_inits(
+                init_brd,
+                init_ard,
+                refit_rescale_relevance=refit_rescale_relevance,
+                refit_relevance_max_ratio=refit_relevance_max_ratio,
+            )
         self.init_var_params(
             init_budgets=init_budgets,
             init_alpha=init_alpha,
