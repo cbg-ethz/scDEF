@@ -508,7 +508,8 @@ def factor_diagnostics(
     brd_min: float = 1.0,
     ard_min: float = 0.001,
     clarity_min: float = 0.5,
-    batch_purity_min: Optional[float] = None,
+    batch_purity_max: Optional[float] = None,
+    batch_purity_soft_max: Optional[float] = None,
     n_eff_parents_max: float = 1.5,
     figsize: tuple = (6, 4),
     ax: Optional[Axes] = None,
@@ -529,10 +530,18 @@ def factor_diagnostics(
         clarity_min: used for the horizontal cutoff when **not** plotting lineage
             ``avg_n_eff_parents`` (local-L0 mode or fallback to L0 ``n_eff_parents``):
             cutoff is ``effective_parents_from_clarity(clarity_min, K_parents)``.
-        batch_purity_min: optional threshold for batch purity. If provided,
-            the scatter is colored by ``batch_purity`` (with the colorbar
-            threshold drawn at ``batch_purity_min``) and dot sizes are scaled
-            by ``ARD``. Requires
+        batch_purity_max: optional upper bound on hard-assignment batch purity.
+            Factors pass when ``batch_purity <= batch_purity_max`` (low purity
+            = less batch-driven). If provided (and ``batch_purity_soft_max``
+            is None), the scatter is colored by ``batch_purity`` with the
+            colorbar threshold at this value, and dot sizes are scaled by
+            ``ARD``.
+        batch_purity_soft_max: optional upper bound on soft batch purity (from
+            ``X_<layer>_probs``). Factors pass when
+            ``batch_purity_soft <= batch_purity_soft_max``. If provided, the
+            scatter is colored by ``batch_purity_soft`` unless
+            ``batch_purity_max`` is also set (hard purity used for color).
+            Default None (not used). Requires
             ``scdef.tools.factor_diagnostics(..., batch_key=...)``.
         n_eff_parents_max: used **only** when the y-axis is lineage
             ``avg_n_eff_parents`` (``local_l0_scores=False`` and column present): dashed
@@ -614,13 +623,21 @@ def factor_diagnostics(
     y = factor_obs_l0[y_col].to_numpy(dtype=float)
     z = factor_obs_l0["ARD"].to_numpy(dtype=float)
     batch_purity = None
-    if batch_purity_min is not None:
+    batch_purity_soft = None
+    if batch_purity_max is not None:
         if "batch_purity" not in factor_obs_l0.columns:
             raise KeyError(
                 "batch_purity is missing from factor diagnostics. Run "
                 "`scdef.tools.factor_diagnostics(model, batch_key=...)` first."
             )
         batch_purity = factor_obs_l0["batch_purity"].to_numpy(dtype=float)
+    if batch_purity_soft_max is not None:
+        if "batch_purity_soft" not in factor_obs_l0.columns:
+            raise KeyError(
+                "batch_purity_soft is missing from factor diagnostics. Run "
+                "`scdef.tools.factor_diagnostics(model, batch_key=...)` first."
+            )
+        batch_purity_soft = factor_obs_l0["batch_purity_soft"].to_numpy(dtype=float)
     lineage_plot = (not local_l0_scores) and (
         "avg_n_eff_parents" in factor_obs_l0.columns
     )
@@ -642,21 +659,19 @@ def factor_diagnostics(
     factors_pass_base = np.where(
         (x > brd_min) & (y < neffective_parents_max) & (z > ard_min * ard_total)
     )[0]
-    if batch_purity is None:
-        factors_pass = factors_pass_base
-    else:
-        factors_pass = np.where(
-            (x > brd_min)
-            & (y < neffective_parents_max)
-            & (z > ard_min * ard_total)
-            & (batch_purity >= float(batch_purity_min))
-        )[0]
+    pass_mask = (x > brd_min) & (y < neffective_parents_max) & (z > ard_min * ard_total)
+    if batch_purity_max is not None:
+        pass_mask &= batch_purity <= float(batch_purity_max)
+    if batch_purity_soft_max is not None:
+        pass_mask &= batch_purity_soft <= float(batch_purity_soft_max)
+    factors_pass = np.where(pass_mask)[0]
 
     if ax is None:
         fig, ax = plt.subplots(1, 1, figsize=figsize)
 
     ard_thresh = ard_min * ard_total
-    if batch_purity is None:
+    use_batch_color = batch_purity_max is not None or batch_purity_soft_max is not None
+    if not use_batch_color:
         sizes = None
         im = ax.scatter(x, y, c=z, cmap="viridis")
         cbar_label = "ARD"
@@ -671,10 +686,16 @@ def factor_diagnostics(
             sizes = np.where(np.isfinite(sizes), sizes, 20.0)
         else:
             sizes = np.full_like(z, 50.0, dtype=float)
-        im = ax.scatter(x, y, c=batch_purity, s=sizes, cmap="viridis")
-        cbar_label = "Batch purity"
-        cbar_thresh = float(batch_purity_min)
-        cbar_values = batch_purity
+        if batch_purity_max is not None:
+            batch_color = batch_purity
+            cbar_label = "Batch purity"
+            cbar_thresh = float(batch_purity_max)
+        else:
+            batch_color = batch_purity_soft
+            cbar_label = "Batch purity (soft)"
+            cbar_thresh = float(batch_purity_soft_max)
+        im = ax.scatter(x, y, c=batch_color, s=sizes, cmap="viridis")
+        cbar_values = batch_color
 
     if annotate_factors:
         for i in range(len(labels)):

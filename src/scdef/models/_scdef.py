@@ -1320,6 +1320,76 @@ class scDEF(object):
                 * self.hierarchy_fraction
             )
 
+    def _get_factor_obs_l0(self, required_cols: Optional[set] = None):
+        """Layer-0 slice of ``factor_obs`` / ``factor_obs_full`` for filtering."""
+        required = {"original_factor_idx"}
+        if required_cols is not None:
+            required = required | set(required_cols)
+
+        def _has_required(key):
+            return key in self.adata.uns and required.issubset(
+                set(self.adata.uns[key].columns)
+            )
+
+        if not _has_required("factor_obs_full") and not _has_required("factor_obs"):
+            from scdef.tools.factor import factor_diagnostics
+
+            factor_diagnostics(self)
+
+        source_key = (
+            "factor_obs_full" if _has_required("factor_obs_full") else "factor_obs"
+        )
+        factor_obs = self.adata.uns[source_key]
+        if "child_layer" in factor_obs.columns:
+            return factor_obs[factor_obs["child_layer"] == self.layer_names[0]]
+        return factor_obs
+
+    def _batch_purity_keep_mask(
+        self,
+        factor_obs_l0,
+        batch_purity_max: Optional[float] = None,
+        batch_purity_soft_max: Optional[float] = None,
+    ) -> np.ndarray:
+        """Boolean mask over layer-0 factor indices that pass batch purity caps."""
+        n_factors = int(self.layer_sizes[0])
+        keep_mask = np.zeros(n_factors, dtype=bool)
+        if batch_purity_max is None and batch_purity_soft_max is None:
+            return np.ones(n_factors, dtype=bool)
+
+        original_idx = factor_obs_l0["original_factor_idx"].to_numpy(dtype=int)
+        valid = (original_idx >= 0) & (original_idx < n_factors)
+        oidx = original_idx[valid]
+        if oidx.size == 0:
+            return keep_mask
+
+        keep_mask[oidx] = True
+
+        if batch_purity_max is not None:
+            if "batch_purity" not in factor_obs_l0.columns:
+                raise KeyError(
+                    "batch_purity is missing from factor_obs. Run "
+                    "scdef.tools.factor_diagnostics(model, batch_key=...) first."
+                )
+            vals = factor_obs_l0["batch_purity"].to_numpy(dtype=float)[valid]
+            purity = np.full(n_factors, np.nan, dtype=float)
+            purity[oidx] = vals
+            keep_mask &= np.isfinite(purity) & (purity <= float(batch_purity_max))
+
+        if batch_purity_soft_max is not None:
+            if "batch_purity_soft" not in factor_obs_l0.columns:
+                raise KeyError(
+                    "batch_purity_soft is missing from factor_obs. Run "
+                    "scdef.tools.factor_diagnostics(model, batch_key=...) first."
+                )
+            vals = factor_obs_l0["batch_purity_soft"].to_numpy(dtype=float)[valid]
+            purity_soft = np.full(n_factors, np.nan, dtype=float)
+            purity_soft[oidx] = vals
+            keep_mask &= np.isfinite(purity_soft) & (
+                purity_soft <= float(batch_purity_soft_max)
+            )
+
+        return keep_mask
+
     def get_effective_factors(
         self,
         brd_min: Optional[float] = 1.0,
@@ -1328,6 +1398,8 @@ class scDEF(object):
         n_eff_parents_max: float = 1.5,
         local_l0_scores: bool = False,
         min_cells: Optional[float] = 0.001,
+        batch_purity_max: Optional[float] = None,
+        batch_purity_soft_max: Optional[float] = None,
     ):
         layer_name = self.layer_names[0]
         if min_cells != 0:
@@ -1347,32 +1419,20 @@ class scDEF(object):
         )
 
         keep = np.array(range(self.layer_sizes[0]))[np.where(counts >= min_cells)[0]]
+        use_batch_purity = (
+            batch_purity_max is not None or batch_purity_soft_max is not None
+        )
+        if self.use_brd or use_batch_purity:
+            required_cols: set = set()
+            if self.use_brd:
+                required_cols |= {"BRD", "ARD"}
+            if batch_purity_max is not None:
+                required_cols.add("batch_purity")
+            if batch_purity_soft_max is not None:
+                required_cols.add("batch_purity_soft")
+            factor_obs_l0 = self._get_factor_obs_l0(required_cols=required_cols)
+
         if self.use_brd:
-            required_cols = {"BRD", "ARD", "original_factor_idx"}
-
-            def _has_required(key):
-                return key in self.adata.uns and required_cols.issubset(
-                    set(self.adata.uns[key].columns)
-                )
-
-            if not _has_required("factor_obs_full") and not _has_required("factor_obs"):
-                from scdef.tools.factor import factor_diagnostics
-
-                factor_diagnostics(self)
-
-            # Prefer the full (pre-filter) snapshot so re-filtering with
-            # looser thresholds can reconsider previously dropped factors.
-            source_key = (
-                "factor_obs_full" if _has_required("factor_obs_full") else "factor_obs"
-            )
-            factor_obs = self.adata.uns[source_key]
-            if "child_layer" in factor_obs.columns:
-                factor_obs_l0 = factor_obs[
-                    factor_obs["child_layer"] == self.layer_names[0]
-                ]
-            else:
-                factor_obs_l0 = factor_obs
-
             original_idx = factor_obs_l0["original_factor_idx"].to_numpy(dtype=int)
             brd_vals = factor_obs_l0["BRD"].to_numpy(dtype=float)
             ard_vals = factor_obs_l0["ARD"].to_numpy(dtype=float)
@@ -1413,10 +1473,24 @@ class scDEF(object):
                 valid = np.isfinite(brd) & np.isfinite(ard) & np.isfinite(clarity)
                 tree_ok = clarity >= float(clarity_min)
 
-            brd_keep = np.where(
-                valid & (brd >= brd_min) & tree_ok & (ard >= ard_min * ard_sum)
-            )[0]
+            pass_mask = valid & (brd >= brd_min) & tree_ok & (ard >= ard_min * ard_sum)
+            if use_batch_purity:
+                pass_mask &= self._batch_purity_keep_mask(
+                    factor_obs_l0,
+                    batch_purity_max=batch_purity_max,
+                    batch_purity_soft_max=batch_purity_soft_max,
+                )
+            brd_keep = np.where(pass_mask)[0]
             keep = np.unique(list(set(brd_keep).intersection(keep)))
+        elif use_batch_purity:
+            batch_keep = np.where(
+                self._batch_purity_keep_mask(
+                    factor_obs_l0,
+                    batch_purity_max=batch_purity_max,
+                    batch_purity_soft_max=batch_purity_soft_max,
+                )
+            )[0]
+            keep = np.unique(list(set(batch_keep).intersection(keep)))
 
         return keep
 
@@ -3314,6 +3388,8 @@ class scDEF(object):
         clarity_min: Optional[float] = 0.5,
         n_eff_parents_max: float = 1.5,
         local_l0_scores: bool = False,
+        batch_purity_max: Optional[float] = None,
+        batch_purity_soft_max: Optional[float] = None,
         min_cells_upper: Optional[float] = 0.001,
         min_cells_lower: Optional[float] = 0.0,
         filter_up: Optional[bool] = True,
@@ -3332,6 +3408,11 @@ class scDEF(object):
                 (default ``1.5``). Ignored for local-L0 / clarity-only filtering.
             local_l0_scores: if True, filter by ``clarity_score_01 >= clarity_min``; if
                 False and ``avg_n_eff_parents`` exists, filter by ``n_eff_parents_max``.
+            batch_purity_max: if set, keep layer-0 factors with hard-assignment
+                ``batch_purity <= batch_purity_max`` (requires
+                ``factor_diagnostics(..., batch_key=...)``).
+            batch_purity_soft_max: if set, keep factors with
+                ``batch_purity_soft <= batch_purity_soft_max``.
             min_cells_upper: minimum cells attached to upper-layer factors (fraction if <1).
             min_cells_lower: minimum cells attached to layer-0 factors (fraction if <1).
             filter_up: whether to prune upper layers via inter-layer attachments.
@@ -3357,6 +3438,8 @@ class scDEF(object):
                         clarity_min=clarity_min,
                         n_eff_parents_max=n_eff_parents_max,
                         local_l0_scores=local_l0_scores,
+                        batch_purity_max=batch_purity_max,
+                        batch_purity_soft_max=batch_purity_soft_max,
                         min_cells=min_cells_lower,
                     )
             else:

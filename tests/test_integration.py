@@ -232,13 +232,18 @@ def test_scdef():
     factor_obs = model.adata.uns["factor_obs"]
     assert "batch_entropy" in factor_obs.columns
     assert "batch_purity" in factor_obs.columns
+    assert "batch_purity_soft" in factor_obs.columns
     purity_vals = factor_obs["batch_purity"].to_numpy(dtype=float)
     finite_purity = purity_vals[np.isfinite(purity_vals)]
     assert finite_purity.size > 0
     assert np.all((finite_purity >= 0.0) & (finite_purity <= 1.0))
+    soft_vals = factor_obs["batch_purity_soft"].to_numpy(dtype=float)
+    finite_soft = soft_vals[np.isfinite(soft_vals)]
+    assert finite_soft.size > 0
+    assert np.all((finite_soft >= 0.0) & (finite_soft <= 1.0))
     assert "factor_diagnostics" in model.adata.uns
     assert model.adata.uns["factor_diagnostics"]["batch_key"] == "batches"
-    scd.pl.factor_diagnostics(model, batch_purity_min=0.1, show=False)
+    scd.pl.factor_diagnostics(model, batch_purity_max=0.1, show=False)
     scd.tl.set_technical_factors(model, factors=[model.factor_names[0][0]])
     scd.tl.make_hierarchies(model)
     scd.tl.set_confident_signatures(model)

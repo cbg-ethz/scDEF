@@ -378,6 +378,66 @@ def set_confident_signatures(
     model.adata.uns["factor_signatures"] = signatures_flat
 
 
+def _entropy_purity_from_batch_masses(
+    masses: np.ndarray, n_batches: int
+) -> Tuple[float, float]:
+    """Shannon entropy and normalized purity from non-negative batch masses."""
+    total = float(np.sum(masses))
+    if total <= 0.0 or n_batches < 2:
+        return np.nan, np.nan
+    probs = masses[masses > 0.0] / total
+    entropy = float(-np.sum(probs * np.log(probs)))
+    max_entropy = float(np.log(n_batches))
+    purity = 1.0 - entropy / max_entropy if max_entropy > 0 else np.nan
+    return entropy, float(np.clip(purity, 0.0, 1.0))
+
+
+def _get_layer_cell_probs(model: "scDEF", layer_idx: int) -> np.ndarray:
+    """Per-cell factor probabilities for one layer (rows sum to 1)."""
+    layer_name = model.layer_names[layer_idx]
+    probs_key = f"X_{layer_name}_probs"
+    if probs_key in model.adata.obsm:
+        return np.asarray(model.adata.obsm[probs_key], dtype=float)
+    scores_key = f"X_{layer_name}"
+    if scores_key in model.adata.obsm:
+        scores = np.asarray(model.adata.obsm[scores_key], dtype=float)
+    else:
+        z_key = f"{layer_name}z"
+        if z_key not in model.pmeans:
+            raise KeyError(
+                f"Missing cell scores for layer {layer_name!r}. Run "
+                "model.annotate_adata() or model.fit(annotate=True) first."
+            )
+        scores = np.asarray(model.pmeans[z_key], dtype=float)
+        kept = np.asarray(model.factor_lists[layer_idx], dtype=int)
+        if scores.shape[1] != len(kept):
+            scores = scores[:, kept]
+    den = np.clip(scores.sum(axis=1, keepdims=True), 1e-12, None)
+    return scores / den
+
+
+def _soft_factor_membership(
+    model: "scDEF",
+    layer_idx: int,
+    original_factor_idx: int,
+    layer_probs: np.ndarray,
+) -> Optional[np.ndarray]:
+    """Per-cell soft membership for one factor (length n_cells)."""
+    layer_name = model.layer_names[layer_idx]
+    factor_list = np.asarray(model.factor_lists[layer_idx], dtype=int)
+    slot_matches = np.where(factor_list == original_factor_idx)[0]
+    if slot_matches.size > 0:
+        return layer_probs[:, int(slot_matches[0])]
+    z_key = f"{layer_name}z"
+    if z_key not in model.pmeans:
+        return None
+    z = np.asarray(model.pmeans[z_key], dtype=float)
+    if original_factor_idx < 0 or original_factor_idx >= z.shape[1]:
+        return None
+    z_norm = z / (np.clip(z.sum(axis=1, keepdims=True), 1e-12, None))
+    return z_norm[:, original_factor_idx]
+
+
 def factor_diagnostics(
     model: "scDEF",
     recompute: bool = False,
@@ -396,10 +456,11 @@ def factor_diagnostics(
             factor subset used for clarity scores, even if the fit revision
             did not change.
         batch_key: optional key in ``model.adata.obs`` used to compute
-            per-factor batch entropy and batch purity on top-loaded cells.
-            For each layer, cells are assigned to the factor with maximal
-            variational ``z`` loading, and purity is defined as
-            ``1 - batch_entropy / log(n_batches)``.
+            per-factor batch metrics. ``batch_purity`` uses hard winner cells
+            (argmax variational ``z``). ``batch_purity_soft`` uses the batch
+            distribution of per-cell memberships from ``X_<layer>_probs``
+            (or row-normalized ``X_<layer>`` / posterior ``z`` if probs are
+            missing). Both are ``1 - entropy / log(n_batches)``.
         sensible_top_n_eff_parents_max: threshold used to classify
             sensible-top factors on the hierarchy walk.
         sensible_top_min_best_parent_prob: optional best-parent probability
@@ -514,6 +575,7 @@ def factor_diagnostics(
     factor_obs["global"] = False
     factor_obs["batch_entropy"] = np.nan
     factor_obs["batch_purity"] = np.nan
+    factor_obs["batch_purity_soft"] = np.nan
 
     if batch_key is not None:
         if batch_key not in model.adata.obs.columns:
@@ -536,6 +598,7 @@ def factor_diagnostics(
 
             z_means_full = np.asarray(model.local_params[1][0], dtype=float)
             offsets = np.cumsum([0] + [int(s) for s in model.layer_sizes]).astype(int)
+            layer_probs_cache: Dict[int, np.ndarray] = {}
 
             for factor_name, row in factor_obs.iterrows():
                 if "child_layer" in factor_obs.columns:
@@ -579,16 +642,36 @@ def factor_diagnostics(
                 counts = np.bincount(selected_batches, minlength=n_batches).astype(
                     float
                 )
-                probs = counts / counts.sum()
-                probs = probs[probs > 0.0]
-                entropy = float(-np.sum(probs * np.log(probs)))
-                max_entropy = float(np.log(n_batches))
-                purity = 1.0 - entropy / max_entropy if max_entropy > 0 else np.nan
-
+                entropy, purity = _entropy_purity_from_batch_masses(counts, n_batches)
                 factor_obs.at[row.name, "batch_entropy"] = entropy
-                factor_obs.at[row.name, "batch_purity"] = float(
-                    np.clip(purity, 0.0, 1.0)
-                )
+                factor_obs.at[row.name, "batch_purity"] = purity
+
+                if layer_idx not in layer_probs_cache:
+                    try:
+                        layer_probs_cache[layer_idx] = _get_layer_cell_probs(
+                            model, layer_idx
+                        )
+                    except KeyError:
+                        layer_probs_cache[layer_idx] = None
+                layer_probs = layer_probs_cache[layer_idx]
+                if layer_probs is not None:
+                    membership = _soft_factor_membership(
+                        model,
+                        layer_idx,
+                        original_factor_idx,
+                        layer_probs,
+                    )
+                    if membership is not None:
+                        valid = batch_idx >= 0
+                        soft_masses = np.bincount(
+                            batch_idx[valid],
+                            weights=membership[valid],
+                            minlength=n_batches,
+                        ).astype(float)
+                        _, purity_soft = _entropy_purity_from_batch_masses(
+                            soft_masses, n_batches
+                        )
+                        factor_obs.at[row.name, "batch_purity_soft"] = purity_soft
 
         if "factor_diagnostics" not in model.adata.uns:
             model.adata.uns["factor_diagnostics"] = {}
@@ -1657,6 +1740,8 @@ def set_technical_factors(
     clarity_min: Optional[float] = 0.5,
     n_eff_parents_max: float = 1.5,
     local_l0_scores: bool = False,
+    batch_purity_max: Optional[float] = None,
+    batch_purity_soft_max: Optional[float] = None,
     min_cells_lower: Optional[float] = 0.0,
 ) -> None:
     """Set the technical factors of the model.
@@ -1679,6 +1764,11 @@ def set_technical_factors(
             (default ``1.5``; matches ``scd.pl.factor_diagnostics``).
         local_l0_scores: if True, biological factors are chosen using ``n_eff_parents``
             and ``n_eff_parents_max`` instead of lineage averages / ``clarity_min``.
+        batch_purity_max: if set, layer-0 factors with hard ``batch_purity`` above
+            this value are not biological (requires
+            ``factor_diagnostics(..., batch_key=...)``).
+        batch_purity_soft_max: if set, same for soft ``batch_purity_soft``.
+            Same semantics as ``filter_factors`` / ``factor_diagnostics`` plot.
         min_cells_lower: minimum cell-count criterion for keeping biological
             layer-0 factors when ``factors`` is None. Same semantics as
             ``scDEF.filter_factors(..., min_cells_lower=...)``.
@@ -1717,6 +1807,8 @@ def set_technical_factors(
                 clarity_min=clarity_min,
                 n_eff_parents_max=n_eff_parents_max,
                 local_l0_scores=local_l0_scores,
+                batch_purity_max=batch_purity_max,
+                batch_purity_soft_max=batch_purity_soft_max,
                 min_cells=min_cells_lower,
             )
         )
