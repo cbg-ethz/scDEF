@@ -1098,7 +1098,13 @@ def umap(
         n_rows = 1
 
     fig, axes = plt.subplots(n_rows, n_layers, figsize=figsize)
-    for layer in layers:
+    axes = np.atleast_2d(axes)
+    if n_rows == 1 and n_layers > 1:
+        axes = axes.reshape(1, n_layers)
+    elif n_layers == 1 and n_rows > 1:
+        axes = axes.reshape(n_rows, 1)
+
+    for col, layer in enumerate(layers):
         layer_name = model.layer_names[layer]
         umap_key = f"X_umap_{layer_name}"
         if umap_key not in model.adata.obsm:
@@ -1109,14 +1115,10 @@ def umap(
         # Temporarily set X_umap so sc.pl.umap can find it
         model.adata.obsm["X_umap"] = model.adata.obsm[umap_key]
 
+        is_last_col = col == n_layers - 1
         for row in range(len(color)):
-            if n_rows > 1:
-                ax = axes[row, layer]
-            else:
-                ax = axes[layer]
-            legend_loc = None
-            if layer == n_layers - 1:
-                legend_loc = "right margin"
+            ax = axes[row, col]
+            legend_loc = "right margin" if is_last_col else None
             ax = sc.pl.umap(
                 model.adata,
                 color=[color[row]],
@@ -1130,7 +1132,7 @@ def umap(
             else:
                 ax.set_title("")
 
-            if layer == n_layers - 1:
+            if is_last_col:
                 leg = ax.legend(
                     loc="center left",
                     bbox_to_anchor=(1, 0.5),
