@@ -1076,6 +1076,75 @@ class scDEF(object):
             )
         return init_brd, init_ard
 
+    def _refit_old_layer_sizes_for_w(
+        self,
+        old_layer_sizes_full: Sequence[int],
+        new_layer_sizes: Sequence[int],
+        init_w: Sequence[np.ndarray],
+        old_keep: Optional[Sequence[int]],
+        n_original: int,
+    ) -> List[int]:
+        """Map each warm-started ``W`` layer to its pre-refit width."""
+        n_w = len(init_w)
+        if old_keep is not None and len(old_keep) > 0 and len(old_keep) != n_original:
+            if len(old_keep) != n_w:
+                raise ValueError(
+                    f"init_w has {n_w} layers but old_keep has {len(old_keep)} entries."
+                )
+            return [int(old_layer_sizes_full[int(i)]) for i in old_keep]
+        n_old = len(old_layer_sizes_full)
+        if n_w <= n_old:
+            return [int(old_layer_sizes_full[j]) for j in range(n_w)]
+        out = [int(old_layer_sizes_full[j]) for j in range(n_old)]
+        out.extend(int(new_layer_sizes[j]) for j in range(n_old, n_w))
+        return out
+
+    def _rescale_w_inits_for_layer_sizes(
+        self,
+        old_layer_sizes: Sequence[int],
+        new_layer_sizes: Sequence[int],
+        init_w: Optional[Sequence[np.ndarray]],
+    ) -> Optional[List[np.ndarray]]:
+        """Scale warm-started ``W`` when refit layer widths change.
+
+        Matches the cold-start convention ``W ∝ 1 / K`` by multiplying each layer's
+        init ``W`` by ``old_K / new_K`` (see ``init_var_params`` prior means).
+        """
+        if init_w is None:
+            return None
+        old_sizes = [max(int(x), 1) for x in old_layer_sizes]
+        new_sizes = [max(int(x), 1) for x in new_layer_sizes]
+        if len(old_sizes) != len(new_sizes):
+            raise ValueError(
+                f"old_layer_sizes length ({len(old_sizes)}) must match "
+                f"new_layer_sizes ({len(new_sizes)}) for W rescaling."
+            )
+        if len(init_w) != len(old_sizes):
+            raise ValueError(
+                f"init_w has {len(init_w)} layers but expected {len(old_sizes)}."
+            )
+        scaled: List[np.ndarray] = []
+        for layer_idx, w in enumerate(init_w):
+            factor = old_sizes[layer_idx] / new_sizes[layer_idx]
+            w_arr = (np.asarray(w, dtype=np.float32) * np.float32(factor)).astype(
+                np.float32
+            )
+            scaled.append(w_arr)
+            if factor != 1.0:
+                layer_label = (
+                    self.layer_names[layer_idx]
+                    if layer_idx < len(self.layer_names)
+                    else f"L{layer_idx}"
+                )
+                self.logger.info(
+                    "Refit: scaled %s W warm start by %.4g (layer size %s -> %s).",
+                    layer_label,
+                    factor,
+                    old_sizes[layer_idx],
+                    new_sizes[layer_idx],
+                )
+        return scaled
+
     def _build_collapsed_refit_init(
         self,
         old_keep: Sequence[int],
@@ -1767,7 +1836,7 @@ class scDEF(object):
 
             w_init_layer = _get_layer_init(init_w, layer_idx)
             if w_init_layer is not None and not nmf_init:
-                m = jnp.clip(jnp.asarray(w_init_layer, dtype=jnp.float32), 1e-8, 1e8)
+                m = jnp.clip(jnp.asarray(w_init_layer, dtype=jnp.float32), 1e-3, 1e8)
                 v = m**2 / 100.0
             else:
                 m = 1.0 / self.layer_sizes[layer_idx] * jnp.ones((in_layer, out_layer))
@@ -2466,6 +2535,7 @@ class scDEF(object):
         refit_top_factors: Optional[Sequence[str]] = None,
         refit_rescale_relevance: bool = True,
         refit_relevance_max_ratio: float = 50.0,
+        refit_rescale_w_by_layer_sizes: bool = True,
         **kwargs: Any,
     ) -> None:
         """Fit scDEF, warm-starting from a previous fit when available.
@@ -2514,6 +2584,9 @@ class scDEF(object):
                 (optionally capped by ``refit_relevance_max_ratio``).
             refit_relevance_max_ratio: max/min ratio across factors after relevance
                 rescaling on refit. Set to ``None`` to disable the ratio cap.
+            refit_rescale_w_by_layer_sizes: on refit only, multiply each warm-started
+                ``W`` layer by ``old_K / new_K`` so loadings match the ``1 / K`` cold-start
+                convention when layer widths change (for example after ``filter_factors``).
             **kwargs: additional keyword arguments.
 
             On the first call, parameters are initialized from priors (or NMF if enabled).
@@ -2525,14 +2598,17 @@ class scDEF(object):
         marginalize_alpha_for_main_fit = bool(self.marginalize_alpha)
         self.root_epochs = int(root_epochs)
         is_refit = bool(getattr(self, "_has_fit", False))
+        refit_old_keep: Optional[List[int]] = None
         if is_refit:
             # Keep original kept indices before resizing; update_model_size resets factor_lists.
+            old_layer_sizes = np.array(self.layer_sizes).copy()
             old_factor_lists = [np.array(f).copy() for f in self.factor_lists]
             layer_sizes = [len(factors) for factors in old_factor_lists]
             old_layer_names = list(self.layer_names)
             old_factor_names = [list(names) for names in self.factor_names]
             n_original = len(layer_sizes)
             old_keep = list(range(n_original))
+            refit_old_keep = old_keep
             if refit_top_factors is not None:
                 if refit_top_layer is not None:
                     raise ValueError(
@@ -2551,6 +2627,7 @@ class scDEF(object):
                     layer_names=old_layer_names,
                 )
                 old_keep = []
+                refit_old_keep = []
                 self.logger.info(
                     "Refit: using %s sensible top factors as the top non-root layer.",
                     len(refit_top_factors),
@@ -2578,6 +2655,7 @@ class scDEF(object):
                 if has_root and (n_original - 1) not in old_keep:
                     old_keep.append(n_original - 1)
                 layer_sizes = [layer_sizes[i] for i in old_keep]
+                refit_old_keep = old_keep
                 self.logger.info(
                     "Refit: using %s as the top non-root layer (old_keep=%s).",
                     old_layer_names[top_layer_idx],
@@ -2614,6 +2692,7 @@ class scDEF(object):
                         n_before_sanitize - len(old_keep),
                         old_keep,
                     )
+                refit_old_keep = old_keep
                 hierarchy_changed = len(old_keep) != n_original or old_keep != list(
                     range(n_original)
                 )
@@ -2663,6 +2742,23 @@ class scDEF(object):
                 refit_rescale_relevance=refit_rescale_relevance,
                 refit_relevance_max_ratio=refit_relevance_max_ratio,
             )
+            if (
+                refit_rescale_w_by_layer_sizes
+                and init_w is not None
+                and len(init_w) > 0
+            ):
+                old_sizes_for_w = self._refit_old_layer_sizes_for_w(
+                    old_layer_sizes,
+                    self.layer_sizes,
+                    init_w,
+                    refit_old_keep,
+                    n_original,
+                )
+                init_w = self._rescale_w_inits_for_layer_sizes(
+                    old_sizes_for_w,
+                    self.layer_sizes,
+                    init_w,
+                )
         self.init_var_params(
             init_budgets=init_budgets,
             init_alpha=init_alpha,
