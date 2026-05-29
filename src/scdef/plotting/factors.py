@@ -1082,11 +1082,7 @@ def umap(
         show: whether to show the plot
     """
     if layers is None:
-        layers = [
-            i
-            for i in range(model.n_layers - 1, -1, -1)
-            if len(model.factor_lists[i]) > 1
-        ]
+        layers = [i for i in range(model.n_layers) if len(model.factor_lists[i]) > 1]
 
     n_layers = len(layers)
 
