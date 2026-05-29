@@ -3891,75 +3891,24 @@ class scDEF(object):
         """
         term_names = np.array(self.adata.var_names)
 
-        term_scores_shape = self.global_params[2 + 0][0][self.factor_lists[0]]
-        term_scores_rate = np.exp(self.global_params[2 + 0][1][self.factor_lists[0]])
-        rng, sample_rng = random.split(rng)
-        term_scores_sample = lognormal_sample(
-            sample_rng, term_scores_shape, term_scores_rate
-        )
-
-        if layer_idx > 0:
-            term_scores_shape = self.global_params[2 + layer_idx][0][
-                self.factor_lists[layer_idx]
-            ][:, self.factor_lists[layer_idx - 1]]
-
-            term_scores_rate = np.exp(
-                self.global_params[2 + layer_idx][1][self.factor_lists[layer_idx]][
-                    :, self.factor_lists[layer_idx - 1]
-                ]
-            )
-            rng, sample_rng = random.split(rng)
-            term_scores_sample = lognormal_sample(
-                sample_rng, term_scores_shape, term_scores_rate
-            )
-
-            for layer in range(layer_idx - 1, 0, -1):
-                lower_mat_shape = self.global_params[2 + layer][0][
-                    self.factor_lists[layer]
-                ][:, self.factor_lists[layer - 1]]
-
-                lower_mat_rate = np.exp(
-                    self.global_params[2 + layer][1][self.factor_lists[layer]][
-                        :, self.factor_lists[layer - 1]
-                    ]
-                )
-                rng, sample_rng = random.split(rng)
-                lower_mat_sample = lognormal_sample(
-                    sample_rng, lower_mat_shape, lower_mat_rate
-                )
-                term_scores_sample = term_scores_sample.dot(lower_mat_sample)
-
-            from scdef.tools.factor import (
-                _filter_l0_factor_columns,
-                _filter_l0_factor_rows,
-                _resolve_signature_drop_factors,
-            )
-
-            drop_factors = _resolve_signature_drop_factors(self, None)
+        if layer_idx == 0:
             l0_rows = np.asarray(self.factor_lists[0], dtype=int)
-            lower_term_scores_shape = self.global_params[2 + 0][0][l0_rows]
-            lower_term_scores_rate = np.exp(self.global_params[2 + 0][1][l0_rows])
+            w0_shape = self.global_params[2 + 0][0][l0_rows]
+            w0_rate = np.exp(self.global_params[2 + 0][1][l0_rows])
             rng, sample_rng = random.split(rng)
-            lower_term_scores_sample = lognormal_sample(
-                sample_rng, lower_term_scores_shape, lower_term_scores_rate
-            )
-            lower_term_scores_sample = _filter_l0_factor_rows(
-                self, lower_term_scores_sample, drop_factors
-            )
-            if layer_idx > 0 and term_scores_sample.shape[1] == len(
-                self.factor_names[0]
-            ):
-                term_scores_sample = _filter_l0_factor_columns(
-                    self, term_scores_sample, drop_factors
-                )
+            term_scores_sample = lognormal_sample(sample_rng, w0_shape, w0_rate)
+        else:
+            from scdef.tools.factor import _hierarchy_gene_scores_draw
 
-            term_scores_sample = term_scores_sample.dot(lower_term_scores_sample)
+            scores, rng = _hierarchy_gene_scores_draw(
+                self, rng, max_layer_idx=layer_idx
+            )
+            term_scores_sample = scores[layer_idx]
 
         top_terms_idx = (term_scores_sample[factor_idx, :]).argsort()[::-1][:top_genes]
         top_terms = term_names[top_terms_idx].tolist()
-        top_scores = term_scores_sample[factor_idx, :].tolist()
-
         if return_scores:
+            top_scores = np.asarray(term_scores_sample[factor_idx, :], dtype=float)
             return top_terms, top_scores
         return top_terms
 

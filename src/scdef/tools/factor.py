@@ -19,6 +19,7 @@ from typing import (
     TYPE_CHECKING,
     Literal,
     Mapping,
+    Any,
 )
 
 if TYPE_CHECKING:
@@ -216,6 +217,151 @@ def _get_layer_term_means(
     return term_scores.dot(w0)
 
 
+def _hierarchy_gene_scores_draw(
+    model: "scDEF",
+    rng: Any,
+    max_layer_idx: Optional[int] = None,
+    drop_factors: Optional[Sequence[str]] = None,
+) -> Tuple[Dict[int, np.ndarray], Any]:
+    """Draw one hierarchical posterior sample of gene scores for upper layers.
+
+    Samples each ``W`` matrix once and propagates down to genes. Returns a
+    mapping ``layer_idx -> (n_factors, n_genes)`` for layers ``1..max_layer_idx``.
+    """
+    from jax import random
+
+    from scdef.utils.jax_utils import lognormal_sample
+
+    drop_factors = _resolve_signature_drop_factors(model, drop_factors)
+    max_layer = model.n_layers - 1 if max_layer_idx is None else int(max_layer_idx)
+    if max_layer <= 0:
+        return {}, rng
+
+    l0_rows = np.asarray(model.factor_lists[0], dtype=int)
+    w0_shape = model.global_params[2 + 0][0][l0_rows]
+    w0_rate = np.exp(model.global_params[2 + 0][1][l0_rows])
+    rng, sample_rng = random.split(rng)
+    w0 = lognormal_sample(sample_rng, w0_shape, w0_rate)
+    w0 = _filter_l0_factor_rows(model, w0, drop_factors)
+
+    scores: Dict[int, np.ndarray] = {}
+    path_to_l0: Optional[np.ndarray] = None
+
+    for layer_idx in range(1, max_layer + 1):
+        kept = np.asarray(model.factor_lists[layer_idx], dtype=int)
+        kept_prev = np.asarray(model.factor_lists[layer_idx - 1], dtype=int)
+        w_shape = model.global_params[2 + layer_idx][0][kept][:, kept_prev]
+        w_rate = np.exp(model.global_params[2 + layer_idx][1][kept][:, kept_prev])
+        rng, sample_rng = random.split(rng)
+        w_layer = lognormal_sample(sample_rng, w_shape, w_rate)
+
+        if path_to_l0 is None:
+            path_to_l0 = w_layer
+        else:
+            path_to_l0 = w_layer.dot(path_to_l0)
+
+        gene_scores = path_to_l0
+        if gene_scores.shape[1] == len(model.factor_names[0]):
+            gene_scores = _filter_l0_factor_columns(model, gene_scores, drop_factors)
+        scores[layer_idx] = np.asarray(gene_scores.dot(w0), dtype=float)
+
+    return scores, rng
+
+
+def _collect_hierarchy_mc_scores(
+    model: "scDEF",
+    mc_samples: int,
+    random_seed: int,
+    max_layer_idx: Optional[int] = None,
+) -> Dict[int, np.ndarray]:
+    """Monte Carlo gene-score tensors shared across factors and upper layers.
+
+    Returns ``layer_idx -> (mc_samples, n_factors, n_genes)`` for each upper
+    layer included in the draw.
+    """
+    from jax import random
+
+    base_rng = random.PRNGKey(int(random_seed))
+    by_layer: Dict[int, List[np.ndarray]] = {}
+    for s_idx in range(int(mc_samples)):
+        rng = random.fold_in(base_rng, s_idx)
+        scores, _ = _hierarchy_gene_scores_draw(model, rng, max_layer_idx=max_layer_idx)
+        for layer_idx, mat in scores.items():
+            by_layer.setdefault(layer_idx, []).append(mat)
+    return {layer_idx: np.stack(mats, axis=0) for layer_idx, mats in by_layer.items()}
+
+
+def _confident_signatures_from_mc_scores(
+    model: "scDEF",
+    layer_idx: int,
+    mc_scores: np.ndarray,
+    confidence_threshold: float,
+    tau_quantile: float,
+    min_effect: Optional[float],
+    max_genes: Optional[int],
+    return_confidences: bool,
+) -> Union[Dict[str, List[str]], Tuple[Dict[str, List[str]], Dict[str, np.ndarray]]]:
+    """Build confident signatures from precomputed Monte Carlo gene scores."""
+    term_names = np.asarray(model.adata.var_names)
+    term_means = _get_layer_term_means(model, layer_idx)
+    signatures: Dict[str, List[str]] = {}
+    signature_confidences: Dict[str, np.ndarray] = {}
+
+    for factor_idx, factor_name in enumerate(model.factor_names[layer_idx]):
+        mu = term_means[factor_idx]
+        tau = float(np.quantile(mu, tau_quantile))
+        sample_arr = np.asarray(mc_scores[:, factor_idx, :], dtype=float)
+        confidences = np.mean(sample_arr > tau, axis=0)
+
+        keep_mask = confidences >= confidence_threshold
+        if min_effect is not None:
+            keep_mask = keep_mask & (mu >= min_effect)
+        keep_idx = np.where(keep_mask)[0]
+
+        if len(keep_idx) > 0:
+            combined_scores = _confidence_mean_score(
+                confidences[keep_idx], mu[keep_idx]
+            )
+            order = np.argsort(combined_scores)[::-1]
+            keep_idx = keep_idx[order]
+        if max_genes is not None:
+            keep_idx = keep_idx[: int(max_genes)]
+
+        signatures[factor_name] = term_names[keep_idx].tolist()
+        signature_confidences[factor_name] = confidences[keep_idx]
+
+    if return_confidences:
+        return signatures, signature_confidences
+    return signatures
+
+
+def _signature_jaccard_from_mc_scores(
+    model: "scDEF",
+    layer_idx: int,
+    signatures: Dict[str, List[str]],
+    combined_scores: Dict[str, Sequence[float]],
+    mc_scores: np.ndarray,
+) -> Dict[str, float]:
+    """Weighted signature Jaccard from the same Monte Carlo draws as confidences."""
+    term_names = np.asarray(model.adata.var_names)
+    out: Dict[str, float] = {}
+    for factor_idx, factor_name in enumerate(model.factor_names[layer_idx]):
+        reference = list(signatures.get(factor_name, []))
+        k = len(reference)
+        if k == 0:
+            out[factor_name] = float("nan")
+            continue
+        weights = list(combined_scores.get(factor_name, []))[:k]
+        jaccs: List[float] = []
+        for s_idx in range(mc_scores.shape[0]):
+            scores = np.asarray(mc_scores[s_idx, factor_idx, :], dtype=float)
+            top_idx = np.argsort(scores)[::-1][:k]
+            draw_genes = term_names[top_idx].tolist()
+            jaccs.append(_weighted_signature_jaccard(reference, weights, draw_genes))
+        out[factor_name] = float(np.mean(jaccs))
+    return out
+
+
 def _get_confident_signatures_cache(model: "scDEF") -> Dict[str, object]:
     cache = model.adata.uns.get("confident_signatures", None)
     if cache is None:
@@ -322,18 +468,37 @@ def set_confident_signatures(
     gene_to_idx = {g: i for i, g in enumerate(term_names)}
     signatures_flat: Dict[str, List[str]] = {}
 
-    for layer_idx in range(model.n_layers):
-        sigs, confs = get_confident_signatures(
-            model,
-            layer_idx=layer_idx,
-            confidence_threshold=confidence_threshold,
-            tau_quantile=tau_quantile,
-            min_effect=min_effect,
-            max_genes=None,
-            mc_samples=mc_samples,
-            random_seed=random_seed,
-            return_confidences=True,
+    upper_mc_scores: Optional[Dict[int, np.ndarray]] = None
+    if model.n_layers > 1:
+        upper_mc_scores = _collect_hierarchy_mc_scores(
+            model, mc_samples=mc_samples, random_seed=random_seed
         )
+
+    for layer_idx in range(model.n_layers):
+        if layer_idx == 0:
+            sigs, confs = get_confident_signatures(
+                model,
+                layer_idx=layer_idx,
+                confidence_threshold=confidence_threshold,
+                tau_quantile=tau_quantile,
+                min_effect=min_effect,
+                max_genes=None,
+                mc_samples=mc_samples,
+                random_seed=random_seed,
+                return_confidences=True,
+            )
+        else:
+            layer_mc = upper_mc_scores[layer_idx]
+            sigs, confs = _confident_signatures_from_mc_scores(
+                model,
+                layer_idx=layer_idx,
+                mc_scores=layer_mc,
+                confidence_threshold=confidence_threshold,
+                tau_quantile=tau_quantile,
+                min_effect=min_effect,
+                max_genes=None,
+                return_confidences=True,
+            )
         term_means = _get_layer_term_means(model, layer_idx)
         layer_combined_scores: Dict[str, List[float]] = {}
         for factor_idx, factor_name in enumerate(model.factor_names[layer_idx]):
@@ -355,14 +520,23 @@ def set_confident_signatures(
             layer_combined_scores[factor_name] = combined_arr.tolist()
             signatures_flat[factor_name] = genes
 
-        signature_jaccard = _compute_signature_jaccard_confidences(
-            model,
-            layer_idx=layer_idx,
-            signatures=sigs,
-            combined_scores=layer_combined_scores,
-            mc_samples=mc_samples,
-            random_seed=random_seed,
-        )
+        if layer_idx == 0:
+            signature_jaccard = _compute_signature_jaccard_confidences(
+                model,
+                layer_idx=layer_idx,
+                signatures=sigs,
+                combined_scores=layer_combined_scores,
+                mc_samples=mc_samples,
+                random_seed=random_seed,
+            )
+        else:
+            signature_jaccard = _signature_jaccard_from_mc_scores(
+                model,
+                layer_idx=layer_idx,
+                signatures=sigs,
+                combined_scores=layer_combined_scores,
+                mc_scores=upper_mc_scores[layer_idx],
+            )
 
         cache["by_layer"][str(int(layer_idx))] = {
             "layer_name": model.layer_names[layer_idx],
@@ -1559,8 +1733,6 @@ def get_confident_signatures(
             signatures[factor_name] = term_names[keep_idx].tolist()
             signature_confidences[factor_name] = confidences[keep_idx]
     else:
-        from jax import random
-
         if hasattr(model, "logger"):
             model.logger.info(
                 "Estimating confident signatures for layer %s with Monte Carlo "
@@ -1568,45 +1740,22 @@ def get_confident_signatures(
                 layer_idx,
                 mc_samples,
             )
-        term_means = _get_layer_term_means(model, layer_idx)
-        base_rng = random.PRNGKey(int(random_seed))
-        n_genes = len(term_names)
-
-        for factor_idx, factor_name in enumerate(model.factor_names[layer_idx]):
-            mu = term_means[factor_idx]
-            tau = float(np.quantile(mu, tau_quantile))
-
-            samples = []
-            for s_idx in range(int(mc_samples)):
-                rng = random.fold_in(base_rng, factor_idx * int(mc_samples) + s_idx)
-                _, sample_scores = model.get_signature_sample(
-                    rng,
-                    factor_idx=factor_idx,
-                    layer_idx=layer_idx,
-                    top_genes=n_genes,
-                    return_scores=True,
-                )
-                samples.append(np.asarray(sample_scores, dtype=float))
-            sample_arr = np.vstack(samples)
-            confidences = np.mean(sample_arr > tau, axis=0)
-
-            keep_mask = confidences >= confidence_threshold
-            if min_effect is not None:
-                keep_mask = keep_mask & (mu >= min_effect)
-            keep_idx = np.where(keep_mask)[0]
-
-            # Rank by a DE-style combined score of confidence and mean loading.
-            if len(keep_idx) > 0:
-                combined_scores = _confidence_mean_score(
-                    confidences[keep_idx], mu[keep_idx]
-                )
-                order = np.argsort(combined_scores)[::-1]
-                keep_idx = keep_idx[order]
-            if max_genes is not None:
-                keep_idx = keep_idx[: int(max_genes)]
-
-            signatures[factor_name] = term_names[keep_idx].tolist()
-            signature_confidences[factor_name] = confidences[keep_idx]
+        mc_by_layer = _collect_hierarchy_mc_scores(
+            model,
+            mc_samples=mc_samples,
+            random_seed=random_seed,
+            max_layer_idx=layer_idx,
+        )
+        return _confident_signatures_from_mc_scores(
+            model,
+            layer_idx=layer_idx,
+            mc_scores=mc_by_layer[layer_idx],
+            confidence_threshold=confidence_threshold,
+            tau_quantile=tau_quantile,
+            min_effect=min_effect,
+            max_genes=max_genes,
+            return_confidences=return_confidences,
+        )
 
     if return_confidences:
         return signatures, signature_confidences
