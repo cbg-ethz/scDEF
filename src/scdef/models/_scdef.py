@@ -2749,14 +2749,14 @@ class scDEF(object):
             ):
                 old_sizes_for_w = self._refit_old_layer_sizes_for_w(
                     old_layer_sizes,
-                    self.layer_sizes,
+                    layer_sizes,
                     init_w,
                     refit_old_keep,
                     n_original,
                 )
                 init_w = self._rescale_w_inits_for_layer_sizes(
                     old_sizes_for_w,
-                    self.layer_sizes,
+                    layer_sizes,
                     init_w,
                 )
         self.init_var_params(
