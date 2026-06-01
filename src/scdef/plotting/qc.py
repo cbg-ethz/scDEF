@@ -694,8 +694,33 @@ def factor_diagnostics(
             batch_color = batch_purity_soft
             cbar_label = "Batch purity (soft)"
             cbar_thresh = float(batch_purity_soft_max)
-        im = ax.scatter(x, y, c=batch_color, s=sizes, cmap="viridis")
         cbar_values = batch_color
+        # Zero-cell factors have NaN batch purity; near-zero ARD can yield s<=0.
+        # Use finite color/size defaults so every factor is drawn and autoscales.
+        min_marker_size = 3.0
+        sizes = np.asarray(sizes, dtype=float)
+        sizes = np.where(np.isfinite(sizes) & (sizes > 0), sizes, min_marker_size)
+        finite_color = np.isfinite(batch_color)
+        if np.any(finite_color):
+            cmin = float(np.min(batch_color[finite_color]))
+            cmax = float(np.max(batch_color[finite_color]))
+        else:
+            cmin, cmax = 0.0, 1.0
+        if cmax <= cmin:
+            cmax = cmin + 1.0
+        batch_cmap = plt.get_cmap("viridis").copy()
+        batch_cmap.set_under(color="white")
+        under_val = cmin - (cmax - cmin) - 1e-6
+        batch_color_plot = np.where(finite_color, batch_color, under_val)
+        im = ax.scatter(
+            x,
+            y,
+            c=batch_color_plot,
+            s=sizes,
+            cmap=batch_cmap,
+            vmin=cmin,
+            vmax=cmax,
+        )
 
     if annotate_factors:
         for i in range(len(labels)):
