@@ -3772,28 +3772,15 @@ class scDEF(object):
                 self.pmeans[f"{layer_name}z"][:, self.factor_lists[idx]]
             )
             assignments = np.argmax(self.adata.obsm[f"X_{layer_name}"], axis=1)
-            self.adata.obs[f"{layer_name}"] = [
-                self.factor_names[idx][a] for a in assignments
-            ]
-            # Make sure factor colors in UMAP respect the palette
-            factor_colors = [
+            factor_names = list(self.factor_names[idx])
+            self.adata.obs[f"{layer_name}"] = pd.Categorical(
+                [factor_names[a] for a in assignments],
+                categories=factor_names,
+            )
+            self.adata.uns[f"{layer_name}_colors"] = [
                 matplotlib.colors.to_hex(self.layer_colorpalettes[idx][i])
-                for i in range(len(self.factor_lists[idx]))
+                for i in range(len(factor_names))
             ]
-
-            if layer_name == "marker":
-                self.adata.obs[f"{layer_name}"] = pd.Categorical(
-                    self.adata.obs[f"{layer_name}"]
-                )
-                sorted_factors = self.adata.obs_vector(f"{layer_name}")
-                sorted_colors = []
-                for fac in sorted_factors.categories:
-                    pos = np.where(np.array(self.factor_names[idx]) == fac)[0][0]
-                    col = factor_colors[pos]
-                    sorted_colors.append(col)
-                    self.adata.uns[f"{layer_name}_colors"] = sorted_colors
-            else:
-                self.adata.uns[f"{layer_name}_colors"] = factor_colors
 
             scores_names = [f + "_score" for f in self.factor_names[idx]]
             df = pd.DataFrame(
