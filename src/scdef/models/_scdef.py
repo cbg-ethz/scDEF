@@ -3055,6 +3055,7 @@ class scDEF(object):
             "_factor_obs_upper_lists_fixed",
             "_factor_obs_fit_revision",
             "factor_obs",
+            "factor_obs_full",
             "factor_signatures",
             "confident_signatures",
             "obs_scores",
