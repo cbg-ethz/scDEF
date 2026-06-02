@@ -64,7 +64,7 @@ class iscDEF(scDEF):
         other_strength: prior concentration when penalizing marker genes on the wrong factor or on ``other`` rows.
         penalize_other: if True (default), typed factors penalize other groups' marker genes;
             ``other`` factors penalize all typed markers.
-        **kwargs: additional arguments passed to scDEF. ``hierarchy_fraction`` defaults to ``0.25``
+        **kwargs: additional arguments passed to scDEF. ``hierarchy_weight`` defaults to ``0.25``
             (scales coverage-derived ``alpha`` when ``set_alpha_from_cov=True``).
     """
 
@@ -135,7 +135,7 @@ class iscDEF(scDEF):
         self.set_layer_sizes()
 
         kwargs.pop("decay_factor", None)
-        kwargs.setdefault("hierarchy_fraction", 0.25)
+        kwargs.setdefault("hierarchy_weight", 0.25)
         super(iscDEF, self).__init__(
             adata,
             layer_sizes=self.layer_sizes,
