@@ -1067,12 +1067,16 @@ def umap(
 ) -> None:
     """Plot pre-computed UMAPs for different layers.
 
-    UMAP embeddings must have been computed first via ``scdef.tl.umap``.
+    UMAP embeddings must have been computed first via ``scdef.tl.umap``. Each
+    panel uses the layer-specific embedding ``X_umap_{layer_name}`` via
+    scanpy's ``basis`` argument, leaving ``adata.obsm['X_umap']`` unchanged.
+    When ``layers`` is None, panels follow ascending layer index (L0, L1, ...);
+    otherwise the given ``layers`` order is used.
 
     Args:
         model: scDEF model instance
         color: color key(s) to use for coloring
-        layers: which layers to plot
+        layers: which layers to plot, in panel order
         figsize: figure size
         fontsize: font size for labels
         legend_fontsize: legend font size
@@ -1083,6 +1087,8 @@ def umap(
     """
     if layers is None:
         layers = [i for i in range(model.n_layers) if len(model.factor_lists[i]) > 1]
+    else:
+        layers = list(layers)
 
     n_layers = len(layers)
 
@@ -1108,15 +1114,13 @@ def umap(
                 f"UMAP embedding '{umap_key}' not found in model.adata.obsm. "
                 f"Run scdef.tl.umap(model) first."
             )
-        # Temporarily set X_umap so sc.pl.umap can find it
-        model.adata.obsm["X_umap"] = model.adata.obsm[umap_key]
-
         is_last_col = col == n_layers - 1
         for row in range(len(color)):
             ax = axes[row, col]
             legend_loc = "right margin" if is_last_col else None
             ax = sc.pl.umap(
                 model.adata,
+                basis=f"umap_{layer_name}",
                 color=[color[row]],
                 frameon=False,
                 show=False,

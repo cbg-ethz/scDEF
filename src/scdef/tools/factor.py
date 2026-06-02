@@ -2391,6 +2391,57 @@ def gsea(
     return pd.concat(all_results, axis=0, ignore_index=True)
 
 
+_SCANPY_GRAPH_UNS_KEYS = ("neighbors", "umap")
+
+
+def _snapshot_scanpy_umap_obsm(adata) -> Optional[np.ndarray]:
+    """Copy ``adata.obsm['X_umap']`` if present, else ``None``."""
+    if "X_umap" not in adata.obsm:
+        return None
+    return np.asarray(adata.obsm["X_umap"], dtype=float).copy()
+
+
+def _restore_scanpy_umap_obsm(adata, snapshot: Optional[np.ndarray]) -> None:
+    """Restore or remove scanpy's shared ``X_umap`` slot."""
+    if snapshot is None:
+        if "X_umap" in adata.obsm:
+            del adata.obsm["X_umap"]
+    else:
+        adata.obsm["X_umap"] = snapshot
+
+
+def _snapshot_scanpy_graph_state(adata) -> Dict[str, Any]:
+    """Snapshot scanpy slots touched by ``pp.neighbors`` / ``tl.umap``."""
+    return {
+        "x_umap": _snapshot_scanpy_umap_obsm(adata),
+        "uns": {
+            key: copy.deepcopy(adata.uns[key])
+            for key in _SCANPY_GRAPH_UNS_KEYS
+            if key in adata.uns
+        },
+        "obsp_keys": list(adata.obsp.keys()),
+        "obsp": {key: adata.obsp[key].copy() for key in adata.obsp.keys()},
+    }
+
+
+def _restore_scanpy_graph_state(adata, snapshot: Dict[str, Any]) -> None:
+    """Restore ``X_umap``, ``uns['neighbors']`` / ``uns['umap']``, and ``obsp``."""
+    _restore_scanpy_umap_obsm(adata, snapshot["x_umap"])
+
+    snapshot_obsp_keys = set(snapshot["obsp_keys"])
+    for key in list(adata.obsp.keys()):
+        if key not in snapshot_obsp_keys:
+            del adata.obsp[key]
+    for key in snapshot_obsp_keys:
+        adata.obsp[key] = snapshot["obsp"][key]
+
+    for key in _SCANPY_GRAPH_UNS_KEYS:
+        if key in snapshot["uns"]:
+            adata.uns[key] = copy.deepcopy(snapshot["uns"][key])
+        elif key in adata.uns:
+            del adata.uns[key]
+
+
 def umap(
     model: "scDEF",
     layers: Optional[List[int]] = None,
@@ -2400,12 +2451,16 @@ def umap(
     """Compute UMAP embeddings for each scDEF layer.
 
     The resulting embeddings are stored in
-    ``model.adata.obsm[f"X_umap_{layer_name}"]`` for each layer.
+    ``model.adata.obsm[f"X_umap_{layer_name}"]`` for each layer. Any pre-existing
+    ``adata.obsm['X_umap']``, ``adata.uns['neighbors']``, ``adata.uns['umap']``,
+    and ``adata.obsp`` neighbor graphs are restored afterward (removed if absent),
+    so generic scanpy calls keep using the original embedding and graph.
 
     Args:
         model: scDEF model instance
-        layers: which layers to compute UMAPs for. If None, all layers
-            with more than one factor are used (in descending order).
+        layers: which layers to compute UMAPs for, in processing order. If
+            None, all layers with more than one factor are used, coarse-to-fine
+            (descending layer index).
         use_log: whether to use log-transformed cell-factor weights for
             the neighbor graph computation.
         metric: distance metric for neighbors computation.
@@ -2416,6 +2471,10 @@ def umap(
             for i in range(model.n_layers - 1, -1, -1)
             if len(model.factor_lists[i]) > 1
         ]
+    else:
+        layers = list(layers)
+
+    graph_snapshot = _snapshot_scanpy_graph_state(model.adata)
 
     for layer in layers:
         layer_name = model.layer_names[layer]
@@ -2434,6 +2493,8 @@ def umap(
         sc.tl.umap(model.adata)
         # Store under a layer-specific key
         model.adata.obsm[f"X_umap_{layer_name}"] = model.adata.obsm["X_umap"].copy()
+
+    _restore_scanpy_graph_state(model.adata, graph_snapshot)
 
 
 def multilayer_umap(
