@@ -270,9 +270,7 @@ class scDEF(object):
             if gs.shape[0] == 1:
                 profile = gs[0]
             else:
-                profile = np.exp(
-                    np.mean(np.log(np.clip(gs, 1e-6, None)), axis=0)
-                )
+                profile = np.exp(np.mean(np.log(np.clip(gs, 1e-6, None)), axis=0))
             profile = np.clip(profile, 1e-6, 1e6)
             return np.tile(profile[None, :], (n_batches, 1))
 
@@ -288,7 +286,9 @@ class scDEF(object):
                     f"model expects {n_batches}."
                 )
         else:
-            raise ValueError("init_gene_scale array must be 1d (n_genes) or 2d (n_batches, n_genes).")
+            raise ValueError(
+                "init_gene_scale array must be 1d (n_genes) or 2d (n_batches, n_genes)."
+            )
         if arr.shape[1] != n_genes:
             raise ValueError(
                 f"init_gene_scale array has {arr.shape[1]} genes but adata has {n_genes}."
