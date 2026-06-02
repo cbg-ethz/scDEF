@@ -1068,10 +1068,10 @@ def umap(
     """Plot pre-computed UMAPs for different layers.
 
     UMAP embeddings must have been computed first via ``scdef.tl.umap``. Each
-    panel uses the layer-specific embedding ``X_umap_{layer_name}`` via
-    scanpy's ``basis`` argument, leaving ``adata.obsm['X_umap']`` unchanged.
-    When ``layers`` is None, panels follow ascending layer index (L0, L1, ...);
-    otherwise the given ``layers`` order is used.
+    panel temporarily points ``adata.obsm['X_umap']`` at ``X_umap_{layer_name}``;
+    the original ``X_umap`` is restored afterward. When ``layers`` is None,
+    panels follow ascending layer index (L0, L1, ...); otherwise the given
+    ``layers`` order is used.
 
     Args:
         model: scDEF model instance
@@ -1085,11 +1085,14 @@ def umap(
         factor_subset: subset of factors to plot
         show: whether to show the plot
     """
+    from scdef.tools.factor import _restore_scanpy_umap_obsm, _snapshot_scanpy_umap_obsm
+
     if layers is None:
         layers = [i for i in range(model.n_layers) if len(model.factor_lists[i]) > 1]
     else:
         layers = list(layers)
 
+    umap_snapshot = _snapshot_scanpy_umap_obsm(model.adata)
     n_layers = len(layers)
 
     if not isinstance(color, list):
@@ -1118,9 +1121,9 @@ def umap(
         for row in range(len(color)):
             ax = axes[row, col]
             legend_loc = "right margin" if is_last_col else None
+            model.adata.obsm["X_umap"] = model.adata.obsm[umap_key]
             ax = sc.pl.umap(
                 model.adata,
-                basis=f"umap_{layer_name}",
                 color=[color[row]],
                 frameon=False,
                 show=False,
@@ -1143,6 +1146,8 @@ def umap(
                     ncols=n_legend_cols,
                 )
                 leg._legend_box.align = "left"
+
+    _restore_scanpy_umap_obsm(model.adata, umap_snapshot)
 
     if show:
         plt.show()
