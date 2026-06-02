@@ -1745,7 +1745,7 @@ class scDEF(object):
         init_brd=None,
         init_ard=None,
         nmf_init=False,
-        z_init_concentration=0.5,
+        z_init_concentration=0.05,
         **kwargs,
     ):
         rngs = random.split(random.PRNGKey(self.seed), self.n_layers)
@@ -2614,7 +2614,7 @@ class scDEF(object):
         self,
         nmf_init: bool = False,
         max_cells_init: int = 5000,
-        z_init_concentration: float = 0.5,
+        z_init_concentration: float = 0.05,
         n_rounds: int = 1,
         pretraining: bool = False,
         force_decay_factor: bool = False,
