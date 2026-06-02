@@ -339,6 +339,97 @@ class scDEF(object):
         return model
 
     @classmethod
+    def add_batch_correction(
+        cls,
+        reference_model: "scDEF",
+        batch_key: str,
+        *,
+        adata: Optional[AnnData] = None,
+        counts_layer: Optional[str] = None,
+        copy_cell_z: bool = True,
+        freeze_w: bool = True,
+        learn_budgets: bool = True,
+        n_epoch: int = 400,
+        lr: float = 0.05,
+        tolerance: float = 1e-4,
+        from_reference_kwargs: Optional[Mapping[str, Any]] = None,
+        **fit_kwargs: Any,
+    ) -> "scDEF":
+        """Warm-start a batch-corrected model from a fitted hierarchy.
+
+        Designed for the workflow:
+        1. Fit ``reference_model`` without a ``batch_key`` to learn the factor
+           hierarchy on the unbatched signal (optionally followed by
+           ``filter_factors``).
+        2. Call this method to construct a new model that shares the same
+           hierarchy (``factor_lists``, layer sizes, ``W``, ``BRD``, ``ARD``)
+           and re-fits it under per-batch gene-scale priors so batch effects
+           are absorbed by ``gene_scale``, not by the hierarchy.
+
+        Internally calls :meth:`from_reference` to build the new model with the
+        new ``batch_key`` and warm-started initial values, then runs
+        :meth:`fit` with ``freeze_w`` (defaulting to ``True``) so the carried
+        hierarchy cannot drift during the second pass.
+
+        Args:
+            reference_model: a fitted ``scDEF`` providing the hierarchy.
+            batch_key: column in ``adata.obs`` to use as the new batch
+                annotation.
+            adata: AnnData for the second pass. Defaults to
+                ``reference_model.adata``. Pass a different one if you want to
+                re-fit on a superset of cells; see :meth:`from_reference` for
+                gene-alignment requirements.
+            counts_layer: counts layer for the new ``adata``; passed through
+                to :meth:`from_reference`.
+            copy_cell_z: whether to copy per-cell ``z`` warm starts for cells
+                shared with ``reference_model.adata`` (passed through to
+                :meth:`from_reference`).
+            freeze_w: hold every per-layer ``W`` fixed at the warm-started
+                value during the second fit. Default ``True``: the whole point
+                is to keep the hierarchy stable while gene scales adapt.
+            learn_budgets: passed to :meth:`fit` as
+                ``learn_budgets_on_refit``. Default ``True``: per-batch
+                gene-scale and per-cell budgets must move for batch correction
+                to work.
+            n_epoch: epochs for the second-pass fit. Default 400 (shorter than
+                a fresh fit because the global structure is already in place).
+            lr: learning rate for the second-pass fit. Default 0.05 (gentler
+                than a fresh fit).
+            tolerance: early-stopping tolerance for the second-pass fit.
+            from_reference_kwargs: extra kwargs forwarded verbatim to
+                :meth:`from_reference` (e.g. ``reference_obs``,
+                ``query_obs``).
+            **fit_kwargs: additional kwargs forwarded to :meth:`fit`. Override
+                any of the defaults above (``n_epoch``, ``lr``, etc.) by
+                passing them here -- they take precedence.
+
+        Returns:
+            The new fitted model with batch correction applied.
+        """
+        target_adata = adata if adata is not None else reference_model.adata
+        from_reference_kwargs = dict(from_reference_kwargs or {})
+        from_reference_kwargs.setdefault("counts_layer", counts_layer)
+        from_reference_kwargs.setdefault("copy_cell_z", copy_cell_z)
+
+        model = cls.from_reference(
+            reference_model,
+            target_adata,
+            batch_key=batch_key,
+            **from_reference_kwargs,
+        )
+
+        merged_fit_kwargs: Dict[str, Any] = dict(
+            n_epoch=n_epoch,
+            lr=lr,
+            tolerance=tolerance,
+            learn_budgets_on_refit=learn_budgets,
+            freeze_w=freeze_w,
+        )
+        merged_fit_kwargs.update(fit_kwargs)
+        model.fit(**merged_fit_kwargs)
+        return model
+
+    @classmethod
     def from_hierarchy(
         cls,
         adata: AnnData,
@@ -2536,6 +2627,7 @@ class scDEF(object):
         refit_rescale_relevance: bool = True,
         refit_relevance_max_ratio: float = 50.0,
         refit_rescale_w_by_layer_sizes: bool = True,
+        freeze_w: bool = False,
         **kwargs: Any,
     ) -> None:
         """Fit scDEF, warm-starting from a previous fit when available.
@@ -2587,6 +2679,15 @@ class scDEF(object):
             refit_rescale_w_by_layer_sizes: on refit only, multiply each warm-started
                 ``W`` layer by ``old_K / new_K`` so loadings match the ``1 / K`` cold-start
                 convention when layer widths change (for example after ``filter_factors``).
+            freeze_w: if True, hold every per-layer ``W`` variational parameter
+                fixed at its current value during the entire fit. The lower-bottom
+                gene loadings (``L0W``) and all parent-child layer matrices stay
+                exactly where they are, while ``z``, cell budgets, gene budgets,
+                ``BRD``, ``ARD``, and ``alpha`` continue to learn freely. Useful
+                for warm-starting from a fitted hierarchy (e.g. the second pass
+                of :meth:`add_batch_correction`) when you want batch-specific
+                gene scales to absorb new variance without letting the hierarchy
+                drift. Default ``False``. Not applied during pretraining.
             **kwargs: additional keyword arguments.
 
             On the first call, parameters are initialized from priors (or NMF if enabled).
@@ -2599,6 +2700,7 @@ class scDEF(object):
         self.root_epochs = int(root_epochs)
         is_refit = bool(getattr(self, "_has_fit", False))
         refit_old_keep: Optional[List[int]] = None
+        pending_reference_init: Optional[Mapping[str, Any]] = None
         if is_refit:
             # Keep original kept indices before resizing; update_model_size resets factor_lists.
             old_layer_sizes = np.array(self.layer_sizes).copy()
@@ -2742,6 +2844,25 @@ class scDEF(object):
                 refit_rescale_relevance=refit_rescale_relevance,
                 refit_relevance_max_ratio=refit_relevance_max_ratio,
             )
+        elif pending_reference_init is not None:
+            # Warm-starts coming from ``from_reference`` carry the reference
+            # model's BRD/ARD posteriors verbatim. Those posteriors can have
+            # extreme dynamic ranges (e.g. ARD values spanning 6+ orders of
+            # magnitude after aggressive shrinkage). Without rescaling, the
+            # implied layer-0 W prior rate ``(1/brd)*(1/ard)*K`` becomes huge
+            # for low-ARD factors, while ``init_var_params`` floors warm-started
+            # W at 1e-3, breaking the equilibrium learned by the reference
+            # and producing extreme step-1 gradients that NaN out the fit.
+            # Reusing the refit rescaling caps ``max(brd)/min(brd)`` (and ARD)
+            # at ``refit_relevance_max_ratio`` while preserving the geometric
+            # mean, putting the prior rates back into a numerically safe range.
+            init_brd, init_ard = self._prepare_refit_relevance_inits(
+                init_brd,
+                init_ard,
+                refit_rescale_relevance=refit_rescale_relevance,
+                refit_relevance_max_ratio=refit_relevance_max_ratio,
+            )
+        if is_refit:
             if (
                 refit_rescale_w_by_layer_sizes
                 and init_w is not None
@@ -2817,6 +2938,7 @@ class scDEF(object):
             optimize_layers=optimize_layers,
             stop_gene_budgets=stop_gene_budgets,
             stop_cell_budgets=stop_cell_budgets,
+            freeze_w=freeze_w,
             **main_learn_kwargs,
         )
         self.qc_elbos = [np.asarray(x).copy() for x in self.elbos]
@@ -2840,6 +2962,7 @@ class scDEF(object):
             self._learn(
                 n_rounds=1,
                 optimize_layers=[self.n_layers - 1],
+                freeze_w=freeze_w,
                 **root_kwargs,
             )
             # Keep QC focused on the main optimization pass, not root-only updates.
@@ -3087,6 +3210,7 @@ class scDEF(object):
         entropy_min_annealing=1.0,
         entropy_max_annealing=5.0,
         entropy_optimizer_reset_threshold=0.25,
+        freeze_w=False,
         **kwargs,
     ):
         """Fit the model."""
@@ -3144,6 +3268,7 @@ class scDEF(object):
                     entropy_min_annealing=entropy_min_annealing,
                     entropy_max_annealing=entropy_max_annealing,
                     entropy_optimizer_reset_threshold=entropy_optimizer_reset_threshold,
+                    freeze_w=freeze_w,
                     **kwargs,
                 )
             return
@@ -3236,6 +3361,11 @@ class scDEF(object):
             local_params_new = clip_params(local_params_new)
             return value, local_params_new, local_opt_state_new
 
+        # Indices in `global_params` corresponding to the per-layer W matrices.
+        # Layout: [gene_scale, BRD, W_layer_0, ..., W_layer_{n-1}, ARD/wm, alpha].
+        w_param_start = 2
+        w_param_end = 2 + self.n_layers
+
         def global_update(
             X,
             indices,
@@ -3265,6 +3395,15 @@ class scDEF(object):
                 gradient, global_opt_state, global_params
             )
             global_params_new = optax.apply_updates(global_params, updates)
+            if freeze_w:
+                # Restore per-layer W variational params to their pre-update
+                # values. The Adam moments still accumulate from the non-zero
+                # W gradients, but they never affect the parameters because we
+                # snap each W slot back every step. Optimizer state is reset
+                # at the start of each `_learn` call, so this is contained.
+                global_params_new = list(global_params_new)
+                for i in range(w_param_start, w_param_end):
+                    global_params_new[i] = global_params[i]
             global_params_new = clip_params(global_params_new)
             return value, global_params_new, global_opt_state_new
 
