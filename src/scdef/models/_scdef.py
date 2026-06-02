@@ -347,7 +347,7 @@ class scDEF(object):
         adata: Optional[AnnData] = None,
         counts_layer: Optional[str] = None,
         copy_cell_z: bool = True,
-        freeze_w: bool = True,
+        freeze_w: bool = False,
         learn_budgets: bool = True,
         n_epoch: int = 400,
         lr: float = 0.05,
@@ -385,8 +385,9 @@ class scDEF(object):
                 shared with ``reference_model.adata`` (passed through to
                 :meth:`from_reference`).
             freeze_w: hold every per-layer ``W`` fixed at the warm-started
-                value during the second fit. Default ``True``: the whole point
-                is to keep the hierarchy stable while gene scales adapt.
+                value during the second fit. Default ``False``; set ``True``
+                when you explicitly want to keep the hierarchy stable while
+                gene scales adapt.
             learn_budgets: passed to :meth:`fit` as
                 ``learn_budgets_on_refit``. Default ``True``: per-batch
                 gene-scale and per-cell budgets must move for batch correction
