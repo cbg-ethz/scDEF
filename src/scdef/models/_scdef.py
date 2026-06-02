@@ -84,7 +84,7 @@ class scDEF(object):
         layer_cpal: matplotlib color palette for factors/colors at each scDEF layer.
         lightness_mult: lightness multiplier to define the base color for each new scDEF layer.
         set_alpha_from_cov: if True, set the alpha parameter from the data coverage.
-        hierarchy_weight: multiplier applied to coverage-derived ``alpha`` when
+        hierarchy_fraction: multiplier applied to coverage-derived ``alpha`` when
             ``set_alpha_from_cov`` is True (ignored otherwise).
         marginalize_alpha: if True, infer alpha from a variational posterior during training.
     """
@@ -130,7 +130,7 @@ class scDEF(object):
         layer_cpal: Optional[str] = "tab10",
         lightness_mult: Optional[float] = 0.15,
         set_alpha_from_cov: Optional[bool] = True,
-        hierarchy_weight: Optional[float] = 1.0,
+        hierarchy_fraction: Optional[float] = 1.0,
         marginalize_alpha: Optional[bool] = False,
     ):
         self.n_cells, self.n_genes = adata.shape
@@ -161,7 +161,7 @@ class scDEF(object):
         self.gene_scale_shape = gene_scale_shape
         self.use_brd = use_brd
         self.set_alpha_from_cov = set_alpha_from_cov
-        self.hierarchy_weight = float(hierarchy_weight)
+        self.hierarchy_fraction = float(hierarchy_fraction)
         self.marginalize_alpha = bool(marginalize_alpha)
         self._marginalize_alpha_init = bool(marginalize_alpha)
 
@@ -229,6 +229,72 @@ class scDEF(object):
         out += "\n" + "Contains " + self.adata.__str__()
         return out
 
+    @staticmethod
+    def _resolve_init_gene_scale_array(
+        reference_model: "scDEF",
+        init_gene_scale: Union[str, np.ndarray],
+        n_batches: int,
+        n_genes: int,
+    ) -> np.ndarray:
+        """Build ``(n_batches, n_genes)`` gene-scale means for warm-starting pass 2.
+
+        Returns:
+            Per-batch gene-scale means to pass to :meth:`init_var_params`.
+
+        Raises:
+            ValueError: If ``init_gene_scale`` is invalid or the reference lacks
+                fitted ``gene_scale`` when ``init_gene_scale='reference'``.
+        """
+        if isinstance(init_gene_scale, str):
+            if init_gene_scale == "batch":
+                raise ValueError(
+                    "_resolve_init_gene_scale_array called with init_gene_scale='batch'."
+                )
+            if init_gene_scale != "reference":
+                raise ValueError(
+                    "init_gene_scale must be 'batch', 'reference', or a float array; "
+                    f"got {init_gene_scale!r}."
+                )
+            if "gene_scale" not in reference_model.pmeans:
+                raise ValueError(
+                    "reference_model has no fitted gene_scale in pmeans; run fit() on "
+                    "the reference model before from_reference with init_gene_scale='reference'."
+                )
+            gs = np.asarray(reference_model.pmeans["gene_scale"], dtype=np.float32)
+            if gs.ndim == 1:
+                gs = gs[None, :]
+            if gs.shape[1] != n_genes:
+                raise ValueError(
+                    f"reference gene_scale has {gs.shape[1]} genes but adata has {n_genes}."
+                )
+            if gs.shape[0] == 1:
+                profile = gs[0]
+            else:
+                profile = np.exp(
+                    np.mean(np.log(np.clip(gs, 1e-6, None)), axis=0)
+                )
+            profile = np.clip(profile, 1e-6, 1e6)
+            return np.tile(profile[None, :], (n_batches, 1))
+
+        arr = np.asarray(init_gene_scale, dtype=np.float32)
+        if arr.ndim == 1:
+            arr = np.tile(arr[None, :], (n_batches, 1))
+        elif arr.ndim == 2:
+            if arr.shape[0] == 1 and n_batches > 1:
+                arr = np.tile(arr, (n_batches, 1))
+            elif arr.shape[0] != n_batches:
+                raise ValueError(
+                    f"init_gene_scale array has {arr.shape[0]} batch rows but "
+                    f"model expects {n_batches}."
+                )
+        else:
+            raise ValueError("init_gene_scale array must be 1d (n_genes) or 2d (n_batches, n_genes).")
+        if arr.shape[1] != n_genes:
+            raise ValueError(
+                f"init_gene_scale array has {arr.shape[1]} genes but adata has {n_genes}."
+            )
+        return np.clip(arr, 1e-6, 1e6)
+
     @classmethod
     def from_reference(
         cls,
@@ -239,6 +305,7 @@ class scDEF(object):
         reference_obs: Optional[str] = None,
         query_obs: Optional[str] = None,
         copy_cell_z: bool = True,
+        init_gene_scale: Union[str, np.ndarray] = "batch",
         **kwargs: Any,
     ) -> "scDEF":
         """Create a new model initialized from a fitted reference hierarchy.
@@ -247,6 +314,21 @@ class scDEF(object):
         hierarchy parameters (W, BRD/ARD, alpha-related hyperparameters) from
         ``reference_model``. Cell/gene budgets are initialized from the new data
         so modality/batch-specific scales can be learned.
+
+        Args:
+            init_gene_scale: how to initialize per-batch ``gene_scale`` variational
+                means before the first :meth:`fit` on this model.
+
+                * ``'batch'`` (default): use per-batch count means from
+                  :meth:`load_adata` (``1 / gene_ratio_init``), which pre-separates
+                  stim/CTRL on ISGs when ``batch_key`` is confounded with condition.
+                * ``'reference'``: broadcast the reference model's fitted
+                  ``pmeans['gene_scale']`` to every batch (geometric mean across
+                  reference batches if the reference had more than one). Pass-2
+                  optimization then learns batch-specific *deviations* from the
+                  pass-1 pooled profile instead of starting from separated batch
+                  means, which helps preserve factor loadings from pass 1.
+                * array: explicit ``(n_genes,)`` or ``(n_batches, n_genes)`` means.
         """
         if reference_model.adata.n_vars != adata.n_vars or not np.array_equal(
             np.asarray(reference_model.adata.var_names), np.asarray(adata.var_names)
@@ -328,11 +410,20 @@ class scDEF(object):
         model.alpha = float(reference_model.alpha)
         model.top_alpha = reference_model.top_alpha
         model.update_model_priors(update_alpha_from_cov=False)
+        init_gene_scale_arr: Optional[np.ndarray] = None
+        if init_gene_scale != "batch":
+            init_gene_scale_arr = cls._resolve_init_gene_scale_array(
+                reference_model,
+                init_gene_scale,
+                int(model.n_batches),
+                int(model.adata.n_vars),
+            )
         model._pending_reference_init = {
             "init_w": init_w,
             "init_brd": init_brd,
             "init_ard": init_ard,
             "init_z": init_z,
+            "init_gene_scale": init_gene_scale_arr,
             "reference_obs": reference_obs,
             "query_obs": query_obs,
         }
@@ -399,7 +490,9 @@ class scDEF(object):
             tolerance: early-stopping tolerance for the second-pass fit.
             from_reference_kwargs: extra kwargs forwarded verbatim to
                 :meth:`from_reference` (e.g. ``reference_obs``,
-                ``query_obs``).
+                ``query_obs``, ``init_gene_scale``). Defaults to
+                ``init_gene_scale='reference'`` so pass 2 starts from the
+                pass-1 pooled gene-scale profile rather than per-batch means.
             **fit_kwargs: additional kwargs forwarded to :meth:`fit`. Override
                 any of the defaults above (``n_epoch``, ``lr``, etc.) by
                 passing them here -- they take precedence.
@@ -411,6 +504,7 @@ class scDEF(object):
         from_reference_kwargs = dict(from_reference_kwargs or {})
         from_reference_kwargs.setdefault("counts_layer", counts_layer)
         from_reference_kwargs.setdefault("copy_cell_z", copy_cell_z)
+        from_reference_kwargs.setdefault("init_gene_scale", "reference")
 
         model = cls.from_reference(
             reference_model,
@@ -572,7 +666,7 @@ class scDEF(object):
             "layer_cpal": reference_model.layer_cpal,
             "lightness_mult": reference_model.lightness_mult,
             "set_alpha_from_cov": reference_model.set_alpha_from_cov,
-            "hierarchy_weight": reference_model.hierarchy_weight,
+            "hierarchy_fraction": reference_model.hierarchy_fraction,
             "marginalize_alpha": reference_model.marginalize_alpha,
             "seed": reference_model.seed,
         }
@@ -694,8 +788,8 @@ class scDEF(object):
             obj.marginalize_alpha = False
         if not hasattr(obj, "_marginalize_alpha_init"):
             obj._marginalize_alpha_init = bool(obj.marginalize_alpha)
-        if not hasattr(obj, "hierarchy_weight"):
-            obj.hierarchy_weight = 1.0
+        if not hasattr(obj, "hierarchy_fraction"):
+            obj.hierarchy_fraction = 1.0
         obj.logger = logging.getLogger(payload.get("class_name", cls.__name__))
         if payload.get("logger_level") is not None:
             obj.logger.setLevel(payload["logger_level"])
@@ -1559,7 +1653,7 @@ class scDEF(object):
             self.alpha = (
                 float(np.median(self.batch_lib_sizes))
                 / float(self.layer_sizes[0])
-                * self.hierarchy_weight
+                * self.hierarchy_fraction
             )
 
     def _get_factor_obs_l0(self, required_cols: Optional[set] = None):
@@ -1744,6 +1838,7 @@ class scDEF(object):
         init_w=None,
         init_brd=None,
         init_ard=None,
+        init_gene_scale: Optional[np.ndarray] = None,
         nmf_init=False,
         z_init_concentration=0.05,
         **kwargs,
@@ -1780,8 +1875,16 @@ class scDEF(object):
             ]
             # initialize gene scales at the prior mean (per gene)
             # prior mean under Gamma(shape, rate=shape*gene_ratio) is 1/gene_ratio
-            m = 1.0 / np.array(self.gene_ratio_init)  # shape: (G,) or (B,G)
-            m = np.clip(m, 1e-6, 1e6)
+            if init_gene_scale is not None:
+                m = np.asarray(init_gene_scale, dtype=np.float32)
+                if m.ndim == 1:
+                    m = np.tile(m[None, :], (max(int(self.n_batches), 1), m.shape[0]))
+                elif m.shape[0] == 1 and int(self.n_batches) > 1:
+                    m = np.tile(m, (int(self.n_batches), 1))
+                m = np.clip(m, 1e-6, 1e6)
+            else:
+                m = 1.0 / np.array(self.gene_ratio_init)  # shape: (G,) or (B,G)
+                m = np.clip(m, 1e-6, 1e6)
             v = m / 10.0
 
             m = jnp.array(m, dtype=jnp.float32)
@@ -2831,11 +2934,16 @@ class scDEF(object):
             init_brd = None
             init_ard = None
             pending_reference_init = getattr(self, "_pending_reference_init", None)
+            init_gene_scale = None
             if pending_reference_init is not None:
                 init_z = pending_reference_init.get("init_z")
                 init_w = pending_reference_init.get("init_w")
                 init_brd = pending_reference_init.get("init_brd")
                 init_ard = pending_reference_init.get("init_ard")
+                init_gene_scale = pending_reference_init.get("init_gene_scale")
+                if init_gene_scale is not None:
+                    init_gene_scale = np.asarray(init_gene_scale, dtype=np.float32)
+                    self.gene_ratio_init = 1.0 / np.clip(init_gene_scale, 1e-6, 1e6)
                 nmf_init = False
                 z_init_concentration = 100.0
         if is_refit:
@@ -2888,6 +2996,7 @@ class scDEF(object):
             init_w=init_w,
             init_brd=init_brd,
             init_ard=init_ard,
+            init_gene_scale=init_gene_scale,
             nmf_init=nmf_init,
             max_cells=max_cells_init,
             z_init_concentration=z_init_concentration,
