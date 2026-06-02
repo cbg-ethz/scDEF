@@ -617,6 +617,7 @@ class sscDEF(scDEF):
         entropy_min_annealing=1.0,
         entropy_max_annealing=5.0,
         entropy_optimizer_reset_threshold=0.25,
+        freeze_w=False,
         **kwargs,
     ):
         """Fit the model."""
@@ -674,6 +675,7 @@ class sscDEF(scDEF):
                     entropy_min_annealing=entropy_min_annealing,
                     entropy_max_annealing=entropy_max_annealing,
                     entropy_optimizer_reset_threshold=entropy_optimizer_reset_threshold,
+                    freeze_w=freeze_w,
                     **kwargs,
                 )
             return
@@ -765,6 +767,9 @@ class sscDEF(scDEF):
             local_params_new = clip_params(local_params_new)
             return value, local_params_new, local_opt_state_new
 
+        w_param_start = 2
+        w_param_end = 2 + self.n_layers
+
         def global_update(
             X,
             indices,
@@ -794,6 +799,10 @@ class sscDEF(scDEF):
                 gradient, global_opt_state, global_params
             )
             global_params_new = optax.apply_updates(global_params, updates)
+            if freeze_w:
+                global_params_new = list(global_params_new)
+                for i in range(w_param_start, w_param_end):
+                    global_params_new[i] = global_params[i]
             global_params_new = clip_params(global_params_new)
             return value, global_params_new, global_opt_state_new
 
