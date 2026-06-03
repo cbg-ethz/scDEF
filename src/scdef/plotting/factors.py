@@ -1017,10 +1017,6 @@ def obs_scores(
         obs_vals_dict=obs_vals_dict,
     )
 
-    if mode in ("f1", "fracs", "prob", "soft_prec", "weights"):
-        vmax = 1.0
-        vmin = 0.0
-
     layers_obs(
         model,
         obs_keys,
