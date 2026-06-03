@@ -147,6 +147,7 @@ class scDEF(object):
         self.logger = logging.getLogger("scDEF")
         self.logger.setLevel(logginglevel)
 
+        self.counts_layer = counts_layer
         self.load_adata(adata, layer=counts_layer, batch_key=batch_key)
 
         self.top_alpha = top_alpha

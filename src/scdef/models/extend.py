@@ -294,6 +294,9 @@ def add_batch_correction(
     Returns:
         The new fitted model with batch correction applied.
     """
+    if counts_layer is None:
+        counts_layer = getattr(reference_model, "counts_layer", None)
+
     target_adata = adata if adata is not None else reference_model.adata
     from_reference_kwargs = dict(from_reference_kwargs or {})
     from_reference_kwargs.setdefault("counts_layer", counts_layer)
@@ -384,6 +387,9 @@ def decompose_batch_effects(
             f"reference_model must have at least {top_layer + 1} layers "
             f"for top_layer={top_layer}, but has {reference_model.n_layers}."
         )
+
+    if counts_layer is None:
+        counts_layer = getattr(reference_model, "counts_layer", None)
 
     target_adata = adata if adata is not None else reference_model.adata
 
