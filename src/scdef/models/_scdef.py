@@ -525,6 +525,199 @@ class scDEF(object):
         return model
 
     @classmethod
+    def decompose_batch_effects(
+        cls,
+        reference_model: "scDEF",
+        *,
+        adata: Optional[AnnData] = None,
+        counts_layer: Optional[str] = None,
+        top_layer: int = 1,
+        n_epoch: int = 400,
+        lr: float = 0.05,
+        tolerance: float = 1e-4,
+        nmf_init: bool = False,
+        **fit_kwargs: Any,
+    ) -> "scDEF":
+        """Re-learn lower layers under a frozen upper hierarchy to discover batch programs.
+
+        Two-stage workflow:
+
+        1. ``reference_model`` was fitted **with** a ``batch_key``, producing a
+           batch-corrected hierarchy where per-batch ``gene_scale`` absorbed
+           technical variance.
+        2. This method creates a new model **without** ``batch_key``, resets
+           ``W^{L0}`` gene loadings, and re-learns all layers up to
+           ``top_layer``.  At the boundary (``top_layer``), only ``W`` is
+           re-learned while ``z`` stays fixed — preserving the cell-to-group
+           assignments as the structural constraint.  Layers below
+           ``top_layer`` are fully re-learned (both ``W`` and ``z``).
+           Layers above ``top_layer`` remain completely fixed.
+
+        With ``top_layer=1`` (default):
+            - L0: W reset and re-learned, z re-learned
+            - L1: W warm-started and re-learned, z frozen
+            - L2+: fully frozen
+
+        With ``top_layer=2``:
+            - L0: W reset and re-learned, z re-learned
+            - L1: W warm-started and re-learned, z re-learned
+            - L2: W warm-started and re-learned, z frozen
+            - L3+: fully frozen
+
+        Args:
+            reference_model: a fitted ``scDEF`` that was trained with
+                ``batch_key``. Its upper hierarchy provides the frozen
+                structural constraint.
+            adata: AnnData for the second stage.  Defaults to
+                ``reference_model.adata``.  Must share the same ``var_names``.
+            counts_layer: counts layer for ``adata``; passed to the new model
+                constructor.
+            top_layer: the highest layer whose ``W`` is re-learned.  Its ``z``
+                remains frozen as the structural anchor.  Layers below it are
+                fully re-learned; layers above are completely frozen.
+                Default ``1``.
+            n_epoch: training epochs for the re-learning phase.
+            lr: learning rate for the re-learning phase.
+            tolerance: early-stopping tolerance.
+            nmf_init: if True, initialize the new L0 W via NMF on the data.
+                If False (default), use random initialization.
+            **fit_kwargs: additional keyword arguments forwarded to
+                :meth:`_learn` (e.g. ``batch_size``, ``num_samples``).
+
+        Returns:
+            A new fitted model whose lower-layer factors reveal batch-specific
+            and shared gene programs under the frozen upper-layer cell
+            assignments.
+        """
+        top_layer = int(top_layer)
+        if reference_model.n_layers < top_layer + 1:
+            raise ValueError(
+                f"reference_model must have at least {top_layer + 1} layers "
+                f"for top_layer={top_layer}, but has {reference_model.n_layers}."
+            )
+
+        target_adata = adata if adata is not None else reference_model.adata
+
+        factor_lists = [np.asarray(f, dtype=int) for f in reference_model.factor_lists]
+        layer_sizes = [len(f) for f in factor_lists]
+
+        # Build init_w: None for L0 (reset), reference values for L1+
+        init_w: List[Optional[np.ndarray]] = [None]
+        for layer_idx in range(1, reference_model.n_layers):
+            keep = factor_lists[layer_idx]
+            parent_keep = factor_lists[layer_idx - 1]
+            w = np.asarray(
+                reference_model.pmeans[f"{reference_model.layer_names[layer_idx]}W"],
+                dtype=np.float32,
+            )
+            init_w.append(w[np.ix_(keep, parent_keep)])
+
+        # Build init_z: None for layers below top_layer (re-learned),
+        # reference values for top_layer and above (frozen or stop-gradiented)
+        init_z: List[Optional[np.ndarray]] = []
+        for layer_idx in range(reference_model.n_layers):
+            if layer_idx < top_layer:
+                init_z.append(None)
+            else:
+                keep = factor_lists[layer_idx]
+                z = np.asarray(
+                    reference_model.pmeans[
+                        f"{reference_model.layer_names[layer_idx]}z"
+                    ],
+                    dtype=np.float32,
+                )
+                if target_adata is reference_model.adata:
+                    init_z.append(z[:, keep])
+                else:
+                    ref_pos = {
+                        str(name): i
+                        for i, name in enumerate(reference_model.adata.obs_names)
+                    }
+                    matches = [
+                        (new_i, ref_pos[str(name)])
+                        for new_i, name in enumerate(target_adata.obs_names)
+                        if str(name) in ref_pos
+                    ]
+                    z_layer = np.ones((target_adata.n_obs, len(keep)), dtype=np.float32)
+                    if len(matches) > 0:
+                        new_idx = np.asarray([m[0] for m in matches], dtype=int)
+                        ref_idx = np.asarray([m[1] for m in matches], dtype=int)
+                        z_layer[new_idx] = z[ref_idx][:, keep]
+                    init_z.append(z_layer)
+
+        # BRD and ARD from reference (these apply to L0 factors)
+        init_brd = np.asarray(reference_model.pmeans["brd"], dtype=np.float32)[
+            factor_lists[0]
+        ]
+        init_ard = np.asarray(reference_model.pmeans["factor_means"], dtype=np.float32)[
+            factor_lists[0]
+        ]
+
+        # Create new model WITHOUT batch_key
+        model_kwargs = cls._reference_model_kwargs(reference_model, layer_sizes)
+        model_kwargs["batch_key"] = None
+        model = cls(
+            target_adata,
+            counts_layer=counts_layer,
+            **model_kwargs,
+        )
+        model.alpha = float(reference_model.alpha)
+        model.top_alpha = reference_model.top_alpha
+        model.update_model_priors(update_alpha_from_cov=False)
+
+        # Initialize variational parameters
+        model.init_var_params(
+            init_budgets=True,
+            init_alpha=False,
+            init_z=init_z,
+            init_w=init_w,
+            init_brd=init_brd,
+            init_ard=init_ard,
+            nmf_init=nmf_init,
+            z_init_concentration=0.05,
+        )
+
+        # Overwrite z at top_layer+ with tight distributions at reference values
+        # (init_var_params adds Gamma noise; we want exact values for frozen z)
+        z_params = model.local_params[1]
+        for layer_idx in range(top_layer, model.n_layers):
+            start = int(np.sum(model.layer_sizes[:layer_idx]))
+            end = start + int(model.layer_sizes[layer_idx])
+            z_ref = init_z[layer_idx]
+            m = jnp.clip(jnp.asarray(z_ref, dtype=jnp.float32), 1e-3, 1e6)
+            v = m / 1000.0
+            mu = jnp.log(m**2 / jnp.sqrt(m**2 + v))
+            log_sigma = jnp.log(jnp.sqrt(jnp.log(1 + v / (m**2))))
+            z_params = z_params.at[0, :, start:end].set(mu)
+            z_params = z_params.at[1, :, start:end].set(log_sigma)
+        model.local_params = list(model.local_params)
+        model.local_params[1] = z_params
+
+        model._invalidate_cached_diagnostics()
+        model.elbos = []
+        model.step_sizes = []
+
+        # Layers 0..top_layer get W gradients; only top_layer has z frozen
+        learn_kwargs = dict(fit_kwargs)
+        learn_kwargs.setdefault("n_epoch", n_epoch)
+        learn_kwargs.setdefault("lr", lr)
+        learn_kwargs.setdefault("tolerance", tolerance)
+        learn_kwargs.setdefault("filter", True)
+        learn_kwargs.setdefault("annotate", True)
+        optimize = list(range(top_layer + 1))
+        freeze_z = [top_layer]
+        model._learn(
+            optimize_layers=optimize,
+            freeze_z_layers=freeze_z,
+            **learn_kwargs,
+        )
+
+        model.clear_runtime_cache(clear_jax_cache=False)
+        model._has_fit = True
+        model._fit_revision = getattr(model, "_fit_revision", 0) + 1
+        return model
+
+    @classmethod
     def from_hierarchy(
         cls,
         adata: AnnData,
@@ -3323,6 +3516,7 @@ class scDEF(object):
         entropy_max_annealing=5.0,
         entropy_optimizer_reset_threshold=0.25,
         freeze_w=False,
+        freeze_z_layers=None,
         **kwargs,
     ):
         """Fit the model."""
@@ -3331,6 +3525,10 @@ class scDEF(object):
         if len(kwargs) > 0:
             unknown = ", ".join(sorted(kwargs.keys()))
             raise TypeError(f"Unexpected keyword arguments for _learn: {unknown}")
+
+        if freeze_z_layers is None:
+            freeze_z_layers = []
+        freeze_z_layers = sorted({int(i) for i in freeze_z_layers})
 
         if int(n_rounds) > 1:
             total_rounds = int(n_rounds)
@@ -3381,6 +3579,7 @@ class scDEF(object):
                     entropy_max_annealing=entropy_max_annealing,
                     entropy_optimizer_reset_threshold=entropy_optimizer_reset_threshold,
                     freeze_w=freeze_w,
+                    freeze_z_layers=freeze_z_layers,
                     **kwargs,
                 )
             return
@@ -3430,6 +3629,13 @@ class scDEF(object):
         stop_gradients = stop_gradients.at[layers_to_optimize].set(0.0)
         stop_cell_budgets = jnp.array(stop_cell_budgets)
         stop_gene_budgets = jnp.array(stop_gene_budgets)
+
+        # Column ranges for z layers that should be snapped back after updates
+        _freeze_z_slices: List[tuple] = []
+        for lidx in freeze_z_layers:
+            start = int(np.sum(self.layer_sizes[:lidx]))
+            end = start + int(self.layer_sizes[lidx])
+            _freeze_z_slices.append((start, end))
 
         # --- Initialize optimizers ---
 
@@ -3602,6 +3808,14 @@ class scDEF(object):
                             stop_gene_budgets,
                             alpha_jnp,
                         )
+                        if _freeze_z_slices:
+                            z_snap = local_params[1]
+                            z_orig = self.local_params[1]
+                            for s, e in _freeze_z_slices:
+                                z_snap = z_snap.at[0, :, s:e].set(z_orig[0, :, s:e])
+                                z_snap = z_snap.at[1, :, s:e].set(z_orig[1, :, s:e])
+                            local_params = list(local_params)
+                            local_params[1] = z_snap
                     if update_globals:
                         loss, global_params, global_opt_state = global_update(
                             X,
