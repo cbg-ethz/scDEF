@@ -2,15 +2,14 @@ name: splatter
 channels:
   - conda-forge
   - bioconda
-  - nodefaults  ## block user/system channels
+  - nodefaults
 dependencies:
-  - r-base=4.3  ## always specify the R version (faster solve; more stable)
-  - r-essentials
-  - r-seurat
-  - r-seurat-data
+  - r-base>=4.1,<4.5
+  - r-seurat>=4
+  - r-seuratobject
   - r-cowplot
   - r-ggplot2
-  - r-gh
-  - r-tidyr
   - r-dplyr
+  - r-remotes
   - bioconductor-splatter
+  - bioconductor-singlecellexperiment

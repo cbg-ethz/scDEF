@@ -92,7 +92,6 @@ markers = {
         "HLA-DQA1",
         "ITGAX",
         "CD1C",
-        "CD1E",
         "FCER1A",
         "CLEC10A",
         "FCGR2B",
@@ -129,13 +128,11 @@ markers = {
     "Megakaryocyte": [
         "PF4",
         "PPBP",
-        "GP5",
         "ITGA2B",
         "NRGN",
         "TUBB1",
         "SPARC",
         "RGS18",
-        "MYL9",
         "GNG11",
     ],
 }

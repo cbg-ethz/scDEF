@@ -1,5 +1,3 @@
-from _benchmark import evaluate_methods
-
 import scanpy as sc
 import scdef as scd
 import time
@@ -12,13 +10,13 @@ def main():
     if "Batch" in adata.obs.columns:
         batch_key = "Batch"
 
-    # Run scDEF
     model_settings = dict(
-        brd_strength=float(snakemake.params["tau"]),
-        brd_mean=float(snakemake.params["mu"]),
+        brd_strength=float(snakemake.params["brd_strength"]),
+        brd_mean=float(snakemake.params["brd_mean"]),
         n_factors=int(snakemake.params["n_factors"]),
         n_layers=int(snakemake.params["n_layers"]),
-        decay_factor=float(snakemake.params["decay_factor"]),
+        hierarchy_weight=float(snakemake.params["hierarchy_weight"]),
+        top_factors=int(snakemake.params["top_factors"]),
     )
     model = scd.scDEF(
         adata,
@@ -29,7 +27,7 @@ def main():
     )
 
     learning_settings = dict(
-        pretrain=snakemake.params["pretrain"],
+        pretraining=snakemake.params["pretraining"],
         nmf_init=snakemake.params["nmf_init"],
         n_epoch=snakemake.params["n_epoch"],
         lr=snakemake.params["lr"],
@@ -41,33 +39,10 @@ def main():
     duration = time.time() - duration
     model.filter_factors()
 
-    hierarchy_obs = adata.uns["hierarchy_obs"].tolist()
-    true_hierarchy = scd.hierarchy_utils.get_hierarchy_from_clusters(
-        [adata.obs[o].values for o in hierarchy_obs],
-        use_names=True,
-    )
+    model.save(snakemake.output["out_dir"], overwrite=True, save_anndata=True)
 
-    df = evaluate_methods(
-        adata,
-        snakemake.params["metrics"],
-        {"scDEF": model},
-        true_hierarchy=true_hierarchy,
-        hierarchy_obs_keys=hierarchy_obs,
-        markers=adata.uns["true_markers"],
-        celltype_obs_key=hierarchy_obs,  # to compute every layer vs every layer
-        batch_obs_key=batch_key,
-    )
-    df.loc["Runtime", "scDEF"] = duration
-
-    # Store scDEF
-    if snakemake.params["store_full"]:
-        with open(
-            snakemake.output["out_fname"], "wb"
-        ) as outp:  # Overwrites any existing file.
-            pickle.dump(model, outp, pickle.HIGHEST_PROTOCOL)
-
-    # Store scores
-    df.to_csv(snakemake.output["scores_fname"])
+    with open(snakemake.output["duration_fname"], "w") as f:
+        f.write(str(duration))
 
 
 if __name__ == "__main__":

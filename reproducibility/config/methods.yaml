@@ -1,29 +1,48 @@
+# Test configuration (low iterations for local testing)
+# For production runs on cluster, increase n_epoch, lr, max_iter, etc.
 scDEF:
   n_factors: 100
   n_layers: 5
-  tau: 0.1
-  mu: 10.
-  kappa: 10.
-  decay_factor: 2.
+  brd_strength: 1.0
+  brd_mean: 1.0
+  hierarchy_weight: 1.0
+  top_factors: 1
   nmf_init: False
-  pretrain: True
+  pretraining: False
   batch_size: 256
   num_samples: 10
-  n_epoch: [1]
-  lr: [0.01]
+  n_epoch: 1
+  lr: 0.01
 scDEF_un:
   n_factors: 100
   n_layers: 5
-  tau: 0.1
-  mu: 10.
-  kappa: 10.
-  decay_factor: 2.
+  brd_strength: 1.0
+  brd_mean: 1.0
+  hierarchy_weight: 1.0
+  top_factors: 1
   nmf_init: False
-  pretrain: True
+  pretraining: False
   batch_size: 256
   num_samples: 10
-  n_epoch: [1]
-  lr: [0.01]
+  n_epoch: 1
+  lr: 0.01
+scDEF_corr:
+  n_epoch: 1
+  lr: 0.05
+scDEF_hclust:
+  n_factors: 100
+  n_layers: 1
+  brd_strength: 1.0
+  brd_mean: 1.0
+  hierarchy_weight: 1.0
+  top_factors: 1
+  nmf_init: False
+  pretraining: False
+  batch_size: 256
+  num_samples: 10
+  n_epoch: 1
+  lr: 0.01
+  resolutions: [6, 3, 1]
 PCA:
   n_top_genes: 2000
 nSBM:

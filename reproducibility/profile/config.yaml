@@ -3,17 +3,30 @@ jobs: 500
 cores: 500
 
 set-resources:
+  run_scdef:
+    slurm_extra: "'--gpus=1'"
   run_scdef_un:
     slurm_extra: "'--gpus=1'"
-  run_scdef:
+  run_scdef_corr:
+    slurm_extra: "'--gpus=1'"
+  run_scdef_hclust:
     slurm_extra: "'--gpus=1'"
   run_scvi:
     slurm_extra: "'--gpus=1'"
   run_fsclvm:
+    slurm_extra: "'--gpus=1'"
+  run_scdef_hw:
+    slurm_extra: "'--gpus=1'"
+  run_scdef_brd_strength:
+    slurm_extra: "'--gpus=1'"
+  run_scdef_brd_mean:
+    slurm_extra: "'--gpus=1'"
+  run_scdef_layers:
+    slurm_extra: "'--gpus=1'"
+  run_scdef_factors:
     slurm_extra: "'--gpus=1'"
 
 default-resources:
   mem_mb_per_cpu: 100000
   runtime: 240
   slurm_account: "'es_beere'"
-

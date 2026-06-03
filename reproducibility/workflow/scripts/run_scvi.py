@@ -1,7 +1,6 @@
-from _benchmark import run_methods, evaluate_methods
+from _benchmark import run_methods
 
 import scanpy as sc
-import scdef
 import time
 
 
@@ -36,32 +35,10 @@ def main():
     )
     duration = time.time() - duration
 
-    hierarchy_obs = adata.uns["hierarchy_obs"].tolist()
-    true_hierarchy = scdef.hierarchy_utils.get_hierarchy_from_clusters(
-        [adata.obs[o].values for o in hierarchy_obs],
-        use_names=True,
-    )
+    methods_results[methods_list[0]]["adata"].write_h5ad(snakemake.output["out_fname"])
 
-    df = evaluate_methods(
-        adata,
-        snakemake.params["metrics"],
-        methods_results,
-        true_hierarchy=true_hierarchy,
-        hierarchy_obs_keys=hierarchy_obs,
-        markers=adata.uns["true_markers"],
-        celltype_obs_key=hierarchy_obs,  # to compute every layer vs every layer
-        batch_obs_key=batch_key,
-    )
-    df.loc["Runtime", methods_list[0]] = duration
-
-    if snakemake.params["store_full"]:
-        # Store anndata
-        methods_results[methods_list[0]]["adata"].write_h5ad(
-            snakemake.output["out_fname"]
-        )
-
-    # Store scores
-    df.to_csv(snakemake.output["scores_fname"])
+    with open(snakemake.output["duration_fname"], "w") as f:
+        f.write(str(duration))
 
 
 if __name__ == "__main__":

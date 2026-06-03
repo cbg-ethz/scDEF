@@ -2,9 +2,13 @@ suppressMessages(library(splatter))
 suppressMessages(library(ggplot2))
 suppressMessages(library(cowplot))
 suppressMessages(library(SingleCellExperiment))
-suppressMessages(library(SeuratData))
 suppressMessages(library(Seurat))
 suppressMessages(library(dplyr))
+
+if (!requireNamespace("SeuratData", quietly = TRUE)) {
+  remotes::install_github("satijalab/seurat-data", upgrade = "never", quiet = TRUE)
+}
+suppressMessages(library(SeuratData))
 
 
 n_groups <- 8
@@ -21,9 +25,11 @@ seed <- as.numeric(snakemake@params[["seed"]])
 
 
 # Get 3k PBMCs
-# InstallData("pbmc3k")
+if (!requireNamespace("pbmc3k.SeuratData", quietly = TRUE)) {
+  InstallData("pbmc3k")
+}
 data("pbmc3k")
-c <- as.matrix(GetAssayData(object = pbmc3k, slot = "counts")) # Use 3k PBMCs data from 10x Genomics as reference
+c <- as.matrix(GetAssayData(object = pbmc3k, layer = "counts")) # Use 3k PBMCs data from 10x Genomics as reference
 params <- splatEstimate(c)
 
 print(params)

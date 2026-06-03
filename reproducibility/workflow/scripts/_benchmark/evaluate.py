@@ -1,6 +1,3 @@
-from scdef.utils import score_utils, hierarchy_utils
-from scdef import scDEF
-
 import pandas as pd
 import numpy as np
 from sklearn.metrics import adjusted_rand_score, silhouette_score
@@ -17,6 +14,9 @@ def evaluate_methods(
     batch_obs_key="batch",
     scdef_max_layers=5,
 ):
+    from scdef.utils import score_utils, hierarchy_utils
+    from scdef import scDEF
+
     methods_list = list(methods_results.keys())
 
     if not isinstance(celltype_obs_key, list):
@@ -46,7 +46,12 @@ def evaluate_methods(
 
         if "Hierarchical signature consistency" in metrics_list:
             if isinstance(method_outs, scDEF):
-                method_simplified_hierarchy = method_outs.get_hierarchy(simplified=True)
+                from scdef.tools.hierarchy import make_hierarchies
+
+                make_hierarchies(method_outs)
+                method_simplified_hierarchy = method_outs.adata.uns[
+                    "biological_hierarchy"
+                ]
                 scdef_signatures, scdef_scores = method_outs.get_signatures_dict(
                     scores=True
                 )
@@ -194,10 +199,13 @@ def evaluate_methods(
 
 
 def evaluate_scdef_hierarchy(scd, obs_keys, true_hierarchy):
+    from scdef.utils import hierarchy_utils
     from scdef.utils.hierarchy_utils import get_nodes_from_hierarchy
     from scdef.utils.factor_utils import assign_obs_to_factors
+    from scdef.tools.hierarchy import make_hierarchies
 
-    simplified = scd.get_hierarchy(simplified=True)
+    make_hierarchies(scd)
+    simplified = scd.adata.uns["biological_hierarchy"]
     assignments, matches = assign_obs_to_factors(
         scd, obs_keys, get_nodes_from_hierarchy(simplified)
     )
@@ -220,6 +228,8 @@ def evaluate_scdef_hierarchy(scd, obs_keys, true_hierarchy):
 def evaluate_hierarchy_from_cluster_levels(
     adata, obs_keys, clusters_levels, true_hierarchy
 ):
+    from scdef.utils import hierarchy_utils
+
     hierarchy = hierarchy_utils.get_hierarchy_from_clusters(clusters_levels)
     layer_names = ["h" * level for level in range(len(clusters_levels))]
     layer_sizes = [len(np.unique(cluster)) for cluster in clusters_levels]
@@ -257,6 +267,8 @@ def evaluate_cluster_signatures(
     cluster_names=[],
     top_genes=20,
 ):
+    from scdef.utils import score_utils, hierarchy_utils
+
     layer_names = ["h" * level for level in range(len(clusters_levels))]
 
     # Assign clusters to obs
@@ -278,7 +290,7 @@ def evaluate_cluster_signatures(
 
 
 def evaluate_scdef_signatures(scd, obs_keys, markers, top_genes=20):
-    # Assign factors to obs
+    from scdef.utils import score_utils
     from scdef.utils.factor_utils import assign_obs_to_factors
 
     assignments, matches = assign_obs_to_factors(scd, obs_keys)
@@ -299,6 +311,8 @@ def evaluate_scdef_signatures(scd, obs_keys, markers, top_genes=20):
 def evaluate_hierarchical_signatures_consistency(
     var_names, hierarchy, signatures, scores, sizes, top_genes=20
 ):
+    from scdef.utils import score_utils
+
     # sizes is a dict with the population sizes
     def get_consensus_signature(var_names, gene_scores_array, sizes_array):
         sizes_array = sizes_array / np.sum(sizes_array)

@@ -46,12 +46,10 @@ def main():
     adata.uns["true_hierarchy"] = true_hierarchy
 
     if "Batch" in adata.obs:
-        # Make batches contiguous
         idx = adata.obs.sort_values("Batch").index
         adata = adata[idx,]
 
-        # Write new h5ad file
-        adata.write(snakemake.output.fname)
+    adata.write(snakemake.output.fname)
 
 
 if __name__ == "__main__":

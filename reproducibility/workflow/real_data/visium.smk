@@ -11,15 +11,19 @@ output_path = "results/visium"
 SEED = config["seed"]
 METRICS = config["metrics"]
 
-include: "run_methods.smk"
+RUN_SUFFIX = "run"
+INPUT_ADATA = output_path + '/prepared_input.h5ad'
+METHOD_SEED = SEED
+
+include: "../run_methods.smk"
 
 rule all:
     input:
-        output_path + '/scDEF/scDEF.pkl'
+        output_path + '/scDEF/run/'
 
 rule prepare_input:
     conda:
-        "../../../envs/squidpy.yml"
+        "../envs/squidpy.yml"
     params:
         data_path = config['data_path'],
         data_fname = config['data_fname'],
@@ -29,4 +33,4 @@ rule prepare_input:
     output:
         fname = output_path + '/prepared_input.h5ad'
     script:
-        'scripts/prepare_visium.py'
+        '../scripts/prepare_visium.py'

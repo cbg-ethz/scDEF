@@ -6,12 +6,12 @@ n_reps: 5
 n_batches: 4
 frac_shared: .5
 n_layers: [1, 2, 3, 4, 5]
-decay_factors: [1.5, 2, 2.5, 3]
+n_factors: [20, 50, 100, 200]
 metrics:
     - "Cell Type ARI"
     - "Cell Type ASW"
     - "Batch ARI"
-    - "Batch ASW"    
+    - "Batch ASW"
     - "Hierarchy accuracy"
     - "Hierarchical signature consistency"
     - "Signature sparsity"

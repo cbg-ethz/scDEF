@@ -1,0 +1,10 @@
+name: scdef_benchmark
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - python>=3.11,<3.13
+  - snakemake>=8
+  - snakemake-executor-plugin-slurm
+  - mamba

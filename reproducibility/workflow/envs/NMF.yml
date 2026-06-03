@@ -9,5 +9,4 @@ dependencies:
   - leidenalg
   - pip
   - pip:
-    - scdef==0.3.5
     - scikit-misc

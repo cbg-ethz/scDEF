@@ -11,5 +11,4 @@ dependencies:
   - pip
   - pip:
     - scanorama
-    - scdef==0.3.5
     - scikit-misc

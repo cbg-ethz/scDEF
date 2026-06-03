@@ -1,9 +1,10 @@
 """
-1. Generate data with different levels of DE genes and check if we still find the cell types: cell type ARI for different $\tau$ and different $\mu$, for the different scDEF layers
-2. Generate data with different levels of coverage and check if we still find the cell types: hierarchy accuracy for different $\kappa$
+Hyperparameter ablation study.
+Sweep hierarchy_weight, brd_strength, and brd_mean, each crossed with
+de_prob (DE density) to measure sensitivity to prior choices.
 """
 
-output_path = "hyperparam_results"
+output_path = config.get("output_path", "hyperparam_results")
 
 configfile: "config/hyperparams_config.yaml"
 configfile: "config/methods.yaml"
@@ -11,75 +12,90 @@ configfile: "config/methods.yaml"
 N_REPS = config["n_reps"]
 DENSITY = config["de_prob"]
 DENSITY_DEFAULT = config["de_prob_default"]
-TAU = config["tau"]
-MU = config["mu"]
-KAPPA = config["kappa"]
+HIERARCHY_WEIGHT = config["hierarchy_weight"]
+BRD_STRENGTH = config["brd_strength"]
+BRD_MEAN = config["brd_mean"]
 METRICS = config["metrics"]
+
+envs_path = "../envs"
+scripts_path = "../scripts"
+
+wildcard_constraints:
+    rep_id = r"\d+",
+    density = r"[^/]+",
+    hw = r"[^/]+",
+    brd = r"[^/]+",
+    brdm = r"[^/]+",
 
 rule all:
     input:
-        output_path + '/tau_scores.csv',
-        output_path + '/mu_scores.csv',
-        output_path + '/kappa_scores.csv',
+        output_path + '/hierarchy_weight_scores.csv',
+        output_path + '/brd_strength_scores.csv',
+        output_path + '/brd_mean_scores.csv',
 
 
-rule gather_tau_scores:
+# ---- Gather rules ----
+
+rule gather_hw_scores:
     conda:
-        "../envs/PCA.yml"
+        envs_path + "/scdef_reproducibility.yml"
     input:
         fname_list = expand(
-            output_path + '/tau/den_{density}/tau_{tau}/rep_{rep_id}_scores.csv',
-            tau=TAU,
+            output_path + '/hierarchy_weight/den_{density}/hw_{hw}/rep_{rep_id}_scores.csv',
+            hw=HIERARCHY_WEIGHT,
             density=DENSITY,
             rep_id=[r for r in range(N_REPS)],),
     output:
-        output_path + '/tau_scores.csv',
+        output_path + '/hierarchy_weight_scores.csv',
     params:
-        param_name = ["density", "tau"],
+        param_name = ["density", "hierarchy_weight"],
         param_idx = [-3, -2],
         method_idx = -4,
     script:
         '../scripts/gather_scores.py'
 
-rule gather_mu_scores:
+rule gather_brd_strength_scores:
     conda:
-        "../envs/PCA.yml"
+        envs_path + "/scdef_reproducibility.yml"
     input:
         fname_list = expand(
-            output_path + '/mu/den_{density}/mu_{mu}/rep_{rep_id}_scores.csv',
-            mu=MU,
+            output_path + '/brd_strength/den_{density}/brd_{brd}/rep_{rep_id}_scores.csv',
+            brd=BRD_STRENGTH,
             density=DENSITY,
             rep_id=[r for r in range(N_REPS)],)
     output:
-        output_path + '/mu_scores.csv',
+        output_path + '/brd_strength_scores.csv',
     params:
-        param_name = ["density", "mu"],
+        param_name = ["density", "brd_strength"],
         param_idx = [-3, -2],
         method_idx = -4,
     script:
         '../scripts/gather_scores.py'
 
-rule gather_kappa_scores:
+rule gather_brd_mean_scores:
     conda:
-        "../envs/PCA.yml"
+        envs_path + "/scdef_reproducibility.yml"
     input:
         fname_list = expand(
-            output_path + '/kappa/den_{density}/kappa_{kappa}/rep_{rep_id}_scores.csv',
+            output_path + '/brd_mean/den_{density}/brdm_{brdm}/rep_{rep_id}_scores.csv',
+            brdm=BRD_MEAN,
             density=DENSITY,
-            kappa=KAPPA,
             rep_id=[r for r in range(N_REPS)],)
     output:
-        output_path + '/kappa_scores.csv',
+        output_path + '/brd_mean_scores.csv',
     params:
-        param_name = ["density", "kappa"],
+        param_name = ["density", "brd_mean"],
         param_idx = [-3, -2],
         method_idx = -4,
     script:
         '../scripts/gather_scores.py'
+
+
+# ---- Data generation ----
 
 rule generate_density_data:
     conda:
-        "../envs/splatter.yml"
+        envs_path + "/splatter.yml"
     params:
         de_fscale = config["de_fscale"],
         de_prob = "{density}",
@@ -100,7 +116,7 @@ rule generate_density_data:
 
 rule prepare_input:
     conda:
-        "../envs/PCA.yml"
+        envs_path + "/scdef_reproducibility.yml"
     params:
         seed = "{rep_id}",
     input:
@@ -112,80 +128,155 @@ rule prepare_input:
     script:
         '../scripts/prepare_input.py'
 
-rule run_scdef_tau:
+
+# ---- hierarchy_weight sweep ----
+
+rule run_scdef_hw:
     conda:
-        "../envs/scdef.yml"
+        envs_path + "/scdef_reproducibility.yml"
+    threads: 4
+    resources:
+        mem_mb = 32000,
+        gpu = 1,
     params:
         nmf_init = config['scDEF']['nmf_init'],
-        tau = "{tau}",
-        mu = config['scDEF']['mu'],
-        kappa = config['scDEF']['kappa'],
+        brd_strength = config['scDEF']['brd_strength'],
+        brd_mean = config['scDEF']['brd_mean'],
+        hierarchy_weight = "{hw}",
         n_layers = config['scDEF']['n_layers'],
         n_factors = config['scDEF']['n_factors'],
-        decay_factor = config['scDEF']['decay_factor'],
-        pretrain = config['scDEF']['pretrain'],
+        top_factors = config['scDEF']['top_factors'],
+        pretraining = config['scDEF']['pretraining'],
         n_epoch = config['scDEF']['n_epoch'],
         lr = config['scDEF']['lr'],
         batch_size = config['scDEF']['batch_size'],
         num_samples = config['scDEF']['num_samples'],
-        metrics = METRICS,
         seed = "{rep_id}",
-        store_full = False
     input:
         adata = output_path + '/data/den_{density}/rep_{rep_id}.h5ad',
     output:
-        scores_fname = output_path + '/tau/den_{density}/tau_{tau}/rep_{rep_id}_scores.csv',
+        out_dir = directory(output_path + '/hierarchy_weight/den_{density}/hw_{hw}/rep_{rep_id}/'),
+        duration_fname = output_path + '/hierarchy_weight/den_{density}/hw_{hw}/rep_{rep_id}_duration.txt',
     script:
         '../scripts/run_scdef.py'
 
-rule run_scdef_mu:
+rule evaluate_scdef_hw:
     conda:
-        "../envs/scdef.yml"
+        envs_path + "/scdef_reproducibility.yml"
+    threads: 1
+    resources:
+        mem_mb = 8000,
+    params:
+        method = "scDEF",
+        metrics = METRICS,
+        is_scdef = True,
+    input:
+        adata = output_path + '/data/den_{density}/rep_{rep_id}.h5ad',
+        model_state = output_path + '/hierarchy_weight/den_{density}/hw_{hw}/rep_{rep_id}/',
+        duration_fname = output_path + '/hierarchy_weight/den_{density}/hw_{hw}/rep_{rep_id}_duration.txt',
+    output:
+        scores_fname = output_path + '/hierarchy_weight/den_{density}/hw_{hw}/rep_{rep_id}_scores.csv',
+    script:
+        '../scripts/evaluate_results.py'
+
+
+# ---- brd_strength sweep ----
+
+rule run_scdef_brd_strength:
+    conda:
+        envs_path + "/scdef_reproducibility.yml"
+    threads: 4
+    resources:
+        mem_mb = 32000,
+        gpu = 1,
     params:
         nmf_init = config['scDEF']['nmf_init'],
-        tau = config['scDEF']['tau'],
-        mu = "{mu}",
-        kappa = config['scDEF']['kappa'],
+        brd_strength = "{brd}",
+        brd_mean = config['scDEF']['brd_mean'],
+        hierarchy_weight = config['scDEF']['hierarchy_weight'],
         n_layers = config['scDEF']['n_layers'],
         n_factors = config['scDEF']['n_factors'],
-        decay_factor = config['scDEF']['decay_factor'],
-        pretrain = config['scDEF']['pretrain'],
+        top_factors = config['scDEF']['top_factors'],
+        pretraining = config['scDEF']['pretraining'],
         n_epoch = config['scDEF']['n_epoch'],
         lr = config['scDEF']['lr'],
         batch_size = config['scDEF']['batch_size'],
         num_samples = config['scDEF']['num_samples'],
-        metrics = METRICS,
         seed = "{rep_id}",
-        store_full = False
     input:
         adata = output_path + '/data/den_{density}/rep_{rep_id}.h5ad',
     output:
-        scores_fname = output_path + '/mu/den_{density}/mu_{mu}/rep_{rep_id}_scores.csv',
+        out_dir = directory(output_path + '/brd_strength/den_{density}/brd_{brd}/rep_{rep_id}/'),
+        duration_fname = output_path + '/brd_strength/den_{density}/brd_{brd}/rep_{rep_id}_duration.txt',
     script:
         '../scripts/run_scdef.py'
 
-rule run_scdef_kappa:
+rule evaluate_scdef_brd_strength:
     conda:
-        "../envs/scdef.yml"
+        envs_path + "/scdef_reproducibility.yml"
+    threads: 1
+    resources:
+        mem_mb = 8000,
+    params:
+        method = "scDEF",
+        metrics = METRICS,
+        is_scdef = True,
+    input:
+        adata = output_path + '/data/den_{density}/rep_{rep_id}.h5ad',
+        model_state = output_path + '/brd_strength/den_{density}/brd_{brd}/rep_{rep_id}/',
+        duration_fname = output_path + '/brd_strength/den_{density}/brd_{brd}/rep_{rep_id}_duration.txt',
+    output:
+        scores_fname = output_path + '/brd_strength/den_{density}/brd_{brd}/rep_{rep_id}_scores.csv',
+    script:
+        '../scripts/evaluate_results.py'
+
+
+# ---- brd_mean sweep ----
+
+rule run_scdef_brd_mean:
+    conda:
+        envs_path + "/scdef_reproducibility.yml"
+    threads: 4
+    resources:
+        mem_mb = 32000,
+        gpu = 1,
     params:
         nmf_init = config['scDEF']['nmf_init'],
-        tau = config['scDEF']['tau'],
-        mu = config['scDEF']['mu'],
-        kappa = "{kappa}",
+        brd_strength = config['scDEF']['brd_strength'],
+        brd_mean = "{brdm}",
+        hierarchy_weight = config['scDEF']['hierarchy_weight'],
         n_layers = config['scDEF']['n_layers'],
         n_factors = config['scDEF']['n_factors'],
-        decay_factor = config['scDEF']['decay_factor'],
-        pretrain = config['scDEF']['pretrain'],
+        top_factors = config['scDEF']['top_factors'],
+        pretraining = config['scDEF']['pretraining'],
         n_epoch = config['scDEF']['n_epoch'],
         lr = config['scDEF']['lr'],
         batch_size = config['scDEF']['batch_size'],
         num_samples = config['scDEF']['num_samples'],
-        metrics = METRICS,
         seed = "{rep_id}",
-        store_full = False
     input:
         adata = output_path + '/data/den_{density}/rep_{rep_id}.h5ad',
     output:
-        scores_fname = output_path + '/kappa/den_{density}/kappa_{kappa}/rep_{rep_id}_scores.csv',
+        out_dir = directory(output_path + '/brd_mean/den_{density}/brdm_{brdm}/rep_{rep_id}/'),
+        duration_fname = output_path + '/brd_mean/den_{density}/brdm_{brdm}/rep_{rep_id}_duration.txt',
     script:
         '../scripts/run_scdef.py'
+
+rule evaluate_scdef_brd_mean:
+    conda:
+        envs_path + "/scdef_reproducibility.yml"
+    threads: 1
+    resources:
+        mem_mb = 8000,
+    params:
+        method = "scDEF",
+        metrics = METRICS,
+        is_scdef = True,
+    input:
+        adata = output_path + '/data/den_{density}/rep_{rep_id}.h5ad',
+        model_state = output_path + '/brd_mean/den_{density}/brdm_{brdm}/rep_{rep_id}/',
+        duration_fname = output_path + '/brd_mean/den_{density}/brdm_{brdm}/rep_{rep_id}_duration.txt',
+    output:
+        scores_fname = output_path + '/brd_mean/den_{density}/brdm_{brdm}/rep_{rep_id}_scores.csv',
+    script:
+        '../scripts/evaluate_results.py'

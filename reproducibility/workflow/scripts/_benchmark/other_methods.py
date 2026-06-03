@@ -1,14 +1,82 @@
 from .constants import *
 
-from scdef.utils import hierarchy_utils
-from scdef.models import scDEF
-
 import numpy as np
 from anndata import AnnData
 import scanpy as sc
 import random
 
 from typing import Optional, Sequence, Mapping, Callable
+
+
+# ---------------------------------------------------------------------------
+# Vendored from scdef.utils to avoid requiring scdef in non-scDEF environments
+# ---------------------------------------------------------------------------
+
+
+def _jaccard_similarity(lists):
+    list_of_sets = [set(lst) for lst in lists]
+    intersection = set.intersection(*list_of_sets)
+    union = set.union(*list_of_sets)
+    return float(len(intersection) / float(len(union)))
+
+
+def _get_hierarchy_from_clusters(clusters_levels, level_prefix="h", use_names=False):
+    hierarchy = dict()
+    level_prefixes = [level_prefix * level for level in range(len(clusters_levels))]
+    for level, clusters in enumerate(clusters_levels[:-1]):
+        clusters_up = clusters_levels[level + 1]
+        unique_clusters = np.unique(clusters)
+        unique_clusters_up = np.unique(clusters_up)
+        for i, cluster in enumerate(unique_clusters):
+            if use_names:
+                name = f"{cluster}"
+            else:
+                name = f"{level_prefixes[level]}{i}"
+            cells_a = np.where(np.array(clusters) == cluster)[0]
+            scores = []
+            for j, cluster_up in enumerate(unique_clusters_up):
+                cells_b = np.where(np.array(clusters_up) == cluster_up)[0]
+                scores.append(_jaccard_similarity([cells_a, cells_b]))
+            if use_names:
+                upper_level = f"{unique_clusters_up[np.argmax(scores)]}"
+            else:
+                upper_level = f"{level_prefixes[level+1]}{np.argmax(scores)}"
+            if upper_level in hierarchy:
+                hierarchy[upper_level].append(name)
+            else:
+                hierarchy[upper_level] = [name]
+    return hierarchy
+
+
+def _simplify_hierarchy(hierarchy, layer_names, layer_sizes, factor_names=None):
+    simplified = hierarchy.copy()
+    n_layers = len(layer_names)
+    for layer_idx in range(1, n_layers):
+        layer_name = layer_names[layer_idx]
+        for factor_idx in range(layer_sizes[layer_idx]):
+            if factor_names is not None:
+                factor_name = factor_names[layer_idx][factor_idx]
+            else:
+                factor_name = f"{layer_name}{factor_idx}"
+            if factor_name in simplified:
+                if len(simplified[factor_name]) == 1:
+                    if simplified[factor_name][0] in simplified:
+                        down_hrc = simplified[simplified[factor_name][0]]
+                        old_hrc = simplified[factor_name][0]
+                        if len(down_hrc) > 1:
+                            simplified[factor_name] = down_hrc
+                            del simplified[old_hrc]
+                        else:
+                            if layer_idx < n_layers - 1:
+                                del simplified[factor_name]
+                            else:
+                                simplified[factor_name] = []
+                    else:
+                        del simplified[factor_name]
+    return simplified
+
+
+# ---------------------------------------------------------------------------
 
 
 def run_multiple_resolutions(
@@ -62,11 +130,12 @@ def run_multiple_resolutions(
         adata.obs[f"{prefix}_cluster"] = assignments
     adata.uns["signatures"] = signatures_dict
     adata.uns["scores"] = scores_dict
+    adata.uns["sizes"] = sizes_dict
 
-    hierarchy = hierarchy_utils.get_hierarchy_from_clusters(assignments_results)
+    hierarchy = _get_hierarchy_from_clusters(assignments_results)
     layer_names = [layer_prefix * level for level in range(len(assignments_results))]
     layer_sizes = [len(np.unique(cluster)) for cluster in assignments_results]
-    simplified = hierarchy_utils.simplify_hierarchy(hierarchy, layer_names, layer_sizes)
+    simplified = _simplify_hierarchy(hierarchy, layer_names, layer_sizes)
 
     adata.uns["hierarchy"] = simplified
     outs = {
@@ -508,7 +577,9 @@ def run_scdef_hclust(
 ):
     from scipy import cluster
 
-    scd = scDEF(
+    from scdef.models import scDEF as _scDEF
+
+    scd = _scDEF(
         ad,
         layer_sizes=[100, 1],
         layer_shapes=0.3,
@@ -601,10 +672,10 @@ def run_scdef_hclust(
             except KeyError:
                 sizes_dict[name] = 0
 
-    hierarchy = hierarchy_utils.get_hierarchy_from_clusters(assignments_results)
+    hierarchy = _get_hierarchy_from_clusters(assignments_results)
     layer_names = [layer_prefix * level for level in range(len(assignments_results))]
     layer_sizes = [len(np.unique(cluster)) for cluster in assignments_results]
-    simplified = hierarchy_utils.simplify_hierarchy(hierarchy, layer_names, layer_sizes)
+    simplified = _simplify_hierarchy(hierarchy, layer_names, layer_sizes)
 
     outs = {
         "latents": latents_results,
@@ -713,10 +784,10 @@ def run_unintegrated_hclust(
             except KeyError:
                 sizes_dict[name] = 0
 
-    hierarchy = hierarchy_utils.get_hierarchy_from_clusters(assignments_results)
+    hierarchy = _get_hierarchy_from_clusters(assignments_results)
     layer_names = [layer_prefix * level for level in range(len(assignments_results))]
     layer_sizes = [len(np.unique(cluster)) for cluster in assignments_results]
-    simplified = hierarchy_utils.simplify_hierarchy(hierarchy, layer_names, layer_sizes)
+    simplified = _simplify_hierarchy(hierarchy, layer_names, layer_sizes)
 
     outs = {
         "latents": latents_results,
@@ -812,10 +883,10 @@ def run_nsbm(
             except KeyError:
                 sizes_dict[name] = 0
 
-    hierarchy = hierarchy_utils.get_hierarchy_from_clusters(assignments_results)
+    hierarchy = _get_hierarchy_from_clusters(assignments_results)
     layer_names = [layer_prefix * level for level in range(len(assignments_results))]
     layer_sizes = [len(np.unique(cluster)) for cluster in assignments_results]
-    simplified = hierarchy_utils.simplify_hierarchy(hierarchy, layer_names, layer_sizes)
+    simplified = _simplify_hierarchy(hierarchy, layer_names, layer_sizes)
 
     outs = {
         "latents": latents_results,

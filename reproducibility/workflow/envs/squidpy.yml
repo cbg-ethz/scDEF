@@ -9,6 +9,5 @@ dependencies:
   - leidenalg
   - pip
   - pip:
-    - scdef==0.3.5
-    - squidpy
+    - squidpy>=1.5,<1.7
     - scikit-misc

@@ -12,26 +12,30 @@ METHODS = config["methods"]
 SEED = config["seed"]
 METRICS = config["metrics"]
 
-include: "run_methods.smk"
+RUN_SUFFIX = "run"
+INPUT_ADATA = output_path + '/prepared_input.h5ad'
+METHOD_SEED = SEED
+
+include: "../run_methods.smk"
 
 rule all:
     input:
         output_path + '/scores.csv'
 rule gather_results:
     conda:
-        "../envs/PCA.yml"
+        "../envs/scdef_reproducibility.yml"
     input:
         fname_list = expand(
-            output_path + '/{method}/{method}.csv',
+            output_path + '/{method}/run_scores.csv',
             method=METHODS,)
     output:
         fname = output_path + '/scores.csv'
     script:
-        'scripts/gather_scores.py'
+        '../scripts/gather_real_data_scores.py'
 
 rule prepare_input:
     conda:
-        "../envs/PCA.yml"
+        "../envs/scdef_reproducibility.yml"
     params:
         data_fname = config['data_path'],
         seed = config['seed'],

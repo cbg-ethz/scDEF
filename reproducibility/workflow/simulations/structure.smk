@@ -1,19 +1,26 @@
 """
-Generate hierarchical data from 4 batches and 3 layers.
-A Learn scDEF with 1, 2, 3, and 4 layers and compute ARI wrt to each scDEF layer and each true layer
-B Learn scDEF with 4 layers of sizes 100, 60, 30, 10, 1 and 100, 50, 30, 10, 1 and 100, 60, 20, 10, 1 and compute all metrics
+Structure ablation study.
+A: Learn scDEF with varying n_layers and compute metrics per layer.
+B: Learn scDEF with varying n_factors and compute all metrics.
 """
 
-output_path = "structure_results"
+output_path = config.get("output_path", "structure_results")
 
 configfile: "config/structure_config.yaml"
 configfile: "config/methods.yaml"
 
 N_REPS = config["n_reps"]
 LAYERS = config["n_layers"]
-DECAY_FACTORS = config["decay_factors"]
+FACTORS = config["n_factors"]
 METRICS = config["metrics"]
 
+envs_path = "../envs"
+scripts_path = "../scripts"
+
+wildcard_constraints:
+    rep_id = r"\d+",
+    n_layers = r"\d+",
+    n_factors = r"\d+",
 
 rule all:
     input:
@@ -22,7 +29,7 @@ rule all:
 
 rule gather_layers_scores:
     conda:
-        "../envs/PCA.yml"
+        envs_path + "/scdef_reproducibility.yml"
     input:
         fname_list = expand(
             output_path + '/scDEF/layers_{n_layers}/rep_{rep_id}_scores.csv',
@@ -39,14 +46,14 @@ rule gather_layers_scores:
 
 rule gather_factors_scores:
     conda:
-        "../envs/PCA.yml"
+        envs_path + "/scdef_reproducibility.yml"
     input:
         fname_list = expand(
-            output_path + '/scDEF/decay_{decay_factor}/rep_{rep_id}_scores.csv',
-            decay_factor=DECAY_FACTORS,
+            output_path + '/scDEF/factors_{n_factors}/rep_{rep_id}_scores.csv',
+            n_factors=FACTORS,
             rep_id=[r for r in range(N_REPS)],)
     params:
-        param_name = ["decay_factor"],
+        param_name = ["n_factors"],
         param_idx = [-2],
         method_idx = -3,
     output:
@@ -57,7 +64,7 @@ rule gather_factors_scores:
 
 rule generate_data:
     conda:
-        "../envs/splatter.yml"
+        envs_path + "/splatter.yml"
     params:
         de_fscale = config["de_fscale"],
         de_prob = config["de_prob"],
@@ -78,7 +85,7 @@ rule generate_data:
 
 rule prepare_input:
     conda:
-        "../envs/PCA.yml"
+        envs_path + "/scdef_reproducibility.yml"
     params:
         seed = "{rep_id}",
     input:
@@ -90,57 +97,104 @@ rule prepare_input:
     script:
         '../scripts/prepare_input.py'
 
+
+# ---- n_layers sweep ----
+
 rule run_scdef_layers:
     conda:
-        "../envs/scdef.yml"
+        envs_path + "/scdef_reproducibility.yml"
+    threads: 4
+    resources:
+        mem_mb = 32000,
+        gpu = 1,
     params:
         n_layers = "{n_layers}",
-        decay_factor = config['scDEF']['decay_factor'],
-        kappa = config['scDEF']['kappa'],
         n_factors = config['scDEF']['n_factors'],
         nmf_init = config['scDEF']['nmf_init'],
-        pretrain = config['scDEF']['pretrain'],
-        tau = config['scDEF']['tau'],
-        mu = config['scDEF']['mu'],
+        pretraining = config['scDEF']['pretraining'],
+        brd_strength = config['scDEF']['brd_strength'],
+        brd_mean = config['scDEF']['brd_mean'],
+        hierarchy_weight = config['scDEF']['hierarchy_weight'],
+        top_factors = config['scDEF']['top_factors'],
         n_epoch = config['scDEF']['n_epoch'],
         lr = config['scDEF']['lr'],
         batch_size = config['scDEF']['batch_size'],
         num_samples = config['scDEF']['num_samples'],
-        metrics = METRICS,
         seed = "{rep_id}",
-        store_full = True
     input:
         adata = output_path + '/data/rep_{rep_id}.h5ad',
     output:
-        out_fname = output_path + '/scDEF/layers_{n_layers}/rep_{rep_id}.pkl',
-        scores_fname = output_path + '/scDEF/layers_{n_layers}/rep_{rep_id}_scores.csv',
+        out_dir = directory(output_path + '/scDEF/layers_{n_layers}/rep_{rep_id}/'),
+        duration_fname = output_path + '/scDEF/layers_{n_layers}/rep_{rep_id}_duration.txt',
     script:
         '../scripts/run_scdef.py'
 
+rule evaluate_scdef_layers:
+    conda:
+        envs_path + "/scdef_reproducibility.yml"
+    threads: 1
+    resources:
+        mem_mb = 8000,
+    params:
+        method = "scDEF",
+        metrics = METRICS,
+        is_scdef = True,
+    input:
+        adata = output_path + '/data/rep_{rep_id}.h5ad',
+        model_state = output_path + '/scDEF/layers_{n_layers}/rep_{rep_id}/',
+        duration_fname = output_path + '/scDEF/layers_{n_layers}/rep_{rep_id}_duration.txt',
+    output:
+        scores_fname = output_path + '/scDEF/layers_{n_layers}/rep_{rep_id}_scores.csv',
+    script:
+        '../scripts/evaluate_results.py'
+
+
+# ---- n_factors sweep ----
 
 rule run_scdef_factors:
     conda:
-        "../envs/scdef.yml"
+        envs_path + "/scdef_reproducibility.yml"
+    threads: 4
+    resources:
+        mem_mb = 32000,
+        gpu = 1,
     params:
         n_layers = config['scDEF']['n_layers'],
-        decay_factor = "{decay_factor}",
-        kappa = config['scDEF']['kappa'],        
-        n_factors = config['scDEF']['n_factors'],
+        n_factors = "{n_factors}",
         nmf_init = config['scDEF']['nmf_init'],
-        pretrain = config['scDEF']['pretrain'],
-        tau = config['scDEF']['tau'],
-        mu = config['scDEF']['mu'],
+        pretraining = config['scDEF']['pretraining'],
+        brd_strength = config['scDEF']['brd_strength'],
+        brd_mean = config['scDEF']['brd_mean'],
+        hierarchy_weight = config['scDEF']['hierarchy_weight'],
+        top_factors = config['scDEF']['top_factors'],
         n_epoch = config['scDEF']['n_epoch'],
         lr = config['scDEF']['lr'],
         batch_size = config['scDEF']['batch_size'],
         num_samples = config['scDEF']['num_samples'],
-        metrics = METRICS,
         seed = "{rep_id}",
-        store_full = True
     input:
         adata = output_path + '/data/rep_{rep_id}.h5ad',
     output:
-        out_fname = output_path + '/scDEF/decay_{decay_factor}/rep_{rep_id}.pkl',
-        scores_fname = output_path + '/scDEF/decay_{decay_factor}/rep_{rep_id}_scores.csv',
+        out_dir = directory(output_path + '/scDEF/factors_{n_factors}/rep_{rep_id}/'),
+        duration_fname = output_path + '/scDEF/factors_{n_factors}/rep_{rep_id}_duration.txt',
     script:
         '../scripts/run_scdef.py'
+
+rule evaluate_scdef_factors:
+    conda:
+        envs_path + "/scdef_reproducibility.yml"
+    threads: 1
+    resources:
+        mem_mb = 8000,
+    params:
+        method = "scDEF",
+        metrics = METRICS,
+        is_scdef = True,
+    input:
+        adata = output_path + '/data/rep_{rep_id}.h5ad',
+        model_state = output_path + '/scDEF/factors_{n_factors}/rep_{rep_id}/',
+        duration_fname = output_path + '/scDEF/factors_{n_factors}/rep_{rep_id}_duration.txt',
+    output:
+        scores_fname = output_path + '/scDEF/factors_{n_factors}/rep_{rep_id}_scores.csv',
+    script:
+        '../scripts/evaluate_results.py'
