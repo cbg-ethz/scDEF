@@ -106,6 +106,88 @@ def get_prob_scores(model, obs_key, obs_vals):
     return mats
 
 
+def get_score_means(model, obs_key, obs_vals):
+    """Mean raw cell-factor score per observation category.
+
+    Uses ``adata.obsm['X_<layer>']`` (unnormalised cell-factor loadings from
+    :meth:`annotate_adata`).  This is the obs-averaged analogue of
+    ``obs_cell_factor_heatmap(values="score")``.
+
+    Values are *not* bounded to [0, 1].
+    """
+    n_obs = len(obs_vals)
+    mats = [
+        np.zeros((n_obs, len(model.factor_names[idx]))) for idx in range(model.n_layers)
+    ]
+    for layer_idx in range(model.n_layers):
+        layer_name = model.layer_names[layer_idx]
+        key = f"X_{layer_name}"
+        if key not in model.adata.obsm:
+            raise KeyError(
+                f"Missing {key} in adata.obsm. Run model.annotate_adata() (or "
+                "model.fit with annotate=True) so per-cell factor scores exist."
+            )
+        arr = np.asarray(model.adata.obsm[key], dtype=float)
+        n_fac = len(model.factor_names[layer_idx])
+        if arr.shape[1] != n_fac:
+            raise ValueError(
+                f"{key} has {arr.shape[1]} columns but layer {layer_idx} has {n_fac} factors."
+            )
+
+    obs_arr = model.adata.obs[obs_key].to_numpy()
+    for i, obs_val in enumerate(obs_vals):
+        mask = obs_arr == obs_val
+        if not np.any(mask):
+            continue
+        for layer_idx in range(model.n_layers):
+            layer_name = model.layer_names[layer_idx]
+            scores = np.asarray(model.adata.obsm[f"X_{layer_name}"], dtype=float)
+            mats[layer_idx][i, :] = np.mean(scores[mask], axis=0)
+    return mats
+
+
+def get_soft_prec_scores(model, obs_key, obs_vals, eps=1e-12):
+    """Soft precision: fraction of each factor's total soft mass in an obs category.
+
+    For factor *F* and obs value *V*:
+
+        soft_prec(F, V) = sum(p_{iF} for i in V) / sum(p_{iF} for all i)
+
+    where ``p`` is the row-normalised ``X_<layer>_probs``.  A value of 0.5
+    means the factor's soft mass is evenly split; values near 1.0 mean the
+    factor is almost exclusively used by *V*-cells.  Unlike ``weights``
+    (soft F1), this is **not** penalised by low recall, so even a low-ARD
+    background factor that is biased towards one batch will score high.
+    """
+    n_obs = len(obs_vals)
+    mats = [
+        np.zeros((n_obs, len(model.factor_names[idx]))) for idx in range(model.n_layers)
+    ]
+    for layer_idx in range(model.n_layers):
+        layer_name = model.layer_names[layer_idx]
+        key = f"X_{layer_name}_probs"
+        if key not in model.adata.obsm:
+            raise KeyError(
+                f"Missing {key} in adata.obsm. Run model.annotate_adata() (or "
+                "model.fit with annotate=True) so per-cell factor probabilities exist."
+            )
+        probs = np.asarray(model.adata.obsm[key], dtype=float)
+        n_fac = len(model.factor_names[layer_idx])
+        if probs.shape[1] != n_fac:
+            raise ValueError(
+                f"{key} has {probs.shape[1]} columns but layer {layer_idx} has {n_fac} factors."
+            )
+        total_mass = probs.sum(axis=0)  # (n_factors,)
+        obs_arr = model.adata.obs[obs_key].to_numpy()
+        for i, obs_val in enumerate(obs_vals):
+            mask = obs_arr == obs_val
+            if not np.any(mask):
+                continue
+            obs_mass = probs[mask].sum(axis=0)
+            mats[layer_idx][i, :] = obs_mass / np.clip(total_mass, eps, None)
+    return mats
+
+
 def get_signature_scores(model, obs_key, obs_vals, markers, top_genes=10):
     """Get signature scores for observations and factors."""
     from ..tools.factor import get_stored_confident_signatures
@@ -199,7 +281,7 @@ def prepare_obs_factor_scores(
 def cache_obs_factor_scores(
     model,
     obs_keys: Sequence[str],
-    mode: Literal["f1", "fracs", "weights", "prob"],
+    mode: Literal["f1", "fracs", "weights", "prob", "soft_prec", "score"],
     obs_mats: Dict[str, list],
     obs_clusters: Dict[str, np.ndarray],
     obs_vals_dict: Dict[str, list],

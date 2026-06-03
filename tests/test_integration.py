@@ -174,7 +174,7 @@ def test_scdef():
         layer=0,
         obs_key="celltypes",
         obs_values=["B", "NK"],
-        score_model="fracs",
+        mode="fracs",
     )
     assert isinstance(ranked, pd.DataFrame)
     assert len(ranked) == 2 * len(model.factor_names[0])
@@ -188,7 +188,7 @@ def test_scdef():
         layer=0,
         obs_key="celltypes",
         obs_values=["B", "NK"],
-        score_model="fracs",
+        mode="fracs",
         min_specificity=0.0,
     )
     assert set(specific.keys()) == {"B", "NK"}
@@ -197,7 +197,7 @@ def test_scdef():
         layer=0,
         obs_key="celltypes",
         obs_values=["B", "NK"],
-        score_model="fracs",
+        mode="fracs",
         min_specificity=0.0,
         return_scores=True,
     )

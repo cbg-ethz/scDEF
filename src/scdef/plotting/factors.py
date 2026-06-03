@@ -958,7 +958,7 @@ def obs_scores(
     model: "scDEF",
     obs_keys: Sequence[str],
     hierarchy: Optional[Dict[str, Sequence[str]]] = None,
-    mode: Literal["f1", "fracs", "weights", "prob"] = "fracs",
+    mode: Literal["f1", "fracs", "weights", "prob", "soft_prec", "score"] = "fracs",
     vmax: Optional[float] = None,
     vmin: Optional[float] = None,
     **kwargs: Any,
@@ -969,9 +969,20 @@ def obs_scores(
         model: scDEF model instance
         obs_keys: the keys in model.adata.obs to use
         hierarchy: the polytree to restrict the associations to
-        mode: assignment F1 (``f1``), assignment fractions (``fracs``), usage
-            weights (``weights``), or mean per-cell factor probabilities (``prob``;
-            requires ``annotate_adata`` / ``X_<layer>_probs``).
+        mode: scoring method:
+
+            - ``"f1"``: hard F1 score (argmax assignments).
+            - ``"fracs"``: hard precision / factor purity (P(obs=V | assigned to F)).
+            - ``"weights"``: soft F1 score (harmonic mean of soft precision and
+              soft recall, using ``X_<layer>_probs``).
+            - ``"prob"``: soft mean membership / soft recall (E[p(F) | obs=V]).
+            - ``"soft_prec"``: soft precision (fraction of each factor's total
+              soft mass in the obs category).
+            - ``"score"``: mean raw cell-factor score (``X_<layer>``) per obs
+              category — the obs-averaged analogue of
+              ``obs_cell_factor_heatmap(values="score")``. Values are not
+              bounded to [0, 1].
+
         **kwargs: plotting keyword arguments
     """
     if mode == "f1":
@@ -982,8 +993,14 @@ def obs_scores(
         f = data_utils.get_weight_scores
     elif mode == "prob":
         f = data_utils.get_prob_scores
+    elif mode == "soft_prec":
+        f = data_utils.get_soft_prec_scores
+    elif mode == "score":
+        f = data_utils.get_score_means
     else:
-        raise ValueError("`mode` must be one of ['f1', 'fracs', 'weights', 'prob']")
+        raise ValueError(
+            "`mode` must be one of ['f1', 'fracs', 'weights', 'prob', 'soft_prec', 'score']"
+        )
 
     obs_mats, obs_clusters, obs_vals_dict = data_utils.prepare_obs_factor_scores(
         model,
@@ -1000,7 +1017,7 @@ def obs_scores(
         obs_vals_dict=obs_vals_dict,
     )
 
-    if mode in ("f1", "fracs", "prob"):
+    if mode in ("f1", "fracs", "prob", "soft_prec", "weights"):
         vmax = 1.0
         vmin = 0.0
 

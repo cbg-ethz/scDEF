@@ -385,17 +385,18 @@ def _compute_wedged_fillcolor(model, wedged, cells):
 
 
 def _compute_wedged_fillcolor_with_scores(model, wedged, factor_name):
+    """Soft-precision wedge: fraction of the factor's total soft mass per obs category."""
     scores = model.adata.obs[f"{factor_name}_prob"].values
-    prevs = []
-    for b in model.adata.obs[wedged].cat.categories:
-        group_mask = (model.adata.obs[wedged] == b).values
-        score = np.mean(scores[group_mask]) if len(group_mask) > 0 else 0.0
-        prevs.append(score)
-    prevs = np.asarray(prevs, dtype=float)
-    total = float(np.sum(prevs))
+    obs_vals = model.adata.obs[wedged]
+    mass_per_cat = []
+    for b in obs_vals.cat.categories:
+        group_mask = (obs_vals == b).values
+        mass_per_cat.append(float(np.sum(scores[group_mask])))
+    mass_per_cat = np.asarray(mass_per_cat, dtype=float)
+    total = float(np.sum(mass_per_cat))
     if not np.isfinite(total) or total <= 0:
         return "#FFFFFF"
-    fracs = prevs / total
+    fracs = mass_per_cat / total
     return ":".join(
         [
             f"{model.adata.uns[f'{wedged}_colors'][obs_idx]};{frac}"

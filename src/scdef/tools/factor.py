@@ -906,7 +906,7 @@ def get_obs_score_rankings(
     layer: Union[int, str],
     obs_key: str,
     obs_values: Union[str, Sequence[str]],
-    score_model: Literal["f1", "fracs", "weights", "prob"] = "fracs",
+    mode: Literal["f1", "fracs", "weights", "prob", "soft_prec", "score"] = "fracs",
     ascending: bool = False,
     recompute: bool = False,
 ) -> pd.DataFrame:
@@ -914,7 +914,7 @@ def get_obs_score_rankings(
 
     This reads cached matrices from ``model.adata.uns['obs_scores']`` (written by
     ``scd.pl.obs_scores``). If cache is missing/stale for the requested key/model,
-    it is recomputed on demand for the requested ``obs_key`` and ``score_model``.
+    it is recomputed on demand for the requested ``obs_key`` and ``mode``.
     """
     if isinstance(layer, str):
         if layer not in model.layer_names:
@@ -935,7 +935,7 @@ def get_obs_score_rankings(
 
     fit_rev = int(getattr(model, "_fit_revision", 0))
     cache_root = model.adata.uns.get("obs_scores", {})
-    mode_cache = cache_root.get(score_model, {})
+    mode_cache = cache_root.get(mode, {})
     need_recompute = recompute
     if int(mode_cache.get("fit_revision", -1)) != fit_rev:
         need_recompute = True
@@ -943,17 +943,21 @@ def get_obs_score_rankings(
         need_recompute = True
 
     if need_recompute:
-        if score_model == "f1":
+        if mode == "f1":
             score_func = data_utils.get_assignment_scores
-        elif score_model == "fracs":
+        elif mode == "fracs":
             score_func = data_utils.get_assignment_fracs
-        elif score_model == "weights":
+        elif mode == "weights":
             score_func = data_utils.get_weight_scores
-        elif score_model == "prob":
+        elif mode == "prob":
             score_func = data_utils.get_prob_scores
+        elif mode == "soft_prec":
+            score_func = data_utils.get_soft_prec_scores
+        elif mode == "score":
+            score_func = data_utils.get_score_means
         else:
             raise ValueError(
-                "score_model must be one of ['f1', 'fracs', 'weights', 'prob']."
+                "mode must be one of ['f1', 'fracs', 'weights', 'prob', 'soft_prec', 'score']."
             )
 
         obs_mats, obs_clusters, obs_vals_dict = data_utils.prepare_obs_factor_scores(
@@ -964,13 +968,13 @@ def get_obs_score_rankings(
         data_utils.cache_obs_factor_scores(
             model=model,
             obs_keys=[obs_key],
-            mode=score_model,
+            mode=mode,
             obs_mats=obs_mats,
             obs_clusters=obs_clusters,
             obs_vals_dict=obs_vals_dict,
         )
         cache_root = model.adata.uns.get("obs_scores", {})
-        mode_cache = cache_root.get(score_model, {})
+        mode_cache = cache_root.get(mode, {})
 
     obs_entry = mode_cache["obs_keys"][obs_key]
     available_obs_values = list(obs_entry["obs_values"])
@@ -999,7 +1003,7 @@ def get_obs_score_rankings(
                     "layer_idx": int(layer_idx),
                     "obs_key": obs_key,
                     "obs_value": obs_value,
-                    "score_model": score_model,
+                    "mode": mode,
                     "score": selected[i, :],
                 }
             )
@@ -1019,7 +1023,7 @@ def get_obs_value_specific_factors(
     layer: Union[int, str],
     obs_key: str,
     obs_values: Union[str, Sequence[str]],
-    score_model: Literal["f1", "fracs", "weights", "prob"] = "fracs",
+    mode: Literal["f1", "fracs", "weights", "prob", "soft_prec", "score"] = "fracs",
     min_specificity: float = 0.0,
     top_n: Optional[int] = None,
     recompute: bool = False,
@@ -1042,7 +1046,7 @@ def get_obs_value_specific_factors(
         layer=layer,
         obs_key=obs_key,
         obs_values=obs_values,
-        score_model=score_model,
+        mode=mode,
         recompute=recompute,
         ascending=False,
     )
@@ -1079,7 +1083,7 @@ def get_obs_value_specific_factors(
     spec_df["layer"] = ranked["layer"].iloc[0]
     spec_df["layer_idx"] = int(ranked["layer_idx"].iloc[0])
     spec_df["obs_key"] = obs_key
-    spec_df["score_model"] = score_model
+    spec_df["mode"] = mode
     spec_df = spec_df.sort_values(
         ["obs_value", "specificity", "score"],
         ascending=[True, False, False],
