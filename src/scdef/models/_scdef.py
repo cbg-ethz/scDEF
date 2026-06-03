@@ -314,7 +314,19 @@ class scDEF(object):
         out_dir.mkdir(parents=True, exist_ok=True)
 
         if save_anndata:
+            _uns_stash = {}
+            for k in list(self.adata.uns.keys()):
+                v = self.adata.uns[k]
+                if (
+                    isinstance(v, list)
+                    and len(v) > 0
+                    and isinstance(v[0], (list, np.ndarray))
+                ):
+                    lengths = {len(x) if hasattr(x, "__len__") else 1 for x in v}
+                    if len(lengths) > 1:
+                        _uns_stash[k] = self.adata.uns.pop(k)
             self.adata.write(out_dir / "adata.h5ad")
+            self.adata.uns.update(_uns_stash)
 
         state = dict(self.__dict__)
         # Graphviz graph objects are environment-dependent and not required for
