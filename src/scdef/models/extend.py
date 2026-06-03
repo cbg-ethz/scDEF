@@ -338,21 +338,21 @@ def decompose_batch_effects(
     1. ``reference_model`` was fitted **with** a ``batch_key``, producing a
        batch-corrected hierarchy where per-batch ``gene_scale`` absorbed
        technical variance.
-    2. This function creates a new model **without** ``batch_key``, resets
-       ``W^{L0}`` gene loadings, and re-learns all layers up to
-       ``top_layer``.  At the boundary (``top_layer``), only ``W`` is
+    2. This function creates a new model **without** ``batch_key``,
+       warm-starts all ``W`` from the reference, and re-learns all layers
+       up to ``top_layer``.  At the boundary (``top_layer``), only ``W`` is
        re-learned while ``z`` stays fixed — preserving the cell-to-group
        assignments as the structural constraint.  Layers below
        ``top_layer`` are fully re-learned (both ``W`` and ``z``).
        Layers above ``top_layer`` remain completely fixed.
 
     With ``top_layer=1`` (default):
-        - L0: W reset and re-learned, z re-learned
+        - L0: W warm-started and re-learned, z re-learned
         - L1: W warm-started and re-learned, z frozen
         - L2+: fully frozen
 
     With ``top_layer=2``:
-        - L0: W reset and re-learned, z re-learned
+        - L0: W warm-started and re-learned, z re-learned
         - L1: W warm-started and re-learned, z re-learned
         - L2: W warm-started and re-learned, z frozen
         - L3+: fully frozen
@@ -368,8 +368,8 @@ def decompose_batch_effects(
         n_epoch: training epochs for the re-learning phase.
         lr: learning rate for the re-learning phase.
         tolerance: early-stopping tolerance.
-        nmf_init: if True, initialize the new L0 W via NMF on the data.
-            If False (default), use random initialization.
+        nmf_init: if True, initialize L0 W via NMF on the data instead of
+            warm-starting from the reference. Default False.
         **fit_kwargs: additional keyword arguments forwarded to ``_learn``.
 
     Returns:
@@ -390,47 +390,47 @@ def decompose_batch_effects(
     factor_lists = [np.asarray(f, dtype=int) for f in reference_model.factor_lists]
     layer_sizes = [len(f) for f in factor_lists]
 
-    # Build init_w: None for L0 (reset), reference values for L1+
-    init_w: List[Optional[np.ndarray]] = [None]
-    for layer_idx in range(1, reference_model.n_layers):
+    # Build init_w: warm-start all layers from reference
+    init_w: List[Optional[np.ndarray]] = []
+    for layer_idx in range(reference_model.n_layers):
         keep = factor_lists[layer_idx]
-        parent_keep = factor_lists[layer_idx - 1]
         w = np.asarray(
             reference_model.pmeans[f"{reference_model.layer_names[layer_idx]}W"],
             dtype=np.float32,
         )
-        init_w.append(w[np.ix_(keep, parent_keep)])
+        if layer_idx == 0:
+            init_w.append(w[keep])
+        else:
+            parent_keep = factor_lists[layer_idx - 1]
+            init_w.append(w[np.ix_(keep, parent_keep)])
 
-    # Build init_z: None for layers below top_layer (re-learned),
-    # reference values for top_layer and above (frozen or stop-gradiented)
+    # Build init_z: warm-start ALL layers from reference.
+    # Layers below top_layer are free to re-learn; top_layer+ will be frozen
+    # after init via the tight-distribution overwrite below.
     init_z: List[Optional[np.ndarray]] = []
     for layer_idx in range(reference_model.n_layers):
-        if layer_idx < top_layer:
-            init_z.append(None)
+        keep = factor_lists[layer_idx]
+        z = np.asarray(
+            reference_model.pmeans[f"{reference_model.layer_names[layer_idx]}z"],
+            dtype=np.float32,
+        )
+        if target_adata is reference_model.adata:
+            init_z.append(z[:, keep])
         else:
-            keep = factor_lists[layer_idx]
-            z = np.asarray(
-                reference_model.pmeans[f"{reference_model.layer_names[layer_idx]}z"],
-                dtype=np.float32,
-            )
-            if target_adata is reference_model.adata:
-                init_z.append(z[:, keep])
-            else:
-                ref_pos = {
-                    str(name): i
-                    for i, name in enumerate(reference_model.adata.obs_names)
-                }
-                matches = [
-                    (new_i, ref_pos[str(name)])
-                    for new_i, name in enumerate(target_adata.obs_names)
-                    if str(name) in ref_pos
-                ]
-                z_layer = np.ones((target_adata.n_obs, len(keep)), dtype=np.float32)
-                if len(matches) > 0:
-                    new_idx = np.asarray([m[0] for m in matches], dtype=int)
-                    ref_idx = np.asarray([m[1] for m in matches], dtype=int)
-                    z_layer[new_idx] = z[ref_idx][:, keep]
-                init_z.append(z_layer)
+            ref_pos = {
+                str(name): i for i, name in enumerate(reference_model.adata.obs_names)
+            }
+            matches = [
+                (new_i, ref_pos[str(name)])
+                for new_i, name in enumerate(target_adata.obs_names)
+                if str(name) in ref_pos
+            ]
+            z_layer = np.ones((target_adata.n_obs, len(keep)), dtype=np.float32)
+            if len(matches) > 0:
+                new_idx = np.asarray([m[0] for m in matches], dtype=int)
+                ref_idx = np.asarray([m[1] for m in matches], dtype=int)
+                z_layer[new_idx] = z[ref_idx][:, keep]
+            init_z.append(z_layer)
 
     # BRD and ARD from reference (these apply to L0 factors)
     init_brd = np.asarray(reference_model.pmeans["brd"], dtype=np.float32)[
@@ -452,7 +452,8 @@ def decompose_batch_effects(
     model.top_alpha = reference_model.top_alpha
     model.update_model_priors(update_alpha_from_cov=False)
 
-    # Initialize variational parameters
+    # Initialize variational parameters with high concentration to stay
+    # close to reference warm-starts (avoids NaN from large deviations)
     model.init_var_params(
         init_budgets=True,
         init_alpha=False,
@@ -461,7 +462,7 @@ def decompose_batch_effects(
         init_brd=init_brd,
         init_ard=init_ard,
         nmf_init=nmf_init,
-        z_init_concentration=0.05,
+        z_init_concentration=100.0,
     )
 
     # Overwrite z at top_layer+ with tight distributions at reference values
