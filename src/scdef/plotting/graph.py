@@ -686,6 +686,7 @@ def _add_node_to_graph(
     ordering,
     fontcolor="black",
     penwidth: Optional[float] = None,
+    shape: Optional[str] = None,
 ):
     """Add a node to the graph."""
     node_kwargs = {
@@ -699,6 +700,9 @@ def _add_node_to_graph(
         "label": label,
         "fontcolor": fontcolor,
     }
+
+    if shape is not None:
+        node_kwargs["shape"] = shape
 
     if penwidth is not None and float(penwidth) > 0:
         node_kwargs["penwidth"] = str(float(penwidth))
@@ -896,6 +900,7 @@ def make_graph(
     shell: Optional[bool] = False,
     r: Optional[float] = 2.0,
     r_decay: Optional[float] = 0.8,
+    root_shape: Optional[str] = None,
     **fontsize_kwargs: Any,
 ) -> Graph:
     """Make Graphviz-formatted scDEF graph.
@@ -951,6 +956,8 @@ def make_graph(
             layer, shell layout omits that root and plots the remaining hierarchy.
         r: radius parameter for shell layout
         r_decay: radius decay parameter for shell layout
+        root_shape: Graphviz node shape for root-layer factors (e.g. ``"diamond"``,
+            ``"box"``, ``"hexagon"``). When ``None`` the default ellipse is used.
         **fontsize_kwargs: keyword arguments to adjust the fontsizes according to the gene scores
 
     Returns:
@@ -1243,6 +1250,7 @@ def make_graph(
             ):
                 path_penw = float(path_node_penwidth)
 
+            node_shape = root_shape if layer_idx == visible_n_layers - 1 else None
             _add_node_to_graph(
                 g,
                 factor_name,
@@ -1257,6 +1265,7 @@ def make_graph(
                 ordering,
                 fontcolor=fontcolor,
                 penwidth=path_penw,
+                shape=node_shape,
             )
 
             # Add edges
