@@ -7,6 +7,12 @@ import os as _os
 _os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 
 from .models import scDEF as scDEF, iscDEF as iscDEF, sscDEF as sscDEF
+from .models.extend import (
+    from_reference as from_reference,
+    add_batch_correction as add_batch_correction,
+    decompose_batch_effects as decompose_batch_effects,
+    from_hierarchy as from_hierarchy,
+)
 from .utils import (
     hierarchy_utils as hierarchy_utils,
     jax_utils as jax_utils,
