@@ -375,6 +375,18 @@ def run_muvi(
     return outs
 
 
+def _run_harmony_direct(ad, batch_key):
+    """Run harmonypy directly, bypassing scanpy's wrapper to avoid shape bugs."""
+    import harmonypy
+    ho = harmonypy.run_harmony(ad.obsm["X_pca"], ad.obs, batch_key)
+    res = np.array(ho.Z_corr.T)
+    if res.ndim == 1:
+        res = res.reshape(1, -1)
+    if res.shape[0] != ad.n_obs:
+        res = res.T
+    ad.obsm["X_pca_harmony"] = res
+
+
 def run_harmony(
     ad,
     batch_key="Batch",
@@ -393,7 +405,7 @@ def run_harmony(
     # PCA
     sc.tl.pca(ad)
     # Harmony
-    sc.external.pp.harmony_integrate(ad, batch_key, **kwargs)
+    _run_harmony_direct(ad, batch_key)
     latent = ad.obsm["X_pca_harmony"]
     # Compute neighbors and do Leiden clustering
     sc.pp.neighbors(ad, use_rep="X_pca_harmony")
@@ -815,8 +827,8 @@ def run_nsbm(
     # PCA
     sc.tl.pca(ad)
     # Compute neighbors
-    if batch_key is not None:
-        sc.external.pp.harmony_integrate(ad, batch_key)
+    if batch_key is not None and ad.obs[batch_key].nunique() > 1:
+        _run_harmony_direct(ad, batch_key)
         sc.pp.neighbors(ad, use_rep="X_pca_harmony")
     else:
         sc.pp.neighbors(ad)

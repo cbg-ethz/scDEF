@@ -10,6 +10,6 @@ dependencies:
   - leidenalg
   - pip
   - pip:
-    - scdef==0.6.0
-    - jax
-    - scikit-misc 
+    - scdef>=0.6.1
+    - jax[cuda12]
+    - scikit-misc

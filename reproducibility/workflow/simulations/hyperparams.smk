@@ -4,7 +4,7 @@ Sweep hierarchy_weight, brd_strength, and brd_mean, each crossed with
 de_prob (DE density) to measure sensitivity to prior choices.
 """
 
-output_path = config.get("output_path", "hyperparam_results")
+output_path = config.get("output_path", "results/hyperparams")
 
 configfile: "config/hyperparams_config.yaml"
 configfile: "config/methods.yaml"

@@ -8,3 +8,8 @@ dependencies:
   - snakemake>=8
   - snakemake-executor-plugin-slurm
   - mamba
+  - pandas
+  - numpy
+  - matplotlib
+  - seaborn
+  - jupyter

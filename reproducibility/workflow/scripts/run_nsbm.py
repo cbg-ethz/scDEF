@@ -33,7 +33,20 @@ def main():
     )
     duration = time.time() - duration
 
-    methods_results[methods_list[0]]["adata"].write_h5ad(snakemake.output["out_fname"])
+    res = methods_results[methods_list[0]]
+    out_adata = res["adata"]
+    out_adata.uns["signatures"] = res["signatures"]
+    out_adata.uns["scores"] = res["scores"]
+    out_adata.uns["sizes"] = res["sizes"]
+    out_adata.uns["hierarchy"] = res["simplified_hierarchy"]
+
+    import numpy as np
+    for i, assignments in enumerate(res["assignments"]):
+        out_adata.obs[f"level_{i}_cluster"] = assignments
+    for i, latent in enumerate(res["latents"]):
+        out_adata.obsm[f"level_{i}_latent"] = np.array(latent)
+
+    out_adata.write_h5ad(snakemake.output["out_fname"])
 
     with open(snakemake.output["duration_fname"], "w") as f:
         f.write(str(duration))

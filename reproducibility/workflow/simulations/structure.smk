@@ -4,7 +4,7 @@ A: Learn scDEF with varying n_layers and compute metrics per layer.
 B: Learn scDEF with varying n_factors and compute all metrics.
 """
 
-output_path = config.get("output_path", "structure_results")
+output_path = config.get("output_path", "results/structure")
 
 configfile: "config/structure_config.yaml"
 configfile: "config/methods.yaml"

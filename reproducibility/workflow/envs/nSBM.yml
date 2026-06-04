@@ -14,5 +14,5 @@ dependencies:
   - pip:
     - leidenalg
     - harmonypy
-    - scikit-learn==1.1.0
+    - scikit-learn
     - scikit-misc

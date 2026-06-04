@@ -3,7 +3,7 @@ Wall-time scalability study.
 Runs all methods on datasets of increasing cell counts and records runtime.
 """
 
-output_path = config.get("output_path", "walltime_results")
+output_path = config.get("output_path", "results/walltime")
 
 localrules: gather_scores
 

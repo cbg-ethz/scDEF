@@ -178,3 +178,11 @@ Results will appear in `results/pbmcs3k/`. To generate the figures, run the corr
 - The workflows are designed for local testing, single-machine production, and HPC (Slurm) cluster use.
 - GPU methods: scDEF, scDEF\_un, scDEF\_corr, scDEF\_hclust, scVI, fscLVM (MuVI).
 - Output paths can be customized via config: `--config output_path=/path/to/results`.
+
+### Running on macOS / non-CUDA machines
+
+The environment files target Linux GPU servers by default. To run locally on macOS (including Apple Silicon), edit these files before creating the conda environments:
+
+- `workflow/envs/scdef_reproducibility.yml`: change `jax[cuda12]` to `jax`
+- `workflow/envs/scVI.yml`: change `jax[cuda12]` to `jax`
+- `workflow/envs/fscLVM.yml`: remove the `--extra-index-url` line and the `torchvision`/`torchaudio` lines (keep `torch`)
