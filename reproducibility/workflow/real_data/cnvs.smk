@@ -16,6 +16,10 @@ RUN_SUFFIX = "run"
 INPUT_ADATA = output_path + '/prepared_input.h5ad'
 METHOD_SEED = SEED
 
+_gpu_raw = config.get("gpu", True)
+_gpu = _gpu_raw if isinstance(_gpu_raw, bool) else str(_gpu_raw).lower() not in ("false", "0", "no")
+_scdef_env = "../envs/" + ("scdef_reproducibility.yml" if _gpu else "scdef_reproducibility_nogpu.yml")
+
 include: "../run_methods.smk"
 
 rule all:
@@ -24,7 +28,7 @@ rule all:
 
 rule gather_results:
     conda:
-        "../envs/scdef_reproducibility.yml"
+        _scdef_env
     input:
         fname_list = expand(
             output_path + '/{method}/run_scores.csv',
@@ -33,6 +37,16 @@ rule gather_results:
         fname = output_path + '/scores.csv'
     script:
         '../scripts/gather_real_data_scores.py'
+
+rule download_data:
+    conda:
+        _scdef_env
+    params:
+        out_dir = output_path + '/raw_data',
+    output:
+        done = output_path + '/raw_data/.download_done',
+    script:
+        '../scripts/download_cnvs.py'
 
 rule prepare_input:
     conda:
@@ -49,9 +63,9 @@ rule prepare_input:
         donor_2 = config['donor_2'],
         celltype_1 = config['celltype_1'],
         celltype_2 = config['celltype_2'],
+    input:
+        download_done = output_path + '/raw_data/.download_done',
     output:
-        # cnv_full_fname = output_path + '/cnv_full.png',
-        # cnv_subset_fname = output_path + '/cnv_subset.png',
         adata_full_fname = output_path + '/adata_full.h5ad',
         adata_subset_fname = output_path + '/prepared_input.h5ad',
     script:

@@ -11,11 +11,18 @@ Including workflows must define before this include:
 method_envs = "envs"
 method_scripts = "scripts"
 
+# GPU-aware environment selection: pass --config gpu=false for non-CUDA machines
+_gpu_raw = config.get("gpu", True)
+_gpu = _gpu_raw if isinstance(_gpu_raw, bool) else str(_gpu_raw).lower() not in ("false", "0", "no")
+_run_scdef_env  = method_envs + ("/scdef_reproducibility.yml" if _gpu else "/scdef_reproducibility_nogpu.yml")
+_run_scvi_env   = method_envs + ("/scVI.yml" if _gpu else "/scVI_nogpu.yml")
+_run_fsclvm_env = method_envs + ("/fscLVM.yml" if _gpu else "/fscLVM_nogpu.yml")
+
 # --- scDEF ---
 
 rule run_scdef:
     conda:
-        method_envs + "/scdef_reproducibility.yml"
+        _run_scdef_env
     threads: 4
     resources:
         mem_mb = 32000,
@@ -44,7 +51,7 @@ rule run_scdef:
 
 rule evaluate_scdef:
     conda:
-        method_envs + "/scdef_reproducibility.yml"
+        _run_scdef_env
     threads: 1
     resources:
         mem_mb = 8000,
@@ -65,7 +72,7 @@ rule evaluate_scdef:
 
 rule run_scdef_un:
     conda:
-        method_envs + "/scdef_reproducibility.yml"
+        _run_scdef_env
     threads: 4
     resources:
         mem_mb = 32000,
@@ -94,7 +101,7 @@ rule run_scdef_un:
 
 rule evaluate_scdef_un:
     conda:
-        method_envs + "/scdef_reproducibility.yml"
+        _run_scdef_env
     threads: 1
     resources:
         mem_mb = 8000,
@@ -115,7 +122,7 @@ rule evaluate_scdef_un:
 
 rule run_scdef_corr:
     conda:
-        method_envs + "/scdef_reproducibility.yml"
+        _run_scdef_env
     threads: 4
     resources:
         mem_mb = 32000,
@@ -133,7 +140,7 @@ rule run_scdef_corr:
 
 rule evaluate_scdef_corr:
     conda:
-        method_envs + "/scdef_reproducibility.yml"
+        _run_scdef_env
     threads: 1
     resources:
         mem_mb = 8000,
@@ -154,7 +161,7 @@ rule evaluate_scdef_corr:
 
 rule run_scdef_hclust:
     conda:
-        method_envs + "/scdef_reproducibility.yml"
+        _run_scdef_env
     threads: 4
     resources:
         mem_mb = 32000,
@@ -184,7 +191,7 @@ rule run_scdef_hclust:
 
 rule evaluate_scdef_hclust:
     conda:
-        method_envs + "/scdef_reproducibility.yml"
+        _run_scdef_env
     threads: 1
     resources:
         mem_mb = 8000,
@@ -223,7 +230,7 @@ rule run_pca:
 
 rule evaluate_pca:
     conda:
-        method_envs + "/scdef_reproducibility.yml"
+        _run_scdef_env
     threads: 1
     resources:
         mem_mb = 8000,
@@ -263,7 +270,7 @@ rule run_nmf:
 
 rule evaluate_nmf:
     conda:
-        method_envs + "/scdef_reproducibility.yml"
+        _run_scdef_env
     threads: 1
     resources:
         mem_mb = 8000,
@@ -304,7 +311,7 @@ rule run_schpf:
 
 rule evaluate_schpf:
     conda:
-        method_envs + "/scdef_reproducibility.yml"
+        _run_scdef_env
     threads: 1
     resources:
         mem_mb = 8000,
@@ -325,7 +332,7 @@ rule evaluate_schpf:
 
 rule run_scvi:
     conda:
-        method_envs + "/scVI.yml"
+        _run_scvi_env
     threads: 4
     resources:
         mem_mb = 32000,
@@ -347,7 +354,7 @@ rule run_scvi:
 
 rule evaluate_scvi:
     conda:
-        method_envs + "/scdef_reproducibility.yml"
+        _run_scdef_env
     threads: 1
     resources:
         mem_mb = 8000,
@@ -386,7 +393,7 @@ rule run_harmony:
 
 rule evaluate_harmony:
     conda:
-        method_envs + "/scdef_reproducibility.yml"
+        _run_scdef_env
     threads: 1
     resources:
         mem_mb = 8000,
@@ -425,7 +432,7 @@ rule run_scanorama:
 
 rule evaluate_scanorama:
     conda:
-        method_envs + "/scdef_reproducibility.yml"
+        _run_scdef_env
     threads: 1
     resources:
         mem_mb = 8000,
@@ -465,7 +472,7 @@ rule run_nsbm:
 
 rule evaluate_nsbm:
     conda:
-        method_envs + "/scdef_reproducibility.yml"
+        _run_scdef_env
     threads: 1
     resources:
         mem_mb = 8000,
@@ -486,7 +493,7 @@ rule evaluate_nsbm:
 
 rule run_fsclvm:
     conda:
-        method_envs + "/fscLVM.yml"
+        _run_fsclvm_env
     threads: 4
     resources:
         mem_mb = 32000,
@@ -507,7 +514,7 @@ rule run_fsclvm:
 
 rule evaluate_fsclvm:
     conda:
-        method_envs + "/scdef_reproducibility.yml"
+        _run_scdef_env
     threads: 1
     resources:
         mem_mb = 8000,

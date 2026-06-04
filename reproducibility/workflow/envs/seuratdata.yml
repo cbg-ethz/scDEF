@@ -1,0 +1,10 @@
+name: seuratdata
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - r-base>=4.1,<4.5
+  - r-seurat>=4
+  - r-seuratobject
+  - r-remotes

@@ -1,3 +1,5 @@
+import matplotlib
+matplotlib.use("Agg")
 import anndata
 import pandas as pd
 import scanpy as sc

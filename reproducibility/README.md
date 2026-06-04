@@ -181,8 +181,11 @@ Results will appear in `results/pbmcs3k/`. To generate the figures, run the corr
 
 ### Running on macOS / non-CUDA machines
 
-The environment files target Linux GPU servers by default. To run locally on macOS (including Apple Silicon), edit these files before creating the conda environments:
+The default environment files (`scdef_reproducibility.yml`, `scVI.yml`) target Linux GPU servers with `jax[cuda12]`. To run on macOS or any machine without CUDA, pass `--config gpu=false`:
 
-- `workflow/envs/scdef_reproducibility.yml`: change `jax[cuda12]` to `jax`
-- `workflow/envs/scVI.yml`: change `jax[cuda12]` to `jax`
-- `workflow/envs/fscLVM.yml`: remove the `--extra-index-url` line and the `torchvision`/`torchaudio` lines (keep `torch`)
+```bash
+snakemake --snakefile workflow/simulations/benchmark_singlebatch.smk \
+    --use-conda --conda-frontend mamba -j 4 --config gpu=false
+```
+
+This selects the `_nogpu.yml` variants of the environment files, which use plain `jax` and CPU-only `torch`. All other environments (PCA, NMF, Harmony, etc.) are unaffected since they don't depend on CUDA.

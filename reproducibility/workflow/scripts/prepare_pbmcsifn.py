@@ -1,12 +1,18 @@
+import matplotlib
+matplotlib.use("Agg")
 import scanpy as sc
 import numpy as np
 
 np.random.seed(snakemake.params.seed)
 adata = sc.read_h5ad(snakemake.params.data_fname)
-adata.__dict__["_raw"].__dict__["_var"] = (
-    adata.__dict__["_raw"].__dict__["_var"].rename(columns={"_index": "features"})
-)
-adata.var = adata.var.drop(columns="features")
+
+# Fix Seurat→h5ad conversion artifacts if present
+if adata.raw is not None:
+    raw_var = adata.__dict__["_raw"].__dict__["_var"]
+    if "_index" in raw_var.columns:
+        adata.__dict__["_raw"].__dict__["_var"] = raw_var.rename(columns={"_index": "features"})
+if "features" in adata.var.columns:
+    adata.var = adata.var.drop(columns="features")
 
 # Remove some genes
 for gene in snakemake.params.genes_to_remove:

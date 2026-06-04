@@ -1,3 +1,5 @@
+import matplotlib
+matplotlib.use("Agg")
 import anndata
 import scanpy as sc
 import numpy as np
@@ -24,8 +26,9 @@ def main():
     adata.layers["counts"] = adata.X.toarray()  # Keep the counts, for scDEF
     adata.raw = adata
 
-    # Update annotations
-    adata.obs["Cell types"] = adata.obs["celltypes"]
+    # Update annotations — SeuratData pbmc3k.final uses 'seurat_annotations'
+    ann_col = "seurat_annotations" if "seurat_annotations" in adata.obs.columns else "celltypes"
+    adata.obs["Cell types"] = adata.obs[ann_col]
 
     map_coarse = {}
     for c in adata.obs["Cell types"].astype("category").cat.categories:

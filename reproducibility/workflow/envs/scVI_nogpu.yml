@@ -1,4 +1,4 @@
-name: squidpy
+name: scvi
 channels:
   - conda-forge
   - bioconda
@@ -6,9 +6,12 @@ channels:
 dependencies:
   - python=3.10
   - scanpy
-  - leidenalg
-  - setuptools<78
   - pip
   - pip:
-    - squidpy>=1.5,<1.7
+    - jax
+    - torch
+    - torchvision
+    - torchaudio
+    - scvi-tools
+    - leidenalg
     - scikit-misc

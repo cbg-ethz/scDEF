@@ -1,4 +1,4 @@
-name: squidpy
+name: scdef_reproducibility
 channels:
   - conda-forge
   - bioconda
@@ -6,9 +6,11 @@ channels:
 dependencies:
   - python=3.10
   - scanpy
+  - graphviz
   - leidenalg
-  - setuptools<78
+  - openpyxl
   - pip
   - pip:
-    - squidpy>=1.5,<1.7
+    - scdef>=0.6.1
+    - jax
     - scikit-misc

@@ -1,3 +1,5 @@
+import matplotlib
+matplotlib.use("Agg")
 import scanpy as sc
 import numpy as np
 import pandas as pd
@@ -184,20 +186,60 @@ for i, obs in enumerate(adata.uns["hierarchy_obs"]):
     adata.obs[obs] = "h" * i + adata.obs[obs].astype(str)
 
 # Load marker genes
-markers = pd.read_csv(snakemake.params.markers_fname, index_col=0)
-markers_dict = dict()
-for cell_type in adata.obs["Cell types"].unique():
-    markers_dict[cell_type] = markers.loc[
-        markers["clusters_neoblasts"] == cell_type
-    ].index.tolist()
-adata.uns["true_markers"] = markers_dict
+import os
+markers_fname = snakemake.params.markers_fname
+if os.path.exists(markers_fname):
+    markers = pd.read_csv(markers_fname, sep=";", index_col=0)
+    # Drop empty trailing column from trailing semicolons
+    markers = markers.loc[:, markers.columns.str.strip() != ""]
+    # The last column contains fine cluster names; map neoblasts → "neoblast"
+    cluster_col = markers.columns[-1]
+    markers["clusters_neoblasts"] = markers[cluster_col].apply(
+        lambda c: "neoblast" if isinstance(c, str) and c.startswith("neoblast") else c
+    )
+    markers_dict = dict()
+    for cell_type in adata.obs["Cell types"].unique():
+        markers_dict[cell_type] = markers.loc[
+            markers["clusters_neoblasts"] == cell_type
+        ].index.tolist()
+    adata.uns["true_markers"] = markers_dict
+else:
+    print(f"Warning: markers file {markers_fname} not found, skipping marker annotation")
+    adata.uns["true_markers"] = dict()
 
-# Load gene names
-gene_names = pd.read_csv(snakemake.params.gene_names_fname, index_col=0)
+# Known gene name mappings (SMED gene ID → common name)
+known_genes = {
+    "dd_Smed_v6_1226_0": "alas",
+    "dd_Smed_v6_7884_0": "kmo",
+    "dd_Smed_v6_692_0": "inx-9",
+    "dd_Smed_v6_659_0": "piwi",
+    "dd_Smed_v6_648_0": "tuba",
+    "dd_Smed_v6_332_0": "prog-1",
+    "dd_Smed_v6_363_0": "prog-2-2",
+    "dd_Smed_v6_920_0": "agat1",
+    "dd_Smed_v6_1013_0": "pmp-7",
+    "dd_Smed_v6_3921_0": "tor",
+    "dd_Smed_v6_1117_0": "npp-18",
+    "dd_Smed_v6_6079_0": "smad",
+    "dd_Smed_v6_432_0": "mhc",
+    "dd_Smed_v6_12634_0": "myoD",
+    "dd_Smed_v6_9584_0": "follistatin",
+    "dd_Smed_v6_11310_0": "egfr",
+    "dd_Smed_v6_364_0": "vim-1",
+    "dd_Smed_v6_10098_0": "spp-2",
+    "dd_Smed_v6_8548_0": "ncam-2",
+    "dd_Smed_v6_19336_0": "gbrb-1",
+    "dd_Smed_v6_6208_0": "chat",
+    "dd_Smed_v6_9893_0": "smed-coe",
+    "dd_Smed_v6_3977_0": "snap25",
+    "dd_Smed_v6_8494_0": "roboA",
+    "dd_Smed_v6_14852_0": "netrin",
+    "dd_Smed_v6_13817_0": "musashi",
+}
 adata.var["gene_name"] = ""
-for gene in gene_names.index:
-    if gene in adata.var_names:
-        adata.var.loc[gene, "gene_name"] = gene_names.loc[gene, "Name"]
+for gene_id, name in known_genes.items():
+    if gene_id in adata.var_names:
+        adata.var.loc[gene_id, "gene_name"] = name
 
 # Keep only HVGs
 # Use all genes, to make sure chat is kept

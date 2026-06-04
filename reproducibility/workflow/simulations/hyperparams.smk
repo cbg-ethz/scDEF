@@ -20,6 +20,10 @@ METRICS = config["metrics"]
 envs_path = "../envs"
 scripts_path = "../scripts"
 
+_gpu_raw = config.get("gpu", True)
+_gpu = _gpu_raw if isinstance(_gpu_raw, bool) else str(_gpu_raw).lower() not in ("false", "0", "no")
+_scdef_env = envs_path + ("/scdef_reproducibility.yml" if _gpu else "/scdef_reproducibility_nogpu.yml")
+
 wildcard_constraints:
     rep_id = r"\d+",
     density = r"[^/]+",
@@ -38,7 +42,7 @@ rule all:
 
 rule gather_hw_scores:
     conda:
-        envs_path + "/scdef_reproducibility.yml"
+        _scdef_env
     input:
         fname_list = expand(
             output_path + '/hierarchy_weight/den_{density}/hw_{hw}/rep_{rep_id}_scores.csv',
@@ -56,7 +60,7 @@ rule gather_hw_scores:
 
 rule gather_brd_strength_scores:
     conda:
-        envs_path + "/scdef_reproducibility.yml"
+        _scdef_env
     input:
         fname_list = expand(
             output_path + '/brd_strength/den_{density}/brd_{brd}/rep_{rep_id}_scores.csv',
@@ -74,7 +78,7 @@ rule gather_brd_strength_scores:
 
 rule gather_brd_mean_scores:
     conda:
-        envs_path + "/scdef_reproducibility.yml"
+        _scdef_env
     input:
         fname_list = expand(
             output_path + '/brd_mean/den_{density}/brdm_{brdm}/rep_{rep_id}_scores.csv',
@@ -116,7 +120,7 @@ rule generate_density_data:
 
 rule prepare_input:
     conda:
-        envs_path + "/scdef_reproducibility.yml"
+        _scdef_env
     params:
         seed = "{rep_id}",
     input:
@@ -133,7 +137,7 @@ rule prepare_input:
 
 rule run_scdef_hw:
     conda:
-        envs_path + "/scdef_reproducibility.yml"
+        _scdef_env
     threads: 4
     resources:
         mem_mb = 32000,
@@ -162,7 +166,7 @@ rule run_scdef_hw:
 
 rule evaluate_scdef_hw:
     conda:
-        envs_path + "/scdef_reproducibility.yml"
+        _scdef_env
     threads: 1
     resources:
         mem_mb = 8000,
@@ -184,7 +188,7 @@ rule evaluate_scdef_hw:
 
 rule run_scdef_brd_strength:
     conda:
-        envs_path + "/scdef_reproducibility.yml"
+        _scdef_env
     threads: 4
     resources:
         mem_mb = 32000,
@@ -213,7 +217,7 @@ rule run_scdef_brd_strength:
 
 rule evaluate_scdef_brd_strength:
     conda:
-        envs_path + "/scdef_reproducibility.yml"
+        _scdef_env
     threads: 1
     resources:
         mem_mb = 8000,
@@ -235,7 +239,7 @@ rule evaluate_scdef_brd_strength:
 
 rule run_scdef_brd_mean:
     conda:
-        envs_path + "/scdef_reproducibility.yml"
+        _scdef_env
     threads: 4
     resources:
         mem_mb = 32000,
@@ -264,7 +268,7 @@ rule run_scdef_brd_mean:
 
 rule evaluate_scdef_brd_mean:
     conda:
-        envs_path + "/scdef_reproducibility.yml"
+        _scdef_env
     threads: 1
     resources:
         mem_mb = 8000,

@@ -1,4 +1,4 @@
-name: squidpy
+name: fsclvm
 channels:
   - conda-forge
   - bioconda
@@ -7,8 +7,11 @@ dependencies:
   - python=3.10
   - scanpy
   - leidenalg
-  - setuptools<78
   - pip
   - pip:
-    - squidpy>=1.5,<1.7
+    - muvi
+    - anndata==0.10.8
+    - torch
+    - torchvision
+    - torchaudio
     - scikit-misc

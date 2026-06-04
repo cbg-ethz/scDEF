@@ -17,6 +17,10 @@ METRICS = config["metrics"]
 envs_path = "../envs"
 scripts_path = "../scripts"
 
+_gpu_raw = config.get("gpu", True)
+_gpu = _gpu_raw if isinstance(_gpu_raw, bool) else str(_gpu_raw).lower() not in ("false", "0", "no")
+_scdef_env = envs_path + ("/scdef_reproducibility.yml" if _gpu else "/scdef_reproducibility_nogpu.yml")
+
 wildcard_constraints:
     rep_id = r"\d+",
     n_layers = r"\d+",
@@ -29,7 +33,7 @@ rule all:
 
 rule gather_layers_scores:
     conda:
-        envs_path + "/scdef_reproducibility.yml"
+        _scdef_env
     input:
         fname_list = expand(
             output_path + '/scDEF/layers_{n_layers}/rep_{rep_id}_scores.csv',
@@ -46,7 +50,7 @@ rule gather_layers_scores:
 
 rule gather_factors_scores:
     conda:
-        envs_path + "/scdef_reproducibility.yml"
+        _scdef_env
     input:
         fname_list = expand(
             output_path + '/scDEF/factors_{n_factors}/rep_{rep_id}_scores.csv',
@@ -85,7 +89,7 @@ rule generate_data:
 
 rule prepare_input:
     conda:
-        envs_path + "/scdef_reproducibility.yml"
+        _scdef_env
     params:
         seed = "{rep_id}",
     input:
@@ -102,7 +106,7 @@ rule prepare_input:
 
 rule run_scdef_layers:
     conda:
-        envs_path + "/scdef_reproducibility.yml"
+        _scdef_env
     threads: 4
     resources:
         mem_mb = 32000,
@@ -131,7 +135,7 @@ rule run_scdef_layers:
 
 rule evaluate_scdef_layers:
     conda:
-        envs_path + "/scdef_reproducibility.yml"
+        _scdef_env
     threads: 1
     resources:
         mem_mb = 8000,
@@ -153,7 +157,7 @@ rule evaluate_scdef_layers:
 
 rule run_scdef_factors:
     conda:
-        envs_path + "/scdef_reproducibility.yml"
+        _scdef_env
     threads: 4
     resources:
         mem_mb = 32000,
@@ -182,7 +186,7 @@ rule run_scdef_factors:
 
 rule evaluate_scdef_factors:
     conda:
-        envs_path + "/scdef_reproducibility.yml"
+        _scdef_env
     threads: 1
     resources:
         mem_mb = 8000,

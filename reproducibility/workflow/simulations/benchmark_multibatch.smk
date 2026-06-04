@@ -15,6 +15,10 @@ FRACS_SHARED = config["frac_shared"]
 envs_path = "../envs"
 scripts_path = "../scripts"
 
+_gpu_raw = config.get("gpu", True)
+_gpu = _gpu_raw if isinstance(_gpu_raw, bool) else str(_gpu_raw).lower() not in ("false", "0", "no")
+_scdef_env = envs_path + ("/scdef_reproducibility.yml" if _gpu else "/scdef_reproducibility_nogpu.yml")
+
 wildcard_constraints:
     rep_id = r"\d+",
     separability = r"[^/]+",
@@ -26,7 +30,7 @@ rule all:
 
 rule gather_multibatch_scores:
     conda:
-        envs_path + "/scdef_reproducibility.yml"
+        _scdef_env
     input:
         fname_list = expand(
             output_path + '/{method}/sep_{separability}/shared_{frac_shared}/rep_{rep_id}_scores.csv',
@@ -61,7 +65,7 @@ rule generate_multibatch_data:
 
 rule prepare_input:
     conda:
-        envs_path + "/scdef_reproducibility.yml"
+        _scdef_env
     params:
         seed = "{rep_id}",
     input:
