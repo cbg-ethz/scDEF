@@ -9,6 +9,8 @@ def main():
 
         l = filename.split("/")
         method = l[-2]
+        # Filename is seed_{seed}_scores.csv
+        seed = l[-1].split("_")[1]
 
         df = pd.read_csv(filename, index_col=0)
         print(df)
@@ -19,9 +21,9 @@ def main():
             if isinstance(value, str):
                 value = np.mean(np.array(value.strip("][").split(", ")).astype(float))
             value = float(value)
-            rows.append([method, score, value])
+            rows.append([method, seed, score, value])
 
-    scores = pd.DataFrame.from_records(rows, columns=["method", "score", "value"])
+    scores = pd.DataFrame.from_records(rows, columns=["method", "seed", "score", "value"])
     print(scores)
     scores.to_csv(snakemake.output["fname"], index=False)
 

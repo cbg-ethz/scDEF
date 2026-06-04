@@ -9,25 +9,30 @@ configfile: "config/pbmcsifn.yaml"
 configfile: "config/methods.yaml"
 
 METHODS = config["methods"]
-SEED = config["seed"]
 METRICS = config["metrics"]
+N_SEEDS = config.get("n_seeds", 1)
+SEEDS = list(range(N_SEEDS))
 
-RUN_SUFFIX = "run"
+wildcard_constraints:
+    seed = r"\d+",
+
+RUN_SUFFIX = "seed_{seed}"
 INPUT_ADATA = output_path + '/prepared_input.h5ad'
-METHOD_SEED = SEED
+METHOD_SEED = "{seed}"
 
 include: "../run_methods.smk"
 
 rule all:
     input:
         output_path + '/scores.csv'
+
 rule gather_results:
     conda:
         "../envs/scdef_reproducibility.yml"
     input:
         fname_list = expand(
-            output_path + '/{method}/run_scores.csv',
-            method=METHODS,)
+            output_path + '/{method}/seed_{seed}_scores.csv',
+            method=METHODS, seed=SEEDS,)
     output:
         fname = output_path + '/scores.csv'
     script:

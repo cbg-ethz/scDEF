@@ -1,6 +1,7 @@
 data_path: '/Users/pedrof/Projects/PhD/projects/scDEF/repo/data/pbmcsca.h5ad'
 methods: ["scDEF_un", "scDEF", "PCA", "NMF", "scHPF", "scVI", "Harmony", "Scanorama", "nSBM", "fscLVM"]
 seed: 42
+n_seeds: 5
 min_genes: 200
 min_cells: 3
 genes_to_remove: ['MALAT1']

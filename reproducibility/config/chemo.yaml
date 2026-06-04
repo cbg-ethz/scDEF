@@ -2,6 +2,7 @@ counts_path: '/cluster/work/bewi/members/pedrof/scdef_revisions/init_data/chemo/
 annotations_path: '/cluster/work/bewi/members/pedrof/scdef_revisions/init_data/chemo/GSE165897_cellInfo_HGSOC.tsv'
 methods: ["scDEF_un", "scDEF", "PCA", "NMF", "scHPF", "scVI", "Harmony", "Scanorama", "nSBM", "fscLVM"]
 seed: 42
+n_seeds: 5
 min_genes: 200
 min_cells: 3
 genes_to_remove: ['MALAT1']
