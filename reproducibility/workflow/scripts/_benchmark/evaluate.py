@@ -279,13 +279,22 @@ def evaluate_cluster_signatures(
     # Compare each type's inferred signature with the true signature
     signature_scores = []
     for celltype in markers:
+        if celltype not in assignments:
+            signature_scores.append(0.0)
+            continue
         cluster_name = assignments[celltype]
         signature = signatures[cluster_name][:top_genes]
         markers_type = markers[celltype]
+        if len(markers_type) == 0:
+            signature_scores.append(0.0)
+            continue
         nonmarkers_type = [m for m in markers if m not in markers_type]
-        signature_scores.append(
-            score_utils.score_signature(signature, markers_type, nonmarkers_type)
-        )
+        try:
+            signature_scores.append(
+                score_utils.score_signature(signature, markers_type, nonmarkers_type)
+            )
+        except (ZeroDivisionError, ValueError):
+            signature_scores.append(0.0)
     return signature_scores
 
 

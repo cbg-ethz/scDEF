@@ -11,14 +11,24 @@ def main():
     if "Batch" in adata.obs.columns:
         batch_key = "Batch"
 
-    sc.pp.highly_variable_genes(
-        adata,
-        n_top_genes=2000,
-        subset=True,
-        layer="counts",
-        flavor="seurat_v3",
-        batch_key=batch_key,
-    )
+    try:
+        sc.pp.highly_variable_genes(
+            adata,
+            n_top_genes=2000,
+            subset=True,
+            layer="counts",
+            flavor="seurat_v3",
+            batch_key=batch_key,
+        )
+    except ValueError:
+        sc.pp.highly_variable_genes(
+            adata,
+            n_top_genes=min(2000, adata.n_vars),
+            subset=True,
+            layer="counts",
+            flavor="seurat_v3",
+            batch_key=None,
+        )
 
     adata.X = adata.layers["counts"]
     sc.pp.normalize_total(adata, target_sum=1e4)

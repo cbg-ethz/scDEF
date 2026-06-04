@@ -23,7 +23,9 @@ def main():
             value = float(value)
             rows.append([method, seed, score, value])
 
-    scores = pd.DataFrame.from_records(rows, columns=["method", "seed", "score", "value"])
+    scores = pd.DataFrame.from_records(
+        rows, columns=["method", "seed", "score", "value"]
+    )
     print(scores)
     scores.to_csv(snakemake.output["fname"], index=False)
 

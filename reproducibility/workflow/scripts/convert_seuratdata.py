@@ -33,7 +33,9 @@ def main():
         # Ensure cell barcode alignment
         common_cells = counts.columns.intersection(meta.index)
         if len(common_cells) < len(meta.index):
-            print(f"Warning: {len(meta.index) - len(common_cells)} cells in metadata not found in counts")
+            print(
+                f"Warning: {len(meta.index) - len(common_cells)} cells in metadata not found in counts"
+            )
         counts = counts[common_cells]
         meta = meta.loc[common_cells]
         adata = anndata.AnnData(
@@ -43,7 +45,9 @@ def main():
         )
 
     adata.write_h5ad(snakemake.output["fname"])
-    print(f"Saved {adata.shape[0]} cells x {adata.shape[1]} genes to {snakemake.output['fname']}")
+    print(
+        f"Saved {adata.shape[0]} cells x {adata.shape[1]} genes to {snakemake.output['fname']}"
+    )
 
 
 if __name__ == "__main__":

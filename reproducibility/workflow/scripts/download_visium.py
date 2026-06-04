@@ -21,11 +21,14 @@ def _download(url, dest):
     """Download a file with browser-like headers to avoid 403 from CDNs."""
     print(f"Downloading {url} ...")
     try:
-        req = urllib.request.Request(url, headers={
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                          "AppleWebKit/537.36 (KHTML, like Gecko) "
-                          "Chrome/120.0.0.0 Safari/537.36",
-        })
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36",
+            },
+        )
         with urllib.request.urlopen(req) as response:
             with open(dest, "wb") as out_file:
                 shutil.copyfileobj(response, out_file)
@@ -40,11 +43,16 @@ def _extract_celltypes_csv(xlsx_path, csv_path):
     """Extract scFFPE-seq cell type annotations from the Barcode_Cell_Type_Matrices xlsx."""
     try:
         import openpyxl
+
         wb = openpyxl.load_workbook(xlsx_path, read_only=True)
         # Find the scFFPE-seq / Flex sheet
         target_sheet = None
         for name in wb.sheetnames:
-            if "flex" in name.lower() or "scffpe" in name.lower() or "chromium" in name.lower():
+            if (
+                "flex" in name.lower()
+                or "scffpe" in name.lower()
+                or "chromium" in name.lower()
+            ):
                 target_sheet = name
                 break
         if target_sheet is None:
@@ -61,6 +69,7 @@ def _extract_celltypes_csv(xlsx_path, csv_path):
         rows = list(ws.iter_rows(values_only=True))
         header = rows[0]
         import csv
+
         with open(csv_path, "w", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(header)
@@ -70,8 +79,12 @@ def _extract_celltypes_csv(xlsx_path, csv_path):
         print(f"  -> {csv_path}")
         return True
     except ImportError:
-        print("  WARNING: openpyxl not installed, cannot extract celltypes.csv from xlsx")
-        print(f"  Please manually open {xlsx_path} and save the scFFPE-seq tab as {csv_path}")
+        print(
+            "  WARNING: openpyxl not installed, cannot extract celltypes.csv from xlsx"
+        )
+        print(
+            f"  Please manually open {xlsx_path} and save the scFFPE-seq tab as {csv_path}"
+        )
         return False
     except Exception as e:
         print(f"  WARNING: failed to extract celltypes: {e}")
@@ -83,7 +96,9 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
 
     # --- Visium spatial data ---
-    h5_path = os.path.join(out_dir, "CytAssist_FFPE_Human_Breast_Cancer_filtered_feature_bc_matrix.h5")
+    h5_path = os.path.join(
+        out_dir, "CytAssist_FFPE_Human_Breast_Cancer_filtered_feature_bc_matrix.h5"
+    )
     if not _download(VISIUM_H5_URL, h5_path):
         raise RuntimeError("Failed to download Visium h5 matrix")
 
@@ -96,7 +111,9 @@ def main():
         raise RuntimeError("Failed to download Visium spatial data")
 
     # --- Matched Chromium scFFPE-seq reference (from GEO) ---
-    scrna_path = os.path.join(out_dir, "Chromium_FFPE_Human_Breast_Cancer_filtered_feature_bc_matrix.h5")
+    scrna_path = os.path.join(
+        out_dir, "Chromium_FFPE_Human_Breast_Cancer_filtered_feature_bc_matrix.h5"
+    )
     if not os.path.exists(scrna_path):
         _download(GEO_SCRNA_URL, scrna_path)
 

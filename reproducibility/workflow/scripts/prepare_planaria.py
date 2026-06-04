@@ -1,4 +1,5 @@
 import matplotlib
+
 matplotlib.use("Agg")
 import scanpy as sc
 import numpy as np
@@ -187,6 +188,7 @@ for i, obs in enumerate(adata.uns["hierarchy_obs"]):
 
 # Load marker genes
 import os
+
 markers_fname = snakemake.params.markers_fname
 if os.path.exists(markers_fname):
     markers = pd.read_csv(markers_fname, sep=";", index_col=0)
@@ -204,7 +206,9 @@ if os.path.exists(markers_fname):
         ].index.tolist()
     adata.uns["true_markers"] = markers_dict
 else:
-    print(f"Warning: markers file {markers_fname} not found, skipping marker annotation")
+    print(
+        f"Warning: markers file {markers_fname} not found, skipping marker annotation"
+    )
     adata.uns["true_markers"] = dict()
 
 # Known gene name mappings (SMED gene ID → common name)

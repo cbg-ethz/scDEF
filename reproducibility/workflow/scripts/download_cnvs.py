@@ -38,6 +38,7 @@ def main():
     urllib.request.urlretrieve(BIOMART_URL, biomart_raw)
 
     import pandas as pd
+
     df = pd.read_csv(biomart_raw)
     df.columns = ["hgnc_symbol", "start_position", "end_position", "chromosome_name"]
     df = df[df["hgnc_symbol"].notna() & (df["hgnc_symbol"] != "")]

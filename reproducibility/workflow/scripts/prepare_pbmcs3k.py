@@ -1,4 +1,5 @@
 import matplotlib
+
 matplotlib.use("Agg")
 import anndata
 import scanpy as sc
@@ -27,7 +28,11 @@ def main():
     adata.raw = adata
 
     # Update annotations — SeuratData pbmc3k.final uses 'seurat_annotations'
-    ann_col = "seurat_annotations" if "seurat_annotations" in adata.obs.columns else "celltypes"
+    ann_col = (
+        "seurat_annotations"
+        if "seurat_annotations" in adata.obs.columns
+        else "celltypes"
+    )
     adata.obs["Cell types"] = adata.obs[ann_col]
 
     map_coarse = {}

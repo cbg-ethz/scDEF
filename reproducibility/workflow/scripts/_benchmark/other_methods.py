@@ -378,6 +378,7 @@ def run_muvi(
 def _run_harmony_direct(ad, batch_key):
     """Run harmonypy directly, bypassing scanpy's wrapper to avoid shape bugs."""
     import harmonypy
+
     ho = harmonypy.run_harmony(ad.obsm["X_pca"], ad.obs, batch_key)
     res = np.array(ho.Z_corr.T)
     if res.ndim == 1:

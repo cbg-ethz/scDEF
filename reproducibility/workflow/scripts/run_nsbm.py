@@ -41,6 +41,7 @@ def main():
     out_adata.uns["hierarchy"] = res["simplified_hierarchy"]
 
     import numpy as np
+
     for i, assignments in enumerate(res["assignments"]):
         out_adata.obs[f"level_{i}_cluster"] = assignments
     for i, latent in enumerate(res["latents"]):
