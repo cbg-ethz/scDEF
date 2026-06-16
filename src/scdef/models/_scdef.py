@@ -3839,7 +3839,10 @@ class scDEF(object):
 
         if not getattr(self, "_preserve_factor_names_on_annotate", False):
             self.set_factor_names()
-        from scdef.tools.factor import _resolve_signature_drop_factors
+        from scdef.tools.factor import (
+            _resolve_signature_drop_factors,
+            hard_assignment_name_indices,
+        )
 
         ranked_genes, ranked_scores = self.get_signatures_dict(
             scores=True,
@@ -3852,8 +3855,6 @@ class scDEF(object):
             self.adata.obsm[f"X_{layer_name}"] = np.array(
                 self.pmeans[f"{layer_name}z"][:, self.factor_lists[idx]]
             )
-            from scdef.tools.factor import hard_assignment_name_indices
-
             assignments = hard_assignment_name_indices(self, idx)
             factor_names = list(self.factor_names[idx])
             self.adata.obs[f"{layer_name}"] = pd.Categorical(
