@@ -1470,7 +1470,7 @@ class scDEF(object):
         init_ard=None,
         init_gene_scale: Optional[np.ndarray] = None,
         nmf_init=False,
-        z_init_concentration=0.05,
+        z_init_concentration=0.5,
         **kwargs,
     ):
         rngs = random.split(random.PRNGKey(self.seed), self.n_layers)
@@ -1570,7 +1570,7 @@ class scDEF(object):
                 layer_idx > 0
             ):  # If the top layer inits to very small numbers, the loss goes crazy when MC=10...
                 clip = 1e-3
-                a = 1.0
+                a = 10.0
 
             if layer_idx == self.n_layers - 1:
                 a = 100.0
@@ -1777,6 +1777,152 @@ class scDEF(object):
             X_proj = z_full
 
         return init_z, init_W
+
+    @staticmethod
+    def _relabel_fcluster(fcluster_labels: np.ndarray) -> np.ndarray:
+        """Map scipy ``fcluster`` labels (1-indexed) to contiguous 0-indexed ints."""
+        labels = np.asarray(fcluster_labels, dtype=int)
+        uniq = np.unique(labels)
+        mapping = {int(u): i for i, u in enumerate(uniq)}
+        return np.array([mapping[int(x)] for x in labels], dtype=int)
+
+    def _kmeans_l0_labels(
+        self, pca: np.ndarray, k0: int
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Cluster cells into exactly ``k0`` groups via KMeans on ``pca``."""
+        from sklearn.cluster import KMeans
+
+        pca = np.asarray(pca, dtype=float)
+        km = KMeans(n_clusters=int(k0), random_state=self.seed, n_init=10)
+        labels = km.fit_predict(pca).astype(int)
+        centers = np.asarray(km.cluster_centers_, dtype=float)
+
+        counts = np.bincount(labels, minlength=k0)
+        empty = np.where(counts == 0)[0]
+        if empty.size == 0:
+            return labels, centers
+
+        self.logger.warning(
+            "KMeans returned %s empty cluster(s) at indices %s; reassigning the "
+            "nearest unassigned cell to each empty centroid.",
+            int(empty.size),
+            empty.tolist(),
+        )
+        reassigned: set = set()
+        for k in empty:
+            dists = ((pca - centers[k]) ** 2).sum(axis=1)
+            for idx in np.argsort(dists):
+                idx = int(idx)
+                if idx not in reassigned:
+                    labels[idx] = int(k)
+                    reassigned.add(idx)
+                    break
+
+        still_empty = np.where(np.bincount(labels, minlength=k0) == 0)[0]
+        if still_empty.size:
+            self.logger.warning(
+                "%s KMeans cluster(s) remain empty after reassignment: %s.",
+                int(still_empty.size),
+                still_empty.tolist(),
+            )
+        return labels, centers
+
+    def get_hierarchical_init(
+        self,
+        pca_key: str = "X_pca",
+        z_on: float = 1.0,
+        z_off: float = 0.1,
+    ) -> List[np.ndarray]:
+        """Build nested warm-start ``init_z`` from KMeans L0 labels on PCA.
+
+        L0 labels come from ``KMeans(n_clusters=layer_sizes[0])`` on
+        ``adata.obsm[pca_key]``. Ward linkage on the resulting L0 centroids
+        defines nested partitions for upper layers. Only ``K0`` centroid
+        comparisons are needed (no ``O(n_cells^2)`` work over cells). ``W`` is
+        left to the default :meth:`init_var_params` path.
+
+        Args:
+            pca_key: ``adata.obsm`` key for a PCA embedding (default ``"X_pca"``).
+            z_on: active cluster value in ``init_z`` (default ``1.0``).
+            z_off: inactive cluster soft floor in ``init_z`` (default ``0.1``).
+
+        Returns:
+            ``init_z`` list compatible with :meth:`init_var_params``.
+
+        Raises:
+            KeyError: if ``pca_key`` is missing.
+            ValueError: if the PCA embedding row count does not match ``n_cells``.
+        """
+        from scipy.cluster.hierarchy import fcluster, linkage
+
+        if pca_key not in self.adata.obsm:
+            raise KeyError(
+                f"pca_key {pca_key!r} not found in adata.obsm; compute PCA first "
+                "(e.g. sc.pp.pca(adata)) and store the embedding in "
+                f"adata.obsm[{pca_key!r}]."
+            )
+
+        pca = np.asarray(self.adata.obsm[pca_key], dtype=float)
+        if pca.shape[0] != self.n_cells:
+            raise ValueError(
+                f"PCA embedding {pca_key!r} has {pca.shape[0]} rows but the "
+                f"model has {self.n_cells} cells."
+            )
+
+        k0 = int(self.layer_sizes[0])
+        cell_l0, kmeans_centers = self._kmeans_l0_labels(pca, k0)
+
+        centroids = np.zeros((k0, pca.shape[1]), dtype=np.float32)
+        for k in range(k0):
+            mask = cell_l0 == k
+            if np.any(mask):
+                centroids[k] = pca[mask].mean(axis=0)
+            else:
+                centroids[k] = kmeans_centers[k]
+
+        if k0 <= 1:
+            linkage_matrix = None
+            self.logger.info(
+                "Only one L0 cluster; using trivial single-cluster hierarchy."
+            )
+        else:
+            linkage_matrix = linkage(centroids, method="ward")
+
+        centroid_labels: List[np.ndarray] = [np.arange(k0, dtype=int)]
+        for layer_idx in range(1, self.n_layers):
+            target_k = int(self.layer_sizes[layer_idx])
+            if linkage_matrix is None or target_k <= 1:
+                layer_labels = np.zeros(k0, dtype=int)
+            else:
+                cut_k = min(target_k, k0)
+                if cut_k < target_k:
+                    self.logger.warning(
+                        "Requested %s clusters at layer %s but only %s L0 "
+                        "centroids are available; fcluster will return at most %s.",
+                        target_k,
+                        layer_idx,
+                        k0,
+                        cut_k,
+                    )
+                layer_labels = self._relabel_fcluster(
+                    fcluster(linkage_matrix, t=cut_k, criterion="maxclust")
+                )
+            centroid_labels.append(layer_labels.astype(int))
+
+        init_z: List[np.ndarray] = []
+        for layer_idx in range(self.n_layers):
+            k_l = int(self.layer_sizes[layer_idx])
+            z = np.full((self.n_cells, k_l), z_off, dtype=np.float32)
+            layer_assign = centroid_labels[layer_idx][cell_l0]
+            z[np.arange(self.n_cells), layer_assign] = z_on
+            init_z.append(z)
+
+        self.logger.info(
+            "Built hierarchical z init from KMeans (%s L0 clusters) using %r.",
+            k0,
+            pca_key,
+        )
+        return init_z
 
     def identify_mixture_factors(
         self, max_n_genes: int = 20, thres: float = 0.5
@@ -2346,8 +2492,10 @@ class scDEF(object):
     def fit(
         self,
         nmf_init: bool = False,
+        hierarchical_init: bool = False,
+        pca_key: str = "X_pca",
         max_cells_init: int = 5000,
-        z_init_concentration: float = 0.05,
+        z_init_concentration: Optional[float] = None,
         n_rounds: int = 1,
         pretraining: bool = False,
         force_decay_factor: bool = False,
@@ -2367,8 +2515,20 @@ class scDEF(object):
         """Fit scDEF, warm-starting from a previous fit when available.
         Args:
             nmf_init: whether to initialize the model with NMF.
+            hierarchical_init: on the first ``fit()`` call, initialize ``z`` from
+                KMeans L0 labels and a Ward dendrogram via
+                :meth:`get_hierarchical_init`. Requires an existing PCA embedding
+                in ``adata.obsm[pca_key]``. ``W`` uses the default init. Mutually
+                exclusive with ``nmf_init``.
+            pca_key: ``adata.obsm`` key for PCA coordinates used for KMeans L0
+                clustering and the centroid dendrogram (default ``"X_pca"``).
             max_cells_init: maximum number of cells to use for initialization.
-            z_init_concentration: concentration parameter of a Gamma distribution to sample the initial z values from. If high coverage, prefer higher values to avoid overfitting early.
+            z_init_concentration: concentration parameter of a Gamma distribution to
+                sample the initial z values from. Controls the initial spread of
+                cell mass across factors: lower values explore more factors per cell.
+                If ``None`` (default), computed as ``min(0.5, alpha / 10)`` — 10%
+                of the prior concentration, capped at 0.5. Pass an explicit float
+                to override.
             n_rounds: number of rounds to run the optimization.
             pretraining: whether to run ``pretrain`` before standard fit.
             force_decay_factor: on refit, whether to clip upper-layer sizes to the
@@ -2430,9 +2590,25 @@ class scDEF(object):
             workflow. During refit, upper-layer sizes are clipped to the geometric
             template when ``force_decay_factor`` is True before rebuilding the hierarchy.
         """
+        if nmf_init and hierarchical_init:
+            raise ValueError(
+                "Pass only one of nmf_init=True or hierarchical_init=True."
+            )
+
         marginalize_alpha_for_main_fit = bool(self.marginalize_alpha)
         self.root_epochs = int(root_epochs)
+        if z_init_concentration is None:
+            # Default: 10% of alpha, capped at 0.5.  Keeps init more diffuse
+            # than the prior (sensitivity to rare populations) without the
+            # extreme mismatch that breeds "zombie" factors on small datasets.
+            z_init_concentration = min(0.5, float(self.alpha) / 10.0)
         is_refit = bool(getattr(self, "_has_fit", False))
+        if hierarchical_init and is_refit:
+            self.logger.warning(
+                "hierarchical_init=True is ignored on refit; warm-starting from "
+                "the previous posterior instead."
+            )
+            hierarchical_init = False
         refit_old_keep: Optional[List[int]] = None
         pending_reference_init: Optional[Mapping[str, Any]] = None
         init_gene_scale = None
@@ -2577,6 +2753,9 @@ class scDEF(object):
                     self.gene_ratio_init = 1.0 / np.clip(init_gene_scale, 1e-6, 1e6)
                 nmf_init = False
                 z_init_concentration = 100.0
+            elif hierarchical_init:
+                init_z = self.get_hierarchical_init(pca_key=pca_key)
+                nmf_init = False
         if is_refit:
             init_brd, init_ard = self._prepare_refit_relevance_inits(
                 init_brd,
@@ -3673,7 +3852,9 @@ class scDEF(object):
             self.adata.obsm[f"X_{layer_name}"] = np.array(
                 self.pmeans[f"{layer_name}z"][:, self.factor_lists[idx]]
             )
-            assignments = np.argmax(self.adata.obsm[f"X_{layer_name}"], axis=1)
+            from scdef.tools.factor import hard_assignment_name_indices
+
+            assignments = hard_assignment_name_indices(self, idx)
             factor_names = list(self.factor_names[idx])
             self.adata.obs[f"{layer_name}"] = pd.Categorical(
                 [factor_names[a] for a in assignments],
