@@ -10,6 +10,26 @@ from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from typing import Optional, Tuple, Literal, Any, TYPE_CHECKING
 
+FactorDiagQuantity = Literal[
+    "ARD",
+    "BRD",
+    "n_eff_parents",
+    "avg_n_eff_parents",
+    "batch_purity",
+    "batch_purity_soft",
+    "signature_confidence",
+]
+
+_FACTOR_DIAG_LABELS: dict[str, str] = {
+    "ARD": "ARD",
+    "BRD": "BRD",
+    "n_eff_parents": "Effective number of parents (L0)",
+    "avg_n_eff_parents": "Avg. effective parents (lineage)",
+    "batch_purity": "Batch purity",
+    "batch_purity_soft": "Batch purity (soft)",
+    "signature_confidence": "Signature confidence",
+}
+
 from scdef.tools.hierarchy import effective_parents_from_clarity
 
 if TYPE_CHECKING:
@@ -503,6 +523,111 @@ def qc(
         return fig
 
 
+def _factor_diag_quantity_label(quantity: str) -> str:
+    return _FACTOR_DIAG_LABELS.get(quantity, quantity)
+
+
+def _resolve_factor_diag_quantity(
+    model: "scDEF",
+    factor_obs_l0: Any,
+    labels: np.ndarray,
+    quantity: str,
+) -> np.ndarray:
+    """Return per-factor values for one diagnostic quantity."""
+    if quantity == "signature_confidence":
+        from scdef.tools.factor import get_stored_confident_signatures
+
+        try:
+            _, sig_conf = get_stored_confident_signatures(
+                model,
+                layer_idx=0,
+                return_signature_confidences=True,
+            )
+        except KeyError as exc:
+            raise KeyError(
+                "signature_confidence requires confident signatures. Run "
+                "`scd.tl.set_confident_signatures(model)` first."
+            ) from exc
+        return np.array(
+            [float(sig_conf.get(str(label), np.nan)) for label in labels],
+            dtype=float,
+        )
+
+    if quantity in ("batch_purity", "batch_purity_soft"):
+        if quantity not in factor_obs_l0.columns:
+            raise KeyError(
+                f"{quantity} is missing from factor diagnostics. Run "
+                "`scdef.tools.factor_diagnostics(model, batch_key=...)` first."
+            )
+        return factor_obs_l0[quantity].to_numpy(dtype=float)
+
+    if quantity not in factor_obs_l0.columns:
+        raise KeyError(f"Quantity '{quantity}' is missing from factor diagnostics.")
+    return factor_obs_l0[quantity].to_numpy(dtype=float)
+
+
+def _scale_marker_sizes(
+    values: np.ndarray,
+    min_size: float = 20.0,
+    max_size: float = 300.0,
+    fallback_size: float = 50.0,
+) -> np.ndarray:
+    """Map values to matplotlib scatter marker areas."""
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+        return np.full_like(values, fallback_size, dtype=float)
+    vmin = float(np.nanmin(finite))
+    vmax = float(np.nanmax(finite))
+    if vmax <= vmin:
+        return np.full_like(values, fallback_size, dtype=float)
+    sizes = min_size + (max_size - min_size) * (values - vmin) / (vmax - vmin)
+    sizes = np.where(np.isfinite(sizes), sizes, min_size)
+    return sizes
+
+
+def _scatter_with_optional_color(
+    ax: Axes,
+    x_vals: np.ndarray,
+    y_vals: np.ndarray,
+    color_vals: Optional[np.ndarray],
+    sizes: Optional[np.ndarray],
+    cmap: str = "viridis",
+) -> Any:
+    """Scatter with optional colormap; NaN colors are drawn as white."""
+    min_marker_size = 3.0
+    if sizes is not None:
+        sizes = np.asarray(sizes, dtype=float)
+        sizes = np.where(np.isfinite(sizes) & (sizes > 0), sizes, min_marker_size)
+
+    if color_vals is None:
+        scatter_kwargs: dict[str, Any] = {}
+        if sizes is not None:
+            scatter_kwargs["s"] = sizes
+        return ax.scatter(x_vals, y_vals, **scatter_kwargs)
+
+    finite_color = np.isfinite(color_vals)
+    if np.any(finite_color):
+        cmin = float(np.min(color_vals[finite_color]))
+        cmax = float(np.max(color_vals[finite_color]))
+    else:
+        cmin, cmax = 0.0, 1.0
+    if cmax <= cmin:
+        cmax = cmin + 1.0
+    color_cmap = plt.get_cmap(cmap).copy()
+    color_cmap.set_under(color="white")
+    under_val = cmin - (cmax - cmin) - 1e-6
+    color_plot = np.where(finite_color, color_vals, under_val)
+    return ax.scatter(
+        x_vals,
+        y_vals,
+        c=color_plot,
+        s=sizes,
+        cmap=color_cmap,
+        vmin=cmin,
+        vmax=cmax,
+    )
+
+
 def factor_diagnostics(
     model: "scDEF",
     brd_min: float = 1.0,
@@ -518,34 +643,41 @@ def factor_diagnostics(
     annotation_alpha: float = 0.8,
     all_factors: bool = False,
     local_l0_scores: bool = False,
+    x: FactorDiagQuantity = "BRD",
+    y: Optional[FactorDiagQuantity] = None,
+    color: Optional[FactorDiagQuantity] = None,
+    size: Optional[FactorDiagQuantity] = "ARD",
     show: bool = True,
 ) -> Optional[Axes]:
     """
-    Diagnostic scatter plot of factors: BRD vs effective parents colored by ARD.
+    Diagnostic scatter plot of layer-0 factors with flexible axis/color/size mapping.
+
+    By default plots BRD vs effective parents with marker size scaled by ARD.
+    When ``batch_purity_max`` or ``batch_purity_soft_max`` is set and ``color``
+    is not overridden, points are colored by the corresponding batch purity
+    (sizes still default to ARD).
 
     Args:
         model: scDEF model instance
         brd_min: minimum BRD filter threshold
         ard_min: minimum ARD filter threshold (fraction of total ARD)
-        clarity_min: used for the horizontal cutoff when **not** plotting lineage
-            ``avg_n_eff_parents`` (local-L0 mode or fallback to L0 ``n_eff_parents``):
-            cutoff is ``effective_parents_from_clarity(clarity_min, K_parents)``.
+        clarity_min: used for the horizontal cutoff when filtering on local
+            ``n_eff_parents`` (not lineage ``avg_n_eff_parents``): cutoff is
+            ``effective_parents_from_clarity(clarity_min, K_parents)``.
         batch_purity_max: optional upper bound on hard-assignment batch purity.
-            Factors pass when ``batch_purity <= batch_purity_max`` (low purity
-            = less batch-driven). If provided (and ``batch_purity_soft_max``
-            is None), the scatter is colored by ``batch_purity`` with the
-            colorbar threshold at this value, and dot sizes are scaled by
-            ``ARD``.
+            Factors pass when ``batch_purity <= batch_purity_max``. If provided
+            and ``color`` is not set, the scatter is colored by ``batch_purity``
+            with the colorbar threshold at this value.
         batch_purity_soft_max: optional upper bound on soft batch purity (from
             ``X_<layer>_probs``). Factors pass when
-            ``batch_purity_soft <= batch_purity_soft_max``. If provided, the
-            scatter is colored by ``batch_purity_soft`` unless
-            ``batch_purity_max`` is also set (hard purity used for color).
-            Default None (not used). Requires
+            ``batch_purity_soft <= batch_purity_soft_max``. If provided and
+            ``color`` is not set (and ``batch_purity_max`` is None), color
+            defaults to ``batch_purity_soft``. Requires
             ``scdef.tools.factor_diagnostics(..., batch_key=...)``.
-        n_eff_parents_max: used **only** when the y-axis is lineage
-            ``avg_n_eff_parents`` (``local_l0_scores=False`` and column present): dashed
-            line at this value and pass rule ``y < n_eff_parents_max`` (default ``1.5``).
+        n_eff_parents_max: used when filtering on lineage
+            ``avg_n_eff_parents`` (``local_l0_scores=False`` and column present):
+            dashed line at this value and pass rule ``y < n_eff_parents_max``
+            (default ``1.5``).
         figsize: Figure size (if ax is None)
         ax: matplotlib Axes to plot on
         annotate_factors: whether to annotate each point with its factor label
@@ -556,9 +688,19 @@ def factor_diagnostics(
             factors that were filtered out). Default (False) plots the current
             view ``model.adata.uns['factor_obs']``, which after
             ``model.filter_factors()`` contains only kept factors.
-        local_l0_scores: if True, plot layer-0-only ``n_eff_parents`` on the y-axis.
-            If False (default), plot lineage-averaged ``avg_n_eff_parents`` when
-            present in ``factor_obs``, otherwise fall back to ``n_eff_parents``.
+        local_l0_scores: when ``y`` is not set, use layer-0 ``n_eff_parents``
+            on the y-axis instead of lineage ``avg_n_eff_parents``.
+        x: quantity for the x-axis (``ARD``, ``BRD``, ``n_eff_parents``,
+            ``avg_n_eff_parents``, ``batch_purity``, ``batch_purity_soft``,
+            ``signature_confidence``).
+        y: quantity for the y-axis; default follows ``local_l0_scores`` /
+            ``avg_n_eff_parents`` availability.
+        color: quantity for marker color. Default ``None``: use
+            ``batch_purity`` when ``batch_purity_max`` is set, else
+            ``batch_purity_soft`` when ``batch_purity_soft_max`` is set, else
+            uncolored markers.
+        size: quantity for marker size. Default ``ARD``. Pass ``None`` for
+            fixed marker size.
         show: whether to show the plot
 
     Returns:
@@ -592,9 +734,6 @@ def factor_diagnostics(
         factor_obs_l0 = factor_obs_l0.sort_values("original_factor_idx")
 
     labels = factor_obs_l0.index.to_numpy()
-    # Remap labels of currently kept factors to their current model names
-    # (useful when plotting from factor_obs_full, whose index reflects the
-    # diagnostic-time naming and may differ from the post-filter names).
     if (
         "original_factor_idx" in factor_obs_l0.columns
         and hasattr(model, "factor_names")
@@ -609,41 +748,42 @@ def factor_diagnostics(
             slot = orig_to_slot.get(int(oidx))
             if slot is not None:
                 labels[i] = current_names_l0[slot]
-    x = factor_obs_l0["BRD"].to_numpy(dtype=float)
-    if local_l0_scores:
-        y_col = "n_eff_parents"
-        y_label = "Effective number of parents (L0)"
-    else:
-        if "avg_n_eff_parents" in factor_obs_l0.columns:
-            y_col = "avg_n_eff_parents"
-            y_label = "Avg. effective parents (lineage)"
-        else:
-            y_col = "n_eff_parents"
-            y_label = "Effective number of parents (L0)"
-    y = factor_obs_l0[y_col].to_numpy(dtype=float)
-    z = factor_obs_l0["ARD"].to_numpy(dtype=float)
+
+    brd_vals = factor_obs_l0["BRD"].to_numpy(dtype=float)
+    ard_vals = factor_obs_l0["ARD"].to_numpy(dtype=float)
     batch_purity = None
     batch_purity_soft = None
-    if batch_purity_max is not None:
-        if "batch_purity" not in factor_obs_l0.columns:
-            raise KeyError(
-                "batch_purity is missing from factor diagnostics. Run "
-                "`scdef.tools.factor_diagnostics(model, batch_key=...)` first."
-            )
-        batch_purity = factor_obs_l0["batch_purity"].to_numpy(dtype=float)
-    if batch_purity_soft_max is not None:
-        if "batch_purity_soft" not in factor_obs_l0.columns:
-            raise KeyError(
-                "batch_purity_soft is missing from factor diagnostics. Run "
-                "`scdef.tools.factor_diagnostics(model, batch_key=...)` first."
-            )
-        batch_purity_soft = factor_obs_l0["batch_purity_soft"].to_numpy(dtype=float)
-    lineage_plot = (not local_l0_scores) and (
+    if batch_purity_max is not None or color == "batch_purity":
+        batch_purity = _resolve_factor_diag_quantity(
+            model, factor_obs_l0, labels, "batch_purity"
+        )
+    if batch_purity_soft_max is not None or color == "batch_purity_soft":
+        batch_purity_soft = _resolve_factor_diag_quantity(
+            model, factor_obs_l0, labels, "batch_purity_soft"
+        )
+
+    if y is None:
+        if local_l0_scores:
+            y_quantity = "n_eff_parents"
+        elif "avg_n_eff_parents" in factor_obs_l0.columns:
+            y_quantity = "avg_n_eff_parents"
+        else:
+            y_quantity = "n_eff_parents"
+    else:
+        y_quantity = y
+
+    lineage_filter = (not local_l0_scores) and (
         "avg_n_eff_parents" in factor_obs_l0.columns
     )
-    if lineage_plot:
+    if lineage_filter:
         neffective_parents_max = float(n_eff_parents_max)
+        filter_y_vals = _resolve_factor_diag_quantity(
+            model, factor_obs_l0, labels, "avg_n_eff_parents"
+        )
     else:
+        filter_y_vals = _resolve_factor_diag_quantity(
+            model, factor_obs_l0, labels, "n_eff_parents"
+        )
         k_parents = factor_obs_l0["K_parents"].to_numpy(dtype=float)
         finite_k = k_parents[np.isfinite(k_parents)]
         if len(finite_k) == 0:
@@ -655,11 +795,38 @@ def factor_diagnostics(
             effective_parents_from_clarity(clarity_min, k_for_threshold)
         )
 
-    ard_total = np.nansum(z)
-    factors_pass_base = np.where(
-        (x > brd_min) & (y < neffective_parents_max) & (z > ard_min * ard_total)
-    )[0]
-    pass_mask = (x > brd_min) & (y < neffective_parents_max) & (z > ard_min * ard_total)
+    if color is None:
+        if batch_purity_max is not None:
+            color_quantity = "batch_purity"
+        elif batch_purity_soft_max is not None:
+            color_quantity = "batch_purity_soft"
+        else:
+            color_quantity = None
+    else:
+        color_quantity = color
+
+    size_quantity = size
+
+    x_vals = _resolve_factor_diag_quantity(model, factor_obs_l0, labels, x)
+    y_vals = _resolve_factor_diag_quantity(model, factor_obs_l0, labels, y_quantity)
+    color_vals = (
+        None
+        if color_quantity is None
+        else _resolve_factor_diag_quantity(model, factor_obs_l0, labels, color_quantity)
+    )
+    size_source_vals = (
+        None
+        if size_quantity is None
+        else _resolve_factor_diag_quantity(model, factor_obs_l0, labels, size_quantity)
+    )
+
+    ard_total = np.nansum(ard_vals)
+    ard_thresh = ard_min * ard_total
+    pass_mask = (
+        (brd_vals > brd_min)
+        & (filter_y_vals < neffective_parents_max)
+        & (ard_vals > ard_thresh)
+    )
     if batch_purity_max is not None:
         pass_mask &= batch_purity <= float(batch_purity_max)
     if batch_purity_soft_max is not None:
@@ -669,85 +836,34 @@ def factor_diagnostics(
     if ax is None:
         fig, ax = plt.subplots(1, 1, figsize=figsize)
 
-    ard_thresh = ard_min * ard_total
-    use_batch_color = batch_purity_max is not None or batch_purity_soft_max is not None
-    if not use_batch_color:
-        sizes = None
-        im = ax.scatter(x, y, c=z, cmap="viridis")
-        cbar_label = "ARD"
-        cbar_thresh = ard_thresh
-        cbar_values = z
-    else:
-        z_finite = z[np.isfinite(z)]
-        if z_finite.size > 0 and np.nanmax(z_finite) > np.nanmin(z_finite):
-            z_min = float(np.nanmin(z_finite))
-            z_max = float(np.nanmax(z_finite))
-            sizes = 20.0 + 280.0 * (z - z_min) / (z_max - z_min)
-            sizes = np.where(np.isfinite(sizes), sizes, 20.0)
-        else:
-            sizes = np.full_like(z, 50.0, dtype=float)
-        if batch_purity_max is not None:
-            batch_color = batch_purity
-            cbar_label = "Batch purity"
-            cbar_thresh = float(batch_purity_max)
-        else:
-            batch_color = batch_purity_soft
-            cbar_label = "Batch purity (soft)"
-            cbar_thresh = float(batch_purity_soft_max)
-        cbar_values = batch_color
-        # Zero-cell factors have NaN batch purity; near-zero ARD can yield s<=0.
-        # Use finite color/size defaults so every factor is drawn and autoscales.
-        min_marker_size = 3.0
-        sizes = np.asarray(sizes, dtype=float)
-        sizes = np.where(np.isfinite(sizes) & (sizes > 0), sizes, min_marker_size)
-        finite_color = np.isfinite(batch_color)
-        if np.any(finite_color):
-            cmin = float(np.min(batch_color[finite_color]))
-            cmax = float(np.max(batch_color[finite_color]))
-        else:
-            cmin, cmax = 0.0, 1.0
-        if cmax <= cmin:
-            cmax = cmin + 1.0
-        batch_cmap = plt.get_cmap("viridis").copy()
-        batch_cmap.set_under(color="white")
-        under_val = cmin - (cmax - cmin) - 1e-6
-        batch_color_plot = np.where(finite_color, batch_color, under_val)
-        im = ax.scatter(
-            x,
-            y,
-            c=batch_color_plot,
-            s=sizes,
-            cmap=batch_cmap,
-            vmin=cmin,
-            vmax=cmax,
-        )
+    sizes = None if size_source_vals is None else _scale_marker_sizes(size_source_vals)
+    im = _scatter_with_optional_color(ax, x_vals, y_vals, color_vals, sizes)
 
     if annotate_factors:
         for i in range(len(labels)):
-            if np.isfinite(x[i]) and np.isfinite(y[i]):
+            if np.isfinite(x_vals[i]) and np.isfinite(y_vals[i]):
                 ax.text(
-                    x[i],
-                    y[i],
+                    x_vals[i],
+                    y_vals[i],
                     str(labels[i]),
                     fontsize=annotation_fontsize,
                     alpha=annotation_alpha,
                 )
-    # Draw blue circle around dots that pass filters
+
     if len(factors_pass) > 0:
         keep_sizes = 100 if sizes is None else sizes[factors_pass] + 40
         ax.scatter(
-            x[factors_pass],
-            y[factors_pass],
+            x_vals[factors_pass],
+            y_vals[factors_pass],
             s=keep_sizes,
             facecolors="none",
-            edgecolors=plt.rcParams["axes.prop_cycle"].by_key()["color"][
-                0
-            ],  # default blue
+            edgecolors=plt.rcParams["axes.prop_cycle"].by_key()["color"][0],
             marker="o",
             label="Keep",
         )
-    ax.set_xlabel("BRD")
-    ax.set_ylabel(y_label)
+
+    ax.set_xlabel(_factor_diag_quantity_label(x))
+    ax.set_ylabel(_factor_diag_quantity_label(y_quantity))
     ax.axvline(
         brd_min,
         linestyle="--",
@@ -758,36 +874,52 @@ def factor_diagnostics(
         linestyle="--",
         color=plt.rcParams["axes.prop_cycle"].by_key()["color"][0],
     )
-    cbar = plt.colorbar(im, ax=ax, label=cbar_label)
-    norm = im.norm
-    cbar_min, cbar_max = norm.vmin, norm.vmax
-    if cbar_min == cbar_max:
-        finite_vals = cbar_values[np.isfinite(cbar_values)]
-        if finite_vals.size > 0:
-            cbar_min, cbar_max = float(np.min(finite_vals)), float(np.max(finite_vals))
-    if cbar_min < cbar_thresh < cbar_max:
-        cb_ax = cbar.ax
-        cb_ax.axhline(
-            cbar_thresh,
-            color=plt.rcParams["axes.prop_cycle"].by_key()["color"][0],
-            linestyle="--",
-            linewidth=5,
-        )
 
-    # When sizes encode ARD, add a size legend with reference markers.
-    if sizes is not None:
-        z_finite = z[np.isfinite(z)]
-        if z_finite.size > 0:
-            z_min = float(np.nanmin(z_finite))
-            z_max = float(np.nanmax(z_finite))
-            if z_max > z_min:
+    cbar = None
+    cbar_thresh: Optional[float] = None
+    if color_vals is not None:
+        cbar_label = _factor_diag_quantity_label(color_quantity)
+        cbar = plt.colorbar(im, ax=ax, label=cbar_label)
+        if color_quantity == "ARD":
+            cbar_thresh = ard_thresh
+        elif color_quantity == "batch_purity" and batch_purity_max is not None:
+            cbar_thresh = float(batch_purity_max)
+        elif (
+            color_quantity == "batch_purity_soft" and batch_purity_soft_max is not None
+        ):
+            cbar_thresh = float(batch_purity_soft_max)
+
+        if cbar_thresh is not None:
+            norm = im.norm
+            cbar_min, cbar_max = norm.vmin, norm.vmax
+            if cbar_min == cbar_max:
+                finite_vals = color_vals[np.isfinite(color_vals)]
+                if finite_vals.size > 0:
+                    cbar_min, cbar_max = (
+                        float(np.min(finite_vals)),
+                        float(np.max(finite_vals)),
+                    )
+            if cbar_min < cbar_thresh < cbar_max:
+                cbar.ax.axhline(
+                    cbar_thresh,
+                    color=plt.rcParams["axes.prop_cycle"].by_key()["color"][0],
+                    linestyle="--",
+                    linewidth=5,
+                )
+
+    if sizes is not None and size_source_vals is not None:
+        size_finite = size_source_vals[np.isfinite(size_source_vals)]
+        if size_finite.size > 0:
+            s_min = float(np.nanmin(size_finite))
+            s_max = float(np.nanmax(size_finite))
+            if s_max > s_min:
                 from matplotlib.lines import Line2D
 
-                ref_vals = np.nanpercentile(z_finite, [10, 50, 90])
+                ref_vals = np.nanpercentile(size_finite, [10, 50, 90])
                 ref_labels = ["10%", "50%", "90%"]
                 handles = []
                 for val, label in zip(ref_vals, ref_labels):
-                    s_val = 20.0 + 280.0 * (val - z_min) / (z_max - z_min)
+                    s_val = 20.0 + 280.0 * (val - s_min) / (s_max - s_min)
                     handles.append(
                         Line2D(
                             [0],
@@ -802,7 +934,7 @@ def factor_diagnostics(
                     )
                 size_legend = ax.legend(
                     handles=handles,
-                    title="Size (ARD)",
+                    title=f"Size ({_factor_diag_quantity_label(size_quantity)})",
                     loc="upper right",
                     fontsize=8,
                     title_fontsize=8,
