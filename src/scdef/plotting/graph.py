@@ -11,6 +11,7 @@ from ..tools import (
     get_global_signature,
     get_stored_confident_signatures,
 )
+from ..tools.factor import lookup_factor_obs_n_cells
 from ..utils import hierarchy_utils
 
 if TYPE_CHECKING:
@@ -613,6 +614,22 @@ def _cells_for_graph_factor(
     return np.where(obs_vals == str(assignment_factor_name))[0]
 
 
+def _node_num_cells_for_graph(
+    model: "scDEF",
+    assignment_factor_name: str,
+    cells: np.ndarray,
+    *,
+    assignments: bool,
+    confident_assignments: bool,
+) -> int:
+    """Cell count for graph labels/sizing; prefers ``factor_obs['n_cells']``."""
+    if assignments and not confident_assignments:
+        n_cells = lookup_factor_obs_n_cells(model, assignment_factor_name)
+        if n_cells is not None:
+            return n_cells
+    return int(len(cells))
+
+
 def _compute_node_size(
     model,
     layer_idx,
@@ -1094,7 +1111,13 @@ def make_graph(
                 confident_assignments,
                 confident_key,
             )
-            node_num_cells = len(cells)
+            node_num_cells = _node_num_cells_for_graph(
+                model,
+                assignment_factor_name,
+                cells,
+                assignments=bool(assignments),
+                confident_assignments=confident_assignments,
+            )
 
             # Build label
             label = _get_base_label(
@@ -1476,12 +1499,14 @@ def make_technical_hierarchy_graph(
 
             if layer_idx == model.n_layers - 1:
                 cells = np.array([])
+                lookup_name = str(factor_name)
             else:
                 assignment_factor_name = (
                     str(model.factor_names[layer_idx][int(factor_idx)])
                     if confident_assignments
                     else str(factor_name)
                 )
+                lookup_name = assignment_factor_name
                 cells = _cells_for_graph_factor(
                     model,
                     layer_name,
@@ -1489,7 +1514,13 @@ def make_technical_hierarchy_graph(
                     confident_assignments,
                     confident_key,
                 )
-            node_num_cells = len(cells)
+            node_num_cells = _node_num_cells_for_graph(
+                model,
+                lookup_name,
+                cells,
+                assignments=bool(assignments),
+                confident_assignments=confident_assignments,
+            )
 
             # Build label
             label = _get_base_label(

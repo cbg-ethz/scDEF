@@ -612,6 +612,48 @@ def _soft_factor_membership(
     return z_norm[:, original_factor_idx]
 
 
+def hard_assignment_name_indices(model: "scDEF", layer_idx: int) -> np.ndarray:
+    """Per-cell winner index into ``factor_names[layer_idx]`` (kept factors only).
+
+    Uses the same posterior-mean ``z`` argmax as :meth:`scDEF.annotate_adata` and
+    ``make_graph(..., assignments=True)``.
+    """
+    layer_name = model.layer_names[layer_idx]
+    keep = np.asarray(model.factor_lists[layer_idx], dtype=int)
+    z = np.asarray(
+        model.pmeans[f"{layer_name}z"][:, keep],
+        dtype=float,
+    )
+    return np.argmax(z, axis=1)
+
+
+def hard_assignment_factor_slots(model: "scDEF", layer_idx: int) -> np.ndarray:
+    """Per-cell winning original factor slot at ``layer_idx`` (kept factors only)."""
+    keep = np.asarray(model.factor_lists[layer_idx], dtype=int)
+    return keep[hard_assignment_name_indices(model, layer_idx)]
+
+
+def count_hard_assigned_cells(
+    model: "scDEF", layer_idx: int, original_factor_idx: int
+) -> int:
+    """Number of cells whose hard assignment at ``layer_idx`` is ``original_factor_idx``."""
+    winners = hard_assignment_factor_slots(model, layer_idx)
+    return int(np.sum(winners == int(original_factor_idx)))
+
+
+def lookup_factor_obs_n_cells(model: "scDEF", factor_name: str) -> Optional[int]:
+    """Return ``factor_obs['n_cells']`` for ``factor_name`` when diagnostics exist."""
+    factor_obs = model.adata.uns.get("factor_obs")
+    if factor_obs is None or "n_cells" not in factor_obs.columns:
+        return None
+    if factor_name not in factor_obs.index:
+        return None
+    value = factor_obs.at[factor_name, "n_cells"]
+    if pd.isna(value):
+        return None
+    return int(value)
+
+
 def factor_diagnostics(
     model: "scDEF",
     recompute: bool = False,
@@ -621,12 +663,22 @@ def factor_diagnostics(
     sensible_top_min_clear_children: int = 2,
     sensible_top_ignore_root: bool = True,
     sensible_top_use_filtered: bool = True,
+    confidence_threshold: float = 0.9,
+    tau_quantile: float = 0.99,
+    min_effect: Optional[float] = None,
+    mc_samples: int = 100,
+    random_seed: int = 0,
 ) -> None:
     """Compute/store factor diagnostics in ``model.adata.uns['factor_obs']``.
 
     Populates per-factor hierarchy scores plus ``ARD``, ``BRD``, ``n_cells``
-    (hard argmax variational ``z`` assignments per layer), and optional batch
-    metrics when ``batch_key`` is set.
+    (hard argmax posterior ``z`` assignments among kept factors — the same rule
+    as ``annotate_adata`` / ``make_graph(..., assignments=True)``), and optional
+    batch metrics when ``batch_key`` is set.
+
+    Also runs :func:`set_confident_signatures` so plotting helpers
+    (``make_graph``, ``pl.factor_diagnostics(color='signature_confidence')``,
+    etc.) can use cached signatures without a separate call.
 
     Args:
         model: scDEF model instance
@@ -651,6 +703,11 @@ def factor_diagnostics(
             when classifying sensible-top factors.
         sensible_top_use_filtered: whether to use ``model.factor_lists`` /
             ``model.factor_names`` for hierarchy transitions.
+        confidence_threshold: passed to :func:`set_confident_signatures`.
+        tau_quantile: passed to :func:`set_confident_signatures`.
+        min_effect: passed to :func:`set_confident_signatures`.
+        mc_samples: passed to :func:`set_confident_signatures`.
+        random_seed: passed to :func:`set_confident_signatures`.
     """
     # Keep layer 0 unfiltered, but use a fixed filtered subset on upper layers.
     # Cache and reuse upper-layer factor lists so diagnostics remain stable across
@@ -756,22 +813,6 @@ def factor_diagnostics(
     factor_obs["batch_purity_soft"] = np.nan
     factor_obs["n_cells"] = 0
 
-    # Match compute_hierarchy_scores: L0 uses all slots; upper child layers use
-    # the cached kept-factor lists so every cell is assigned to a row in factor_obs.
-    kept_by_layer: List[np.ndarray] = [
-        np.arange(int(model.layer_sizes[0]), dtype=int)
-    ] + [np.asarray(idxs, dtype=int) for idxs in fixed_upper_lists]
-
-    z_means_full = np.asarray(model.local_params[1][0], dtype=float)
-    offsets = np.cumsum([0] + [int(s) for s in model.layer_sizes]).astype(int)
-    layer_winners: Dict[int, np.ndarray] = {}
-    for layer_idx in range(model.n_layers - 1):
-        keep = kept_by_layer[layer_idx]
-        start = int(offsets[layer_idx])
-        end = int(offsets[layer_idx + 1])
-        scores = z_means_full[:, start:end][:, keep]
-        layer_winners[layer_idx] = keep[np.argmax(scores, axis=1)]
-
     for factor_name, row in factor_obs.iterrows():
         if "child_layer" in factor_obs.columns:
             layer_name = str(row["child_layer"])
@@ -798,8 +839,9 @@ def factor_diagnostics(
         ):
             continue
 
-        winner = layer_winners[layer_idx]
-        factor_obs.at[row.name, "n_cells"] = int(np.sum(winner == original_factor_idx))
+        factor_obs.at[row.name, "n_cells"] = count_hard_assigned_cells(
+            model, layer_idx, original_factor_idx
+        )
 
     if batch_key is not None:
         if batch_key not in model.adata.obs.columns:
@@ -933,6 +975,15 @@ def factor_diagnostics(
     # re-filtering with looser thresholds still sees diagnostics for
     # factors previously dropped from the live factor_obs view.
     model.adata.uns["factor_obs_full"] = factor_obs.copy()
+
+    set_confident_signatures(
+        model,
+        confidence_threshold=confidence_threshold,
+        tau_quantile=tau_quantile,
+        min_effect=min_effect,
+        mc_samples=mc_samples,
+        random_seed=random_seed,
+    )
 
 
 def set_factor_signatures(
