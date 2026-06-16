@@ -624,6 +624,10 @@ def factor_diagnostics(
 ) -> None:
     """Compute/store factor diagnostics in ``model.adata.uns['factor_obs']``.
 
+    Populates per-factor hierarchy scores plus ``ARD``, ``BRD``, ``n_cells``
+    (hard argmax variational ``z`` assignments per layer), and optional batch
+    metrics when ``batch_key`` is set.
+
     Args:
         model: scDEF model instance
         recompute: if True, force recomputation of the cached fixed upper-layer
@@ -750,6 +754,52 @@ def factor_diagnostics(
     factor_obs["batch_entropy"] = np.nan
     factor_obs["batch_purity"] = np.nan
     factor_obs["batch_purity_soft"] = np.nan
+    factor_obs["n_cells"] = 0
+
+    # Match compute_hierarchy_scores: L0 uses all slots; upper child layers use
+    # the cached kept-factor lists so every cell is assigned to a row in factor_obs.
+    kept_by_layer: List[np.ndarray] = [
+        np.arange(int(model.layer_sizes[0]), dtype=int)
+    ] + [np.asarray(idxs, dtype=int) for idxs in fixed_upper_lists]
+
+    z_means_full = np.asarray(model.local_params[1][0], dtype=float)
+    offsets = np.cumsum([0] + [int(s) for s in model.layer_sizes]).astype(int)
+    layer_winners: Dict[int, np.ndarray] = {}
+    for layer_idx in range(model.n_layers - 1):
+        keep = kept_by_layer[layer_idx]
+        start = int(offsets[layer_idx])
+        end = int(offsets[layer_idx + 1])
+        scores = z_means_full[:, start:end][:, keep]
+        layer_winners[layer_idx] = keep[np.argmax(scores, axis=1)]
+
+    for factor_name, row in factor_obs.iterrows():
+        if "child_layer" in factor_obs.columns:
+            layer_name = str(row["child_layer"])
+            if layer_name not in model.layer_names:
+                continue
+            layer_idx = model.layer_names.index(layer_name)
+        else:
+            if not isinstance(factor_name, str) or "_" not in factor_name:
+                continue
+            layer_name = factor_name.rsplit("_", 1)[0]
+            if layer_name not in model.layer_names:
+                continue
+            layer_idx = model.layer_names.index(layer_name)
+
+        if "original_factor_idx" in factor_obs.columns:
+            original_factor_idx = int(row["original_factor_idx"])
+        else:
+            try:
+                original_factor_idx = int(str(factor_name).rsplit("_", 1)[1])
+            except (ValueError, IndexError):
+                continue
+        if original_factor_idx < 0 or original_factor_idx >= int(
+            model.layer_sizes[layer_idx]
+        ):
+            continue
+
+        winner = layer_winners[layer_idx]
+        factor_obs.at[row.name, "n_cells"] = int(np.sum(winner == original_factor_idx))
 
     if batch_key is not None:
         if batch_key not in model.adata.obs.columns:

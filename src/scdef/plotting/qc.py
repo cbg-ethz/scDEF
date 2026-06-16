@@ -18,6 +18,7 @@ FactorDiagQuantity = Literal[
     "batch_purity",
     "batch_purity_soft",
     "signature_confidence",
+    "n_cells",
 ]
 
 _FACTOR_DIAG_LABELS: dict[str, str] = {
@@ -28,6 +29,7 @@ _FACTOR_DIAG_LABELS: dict[str, str] = {
     "batch_purity": "Batch purity",
     "batch_purity_soft": "Batch purity (soft)",
     "signature_confidence": "Signature confidence",
+    "n_cells": "Number of cells",
 }
 
 from scdef.tools.hierarchy import effective_parents_from_clarity
@@ -692,7 +694,7 @@ def factor_diagnostics(
             on the y-axis instead of lineage ``avg_n_eff_parents``.
         x: quantity for the x-axis (``ARD``, ``BRD``, ``n_eff_parents``,
             ``avg_n_eff_parents``, ``batch_purity``, ``batch_purity_soft``,
-            ``signature_confidence``).
+            ``signature_confidence``, ``n_cells``).
         y: quantity for the y-axis; default follows ``local_l0_scores`` /
             ``avg_n_eff_parents`` availability.
         color: quantity for marker color. Default ``None``: use
