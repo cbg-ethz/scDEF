@@ -233,6 +233,8 @@ def test_scdef():
     assert "batch_entropy" in factor_obs.columns
     assert "batch_purity" in factor_obs.columns
     assert "batch_purity_soft" in factor_obs.columns
+    assert "n_cells" in factor_obs.columns
+    assert factor_obs["n_cells"].sum() == model.n_cells * (model.n_layers - 1)
     purity_vals = factor_obs["batch_purity"].to_numpy(dtype=float)
     finite_purity = purity_vals[np.isfinite(purity_vals)]
     assert finite_purity.size > 0
