@@ -785,12 +785,19 @@ def _add_edges_from_hierarchy(
     color,
     path_edge_set: Optional[Set[Tuple[str, str]]] = None,
     path_color: Optional[str] = None,
+    visible_factor_names: Optional[Set[str]] = None,
 ):
     """Add edges from hierarchy."""
     if factor_name not in hierarchy:
         return
 
-    lower_factor_names = hierarchy[factor_name]
+    lower_factor_names = list(hierarchy[factor_name])
+    if visible_factor_names is not None:
+        lower_factor_names = [
+            name for name in lower_factor_names if name in visible_factor_names
+        ]
+    if len(lower_factor_names) == 0:
+        return
     mat = np.array(
         [
             model.compute_weight(factor_name, lower_factor_name)
@@ -918,6 +925,7 @@ def make_graph(
     r: Optional[float] = 2.0,
     r_decay: Optional[float] = 0.8,
     root_shape: Optional[str] = None,
+    bottom_layer: int = 0,
     **fontsize_kwargs: Any,
 ) -> Graph:
     """Make Graphviz-formatted scDEF graph.
@@ -975,6 +983,8 @@ def make_graph(
         r_decay: radius decay parameter for shell layout
         root_shape: Graphviz node shape for root-layer factors (e.g. ``"diamond"``,
             ``"box"``, ``"hexagon"``). When ``None`` the default ellipse is used.
+        bottom_layer: lowest layer index to include (default ``0``). Set to ``1``
+            to omit the finest layer (L0) when it has too many factors.
         **fontsize_kwargs: keyword arguments to adjust the fontsizes according to the gene scores
 
     Returns:
@@ -990,6 +1000,14 @@ def make_graph(
     # Validate and normalize inputs
     ignore_shell_root = _shell_ignores_root(model, shell)
     visible_n_layers = model.n_layers - int(ignore_shell_root)
+    bottom_layer = int(bottom_layer)
+    if bottom_layer < 0:
+        raise ValueError("bottom_layer must be >= 0.")
+    if bottom_layer >= visible_n_layers:
+        raise ValueError(
+            f"bottom_layer must be < {visible_n_layers} "
+            f"(number of drawable layers)."
+        )
     top_genes = _validate_top_genes(
         top_genes,
         model.n_layers,
@@ -1026,6 +1044,13 @@ def make_graph(
                 matplotlib.colors.to_rgb(path_color)
             )
     layer_factor_orders = _compute_layer_factor_orders(model, show_all)
+    visible_factor_names: Set[str] = set()
+    for layer_idx in range(bottom_layer, visible_n_layers):
+        if show_all:
+            for i in range(model.layer_sizes[layer_idx]):
+                visible_factor_names.add(f"{model.layer_names[layer_idx]}{int(i)}")
+        else:
+            visible_factor_names.update(model.factor_names[layer_idx])
     if enrichments is not None:
         show_enrichments = True
     enrichments_df = enrichments
@@ -1059,7 +1084,7 @@ def make_graph(
 
     # Process each layer. Shell plots preserve the old no-root visual style by
     # omitting a final width-1 root layer.
-    for layer_idx in range(visible_n_layers):
+    for layer_idx in range(bottom_layer, visible_n_layers):
         layer_name = model.layer_names[layer_idx]
 
         # Get factors and colors for this layer
@@ -1296,7 +1321,7 @@ def make_graph(
             if not color_edges:
                 edge_default = None
 
-            if layer_idx > 0:
+            if layer_idx > bottom_layer:
                 if hierarchy is not None:
                     _add_edges_from_hierarchy(
                         g,
@@ -1306,6 +1331,7 @@ def make_graph(
                         edge_default,
                         path_edge_set=path_edge_set if path_edge_set else None,
                         path_color=path_stroke_hex,
+                        visible_factor_names=visible_factor_names,
                     )
                 else:
                     _add_edges_from_weights(
