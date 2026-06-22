@@ -638,6 +638,7 @@ def factor_diagnostics(
     batch_purity_max: Optional[float] = None,
     batch_purity_soft_max: Optional[float] = None,
     n_eff_parents_max: float = 1.5,
+    brd_exceptional: Optional[float] = None,
     figsize: tuple = (6, 4),
     ax: Optional[Axes] = None,
     annotate_factors: bool = False,
@@ -678,8 +679,13 @@ def factor_diagnostics(
             ``scdef.tools.factor_diagnostics(..., batch_key=...)``.
         n_eff_parents_max: used when filtering on lineage
             ``avg_n_eff_parents`` (``local_l0_scores=False`` and column present):
-            dashed line at this value and pass rule ``y < n_eff_parents_max``
-            (default ``1.5``).
+            dashed line at this value and pass rule
+            ``y <= n_eff_parents_max`` (default ``1.5``). When
+            ``brd_exceptional`` is set, factors with ``BRD >= brd_exceptional``
+            also pass.
+        brd_exceptional: if set, dashed vertical line on BRD and pass rule
+            allowing high-BRD factors to be kept even when effective parents
+            exceed ``n_eff_parents_max``. Default ``None`` (disabled).
         figsize: Figure size (if ax is None)
         ax: matplotlib Axes to plot on
         annotate_factors: whether to annotate each point with its factor label
@@ -824,11 +830,10 @@ def factor_diagnostics(
 
     ard_total = np.nansum(ard_vals)
     ard_thresh = ard_min * ard_total
-    pass_mask = (
-        (brd_vals > brd_min)
-        & (filter_y_vals < neffective_parents_max)
-        & (ard_vals > ard_thresh)
-    )
+    tree_pass = filter_y_vals <= neffective_parents_max
+    if brd_exceptional is not None:
+        tree_pass = tree_pass | (brd_vals >= brd_exceptional)
+    pass_mask = (brd_vals >= brd_min) & (ard_vals >= ard_thresh) & tree_pass
     if batch_purity_max is not None:
         pass_mask &= batch_purity <= float(batch_purity_max)
     if batch_purity_soft_max is not None:
@@ -866,15 +871,22 @@ def factor_diagnostics(
 
     ax.set_xlabel(_factor_diag_quantity_label(x))
     ax.set_ylabel(_factor_diag_quantity_label(y_quantity))
+    line_color = plt.rcParams["axes.prop_cycle"].by_key()["color"][0]
     ax.axvline(
         brd_min,
         linestyle="--",
-        color=plt.rcParams["axes.prop_cycle"].by_key()["color"][0],
+        color=line_color,
     )
+    if brd_exceptional is not None:
+        ax.axvline(
+            brd_exceptional,
+            linestyle="--",
+            color=plt.rcParams["axes.prop_cycle"].by_key()["color"][1],
+        )
     ax.axhline(
         neffective_parents_max,
         linestyle="--",
-        color=plt.rcParams["axes.prop_cycle"].by_key()["color"][0],
+        color=line_color,
     )
 
     cbar = None

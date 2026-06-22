@@ -531,6 +531,7 @@ class iscDEF(scDEF):
         ard_min: Optional[float] = 0.001,
         clarity_min: Optional[float] = 0.5,
         n_eff_parents_max: float = 1.5,
+        brd_exceptional: Optional[float] = None,
         local_l0_scores: bool = False,
         batch_purity_max: Optional[float] = None,
         batch_purity_soft_max: Optional[float] = None,
@@ -539,6 +540,7 @@ class iscDEF(scDEF):
         filter_up: Optional[bool] = True,
         annotate: Optional[bool] = True,
         upper_only: Optional[bool] = False,
+        keep: Optional[Sequence[str]] = None,
     ):
         """Filter factors while preserving existing marker-based factor names.
 
@@ -556,6 +558,7 @@ class iscDEF(scDEF):
             ard_min=ard_min,
             clarity_min=clarity_min,
             n_eff_parents_max=n_eff_parents_max,
+            brd_exceptional=brd_exceptional,
             local_l0_scores=local_l0_scores,
             batch_purity_max=batch_purity_max,
             batch_purity_soft_max=batch_purity_soft_max,
@@ -564,6 +567,7 @@ class iscDEF(scDEF):
             filter_up=filter_up,
             annotate=False,
             upper_only=upper_only,
+            keep=keep,
         )
 
         if prev_factor_names is not None and len(prev_factor_names) == len(

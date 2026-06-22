@@ -1993,6 +1993,7 @@ def set_technical_factors(
     ard_min: Optional[float] = 0.001,
     clarity_min: Optional[float] = 0.5,
     n_eff_parents_max: float = 1.5,
+    brd_exceptional: Optional[float] = None,
     local_l0_scores: bool = False,
     batch_purity_max: Optional[float] = None,
     batch_purity_soft_max: Optional[float] = None,
@@ -2015,7 +2016,11 @@ def set_technical_factors(
             factors when ``factors`` is None.
         clarity_min: minimum L0 clarity when not using lineage ``avg_n_eff_parents``.
         n_eff_parents_max: only for lineage diagnostics: ceiling on ``avg_n_eff_parents``
-            (default ``1.5``; matches ``scd.pl.factor_diagnostics``).
+            (default ``1.5``; matches ``scd.pl.factor_diagnostics``). When
+            ``brd_exceptional`` is set, factors with ``BRD >= brd_exceptional`` are
+            kept regardless.
+        brd_exceptional: if set, high-BRD escape hatch when lineage effective parents
+            exceed ``n_eff_parents_max``. Default ``None`` (disabled).
         local_l0_scores: if True, biological factors are chosen using ``n_eff_parents``
             and ``n_eff_parents_max`` instead of lineage averages / ``clarity_min``.
         batch_purity_max: if set, layer-0 factors with hard ``batch_purity`` above
@@ -2060,6 +2065,7 @@ def set_technical_factors(
                 ard_min=ard_min,
                 clarity_min=clarity_min,
                 n_eff_parents_max=n_eff_parents_max,
+                brd_exceptional=brd_exceptional,
                 local_l0_scores=local_l0_scores,
                 batch_purity_max=batch_purity_max,
                 batch_purity_soft_max=batch_purity_soft_max,

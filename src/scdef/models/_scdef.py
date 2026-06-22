@@ -1362,6 +1362,7 @@ class scDEF(object):
         ard_min: Optional[float] = 0.001,
         clarity_min: Optional[float] = 0.5,
         n_eff_parents_max: float = 1.5,
+        brd_exceptional: Optional[float] = None,
         local_l0_scores: bool = False,
         min_cells: Optional[float] = 0.001,
         batch_purity_max: Optional[float] = None,
@@ -1422,6 +1423,8 @@ class scDEF(object):
                 clarity[original_idx_f] = clarity_vals
                 valid = np.isfinite(brd) & np.isfinite(ard) & np.isfinite(clarity)
                 tree_ok = clarity >= float(clarity_min)
+                if brd_exceptional is not None:
+                    tree_ok = tree_ok | (brd >= float(brd_exceptional))
             elif "avg_n_eff_parents" in factor_obs_l0.columns:
                 avg_vals = factor_obs_l0["avg_n_eff_parents"].to_numpy(dtype=float)[
                     valid_idx
@@ -1429,7 +1432,9 @@ class scDEF(object):
                 avg_neff = np.full(self.layer_sizes[0], np.nan, dtype=float)
                 avg_neff[original_idx_f] = avg_vals
                 valid = np.isfinite(brd) & np.isfinite(ard) & np.isfinite(avg_neff)
-                tree_ok = avg_neff < float(n_eff_parents_max)
+                tree_ok = avg_neff <= float(n_eff_parents_max)
+                if brd_exceptional is not None:
+                    tree_ok = tree_ok | (brd >= float(brd_exceptional))
             else:
                 clarity_vals = factor_obs_l0["clarity_score_01"].to_numpy(dtype=float)[
                     valid_idx
@@ -1438,6 +1443,8 @@ class scDEF(object):
                 clarity[original_idx_f] = clarity_vals
                 valid = np.isfinite(brd) & np.isfinite(ard) & np.isfinite(clarity)
                 tree_ok = clarity >= float(clarity_min)
+                if brd_exceptional is not None:
+                    tree_ok = tree_ok | (brd >= float(brd_exceptional))
 
             pass_mask = valid & (brd >= brd_min) & tree_ok & (ard >= ard_min * ard_sum)
             if use_batch_purity:
@@ -1580,13 +1587,18 @@ class scDEF(object):
             if z_init_layer is not None and not nmf_init:
                 m = jnp.clip(jnp.asarray(z_init_layer, dtype=jnp.float32), clip, 1e6)
                 m = jnp.clip(
-                    tfd.Gamma(z_init_concentration, z_init_concentration / m).sample(
+                    tfd.Gamma(
+                        z_init_concentration * (layer_idx + 1),
+                        z_init_concentration * (layer_idx + 1) / m,
+                    ).sample(
                         seed=rngs[rng_cnt],
                     ),
                     clip,
                     1e6,
                 )
-                v = m**2 / 100.0
+                v = m / 100.0
+                if layer_idx > 0:
+                    v = m / 10.0
             elif (
                 nmf_init
                 and (not init_z_provided)
@@ -2494,6 +2506,7 @@ class scDEF(object):
         nmf_init: bool = False,
         hierarchical_init: bool = False,
         pca_key: str = "X_pca",
+        z_off: float = 0.1,
         max_cells_init: int = 5000,
         z_init_concentration: Optional[float] = None,
         n_rounds: int = 1,
@@ -2522,6 +2535,9 @@ class scDEF(object):
                 exclusive with ``nmf_init``.
             pca_key: ``adata.obsm`` key for PCA coordinates used for KMeans L0
                 clustering and the centroid dendrogram (default ``"X_pca"``).
+            z_off: inactive-cluster value in hierarchical ``init_z`` (default
+                ``0.1``). Lower values reduce background loading on non-winning
+                factors and help low-BRD factors shrink toward zero relevance.
             max_cells_init: maximum number of cells to use for initialization.
             z_init_concentration: concentration parameter of a Gamma distribution to
                 sample the initial z values from. Controls the initial spread of
@@ -2754,7 +2770,7 @@ class scDEF(object):
                 nmf_init = False
                 z_init_concentration = 100.0
             elif hierarchical_init:
-                init_z = self.get_hierarchical_init(pca_key=pca_key)
+                init_z = self.get_hierarchical_init(pca_key=pca_key, z_off=z_off)
                 nmf_init = False
         if is_refit:
             init_brd, init_ard = self._prepare_refit_relevance_inits(
@@ -3654,12 +3670,57 @@ class scDEF(object):
                 _lognormal_var(_w_shape, _w_rate)
             )
 
+    def _resolve_l0_force_keep_indices(self, keep: Sequence[str]) -> np.ndarray:
+        """Map user-supplied L0 factor names to original layer-0 slot indices."""
+        from scdef.tools.factor import _resolve_factor_obs_names
+
+        if len(keep) == 0:
+            return np.array([], dtype=int)
+
+        forced: set[int] = set()
+        l0_name = self.layer_names[0]
+
+        if "factor_obs" in self.adata.uns:
+            resolved, unknown = _resolve_factor_obs_names(self, keep)
+            factor_obs = self.adata.uns["factor_obs"]
+            for row_name in resolved:
+                row = factor_obs.loc[row_name]
+                if row.get("child_layer", l0_name) != l0_name:
+                    raise ValueError(
+                        f"Factor {row_name!r} is not a layer-0 factor; "
+                        "`keep` accepts L0 factor names only."
+                    )
+                orig = int(row["original_factor_idx"])
+                if orig < 0 or orig >= self.layer_sizes[0]:
+                    raise ValueError(
+                        f"Factor {row_name!r} maps to invalid L0 index {orig}."
+                    )
+                forced.add(orig)
+        else:
+            unknown = []
+            name_to_orig = {
+                name: int(self.factor_lists[0][slot])
+                for slot, name in enumerate(self.factor_names[0])
+            }
+            for name in keep:
+                if name in name_to_orig:
+                    forced.add(name_to_orig[name])
+                else:
+                    unknown.append(name)
+
+        if len(unknown) > 0:
+            raise ValueError(
+                "Unknown L0 factor name(s) in `keep`: " + ", ".join(map(str, unknown))
+            )
+        return np.array(sorted(forced), dtype=int)
+
     def filter_factors(
         self,
         brd_min: Optional[float] = 1.0,
         ard_min: Optional[float] = 0.001,
         clarity_min: Optional[float] = 0.5,
         n_eff_parents_max: float = 1.5,
+        brd_exceptional: Optional[float] = None,
         local_l0_scores: bool = False,
         batch_purity_max: Optional[float] = None,
         batch_purity_soft_max: Optional[float] = None,
@@ -3668,6 +3729,7 @@ class scDEF(object):
         filter_up: Optional[bool] = True,
         annotate: Optional[bool] = True,
         upper_only: Optional[bool] = False,
+        keep: Optional[Sequence[str]] = None,
     ):
         """Filter irrelevant factors using BRD/ARD and hierarchy diagnostics.
 
@@ -3677,8 +3739,14 @@ class scDEF(object):
             clarity_min: minimum L0 ``clarity_score_01`` when not using lineage
                 ``avg_n_eff_parents`` (``local_l0_scores`` or missing lineage columns).
             n_eff_parents_max: only when ``avg_n_eff_parents`` is present and
-                ``local_l0_scores`` is False: cutoff ``avg_n_eff_parents < n_eff_parents_max``
-                (default ``1.5``). Ignored for local-L0 / clarity-only filtering.
+                ``local_l0_scores`` is False: keep when
+                ``avg_n_eff_parents <= n_eff_parents_max`` (default ``1.5``).
+                When ``brd_exceptional`` is set, also keep factors with
+                ``BRD >= brd_exceptional``. Ignored for local-L0 / clarity-only
+                filtering.
+            brd_exceptional: if set, keep layer-0 factors with high BRD even when
+                lineage ``avg_n_eff_parents`` exceeds ``n_eff_parents_max``.
+                Default ``None`` (disabled).
             local_l0_scores: if True, filter by ``clarity_score_01 >= clarity_min``; if
                 False and ``avg_n_eff_parents`` exists, filter by ``n_eff_parents_max``.
             batch_purity_max: if set, keep layer-0 factors with hard-assignment
@@ -3691,6 +3759,10 @@ class scDEF(object):
             filter_up: whether to prune upper layers via inter-layer attachments.
             annotate: whether to run ``annotate_adata`` after filtering.
             upper_only: if True, only adjust upper layers (layer 0 unchanged).
+            keep: optional list of L0 factor names to retain even when they fail
+                the BRD/ARD/hierarchy thresholds. Names are resolved like
+                ``set_technical_factors`` (current model names or ``factor_obs``
+                rows via ``original_factor_idx``).
         """
         if min_cells_upper != 0:
             if min_cells_upper < 1.0:
@@ -3703,18 +3775,22 @@ class scDEF(object):
         for i, layer_name in enumerate(self.layer_names):
             if i == 0:
                 if upper_only:
-                    keep = np.arange(self.layer_sizes[i])
+                    keep_idx = np.arange(self.layer_sizes[i])
                 else:
-                    keep = self.get_effective_factors(
+                    keep_idx = self.get_effective_factors(
                         brd_min=brd_min,
                         ard_min=ard_min,
                         clarity_min=clarity_min,
                         n_eff_parents_max=n_eff_parents_max,
+                        brd_exceptional=brd_exceptional,
                         local_l0_scores=local_l0_scores,
                         batch_purity_max=batch_purity_max,
                         batch_purity_soft_max=batch_purity_soft_max,
                         min_cells=min_cells_lower,
                     )
+                    if keep is not None:
+                        forced = self._resolve_l0_force_keep_indices(keep)
+                        keep_idx = np.unique(np.concatenate([keep_idx, forced]))
             else:
                 assignments = np.argmax(self.pmeans[f"{layer_name}z"], axis=1)
                 counts = np.array(
@@ -3723,26 +3799,26 @@ class scDEF(object):
                         for a in range(self.layer_sizes[i])
                     ]
                 )
-                keep = np.array(range(self.layer_sizes[i]))[
+                keep_idx = np.array(range(self.layer_sizes[i]))[
                     np.where(counts >= min_cells_upper)[0]
                 ]
-                if filter_up and len(keep) > 0 and len(new_factor_lists[i - 1]) > 0:
-                    mat = self.pmeans[f"{layer_name}W"][keep]
+                if filter_up and len(keep_idx) > 0 and len(new_factor_lists[i - 1]) > 0:
+                    mat = self.pmeans[f"{layer_name}W"][keep_idx]
                     assignments = []
                     for factor in new_factor_lists[i - 1]:
-                        assignments.append(keep[np.argmax(mat[:, factor])])
+                        assignments.append(keep_idx[np.argmax(mat[:, factor])])
 
-                    keep = np.unique(
-                        list(set(np.unique(assignments)).intersection(keep))
+                    keep_idx = np.unique(
+                        list(set(np.unique(assignments)).intersection(keep_idx))
                     )
 
-            if len(keep) == 0:
+            if len(keep_idx) == 0:
                 self.logger.info(
                     f"No factors in layer {i} satisfy the filtering criterion. Please adjust the filtering parameters."
                     f"Keeping all factors for layer {i} for now."
                 )
-                keep = np.arange(self.layer_sizes[i])
-            new_factor_lists.append(keep)
+                keep_idx = np.arange(self.layer_sizes[i])
+            new_factor_lists.append(keep_idx)
 
         self.factor_lists = new_factor_lists
         self.set_factor_names()
