@@ -1588,15 +1588,15 @@ class scDEF(object):
                 m = jnp.clip(jnp.asarray(z_init_layer, dtype=jnp.float32), clip, 1e6)
                 m = jnp.clip(
                     tfd.Gamma(
-                        z_init_concentration * (layer_idx + 1),
-                        z_init_concentration * (layer_idx + 1) / m,
+                        z_init_concentration,
+                        z_init_concentration / m,
                     ).sample(
                         seed=rngs[rng_cnt],
                     ),
                     clip,
                     1e6,
                 )
-                v = m / 100.0
+                v = m**2 / 100.0
                 if layer_idx > 0:
                     v = m / 10.0
             elif (
@@ -1844,22 +1844,28 @@ class scDEF(object):
         pca_key: str = "X_pca",
         z_on: float = 1.0,
         z_off: float = 0.1,
-    ) -> List[np.ndarray]:
-        """Build nested warm-start ``init_z`` from KMeans L0 labels on PCA.
+    ) -> Tuple[List[np.ndarray], List[np.ndarray]]:
+        """Build nested warm-start ``init_z`` and ``init_w`` from PCA/KMeans labels.
 
         L0 labels come from ``KMeans(n_clusters=layer_sizes[0])`` on
         ``adata.obsm[pca_key]``. Ward linkage on the resulting L0 centroids
         defines nested partitions for upper layers. Only ``K0`` centroid
-        comparisons are needed (no ``O(n_cells^2)`` work over cells). ``W`` is
-        left to the default :meth:`init_var_params` path.
+        comparisons are needed (no ``O(n_cells^2)`` work over cells).
+
+        ``init_z`` uses soft one-hot cell assignments at every layer.
+        ``init_w[0]`` is ``None`` (L0 ``W`` uses the default prior init).
+        ``init_w[l]`` for ``l >= 1`` holds parent/child containment matrices
+        derived from the same dendrogram cuts as ``init_z``.
 
         Args:
             pca_key: ``adata.obsm`` key for a PCA embedding (default ``"X_pca"``).
-            z_on: active cluster value in ``init_z`` (default ``1.0``).
-            z_off: inactive cluster soft floor in ``init_z`` (default ``0.1``).
+            z_on: active cluster / assignment value (default ``1.0``).
+            z_off: inactive cluster soft floor (default ``0.1``).
 
         Returns:
-            ``init_z`` list compatible with :meth:`init_var_params``.
+            ``(init_z, init_w)`` lists compatible with :meth:`init_var_params`.
+            ``init_w[0]`` is ``None``; layer ``l >= 1`` has shape
+            ``(layer_sizes[l], layer_sizes[l - 1])``.
 
         Raises:
             KeyError: if ``pca_key`` is missing.
@@ -1929,12 +1935,53 @@ class scDEF(object):
             z[np.arange(self.n_cells), layer_assign] = z_on
             init_z.append(z)
 
+        init_w = self._build_hierarchical_init_w(
+            centroid_labels=centroid_labels,
+            z_on=z_on,
+            z_off=z_off,
+        )
+
         self.logger.info(
-            "Built hierarchical z init from KMeans (%s L0 clusters) using %r.",
+            "Built hierarchical z/W init from KMeans (%s L0 clusters) using %r.",
             k0,
             pca_key,
         )
-        return init_z
+        return init_z, init_w
+
+    def _build_hierarchical_init_w(
+        self,
+        centroid_labels: List[np.ndarray],
+        z_on: float,
+        z_off: float,
+    ) -> List[Optional[np.ndarray]]:
+        """Build upper-layer ``init_w`` containment matrices from Ward nesting."""
+        init_w: List[Optional[np.ndarray]] = [None]
+
+        for layer_idx in range(1, self.n_layers):
+            child_labels = np.asarray(centroid_labels[layer_idx - 1], dtype=int)
+            parent_labels = np.asarray(centroid_labels[layer_idx], dtype=int)
+            n_parent = int(self.layer_sizes[layer_idx])
+            n_child = int(self.layer_sizes[layer_idx - 1])
+            w_layer = np.full((n_parent, n_child), z_off, dtype=np.float32)
+            for child_k in range(n_child):
+                child_mask = child_labels == child_k
+                if not np.any(child_mask):
+                    continue
+                parent_vals = parent_labels[child_mask]
+                parent_counts = np.bincount(parent_vals, minlength=n_parent)
+                parent_j = int(np.argmax(parent_counts))
+                if parent_counts[parent_j] < parent_vals.size:
+                    self.logger.warning(
+                        "Child cluster %s at layer %s maps to multiple parents "
+                        "under Ward nesting; using majority parent %s.",
+                        child_k,
+                        layer_idx - 1,
+                        parent_j,
+                    )
+                w_layer[parent_j, child_k] = float(z_on)
+            init_w.append(w_layer)
+
+        return init_w
 
     def identify_mixture_factors(
         self, max_n_genes: int = 20, thres: float = 0.5
@@ -2529,10 +2576,10 @@ class scDEF(object):
         Args:
             nmf_init: whether to initialize the model with NMF.
             hierarchical_init: on the first ``fit()`` call, initialize ``z`` from
-                KMeans L0 labels and a Ward dendrogram via
-                :meth:`get_hierarchical_init`. Requires an existing PCA embedding
-                in ``adata.obsm[pca_key]``. ``W`` uses the default init. Mutually
-                exclusive with ``nmf_init``.
+                KMeans/Ward labels and upper-layer ``W`` containment matrices via
+                :meth:`get_hierarchical_init` (L0 ``W`` uses the default prior init).
+                Requires an existing PCA embedding in ``adata.obsm[pca_key]``.
+                Mutually exclusive with ``nmf_init``.
             pca_key: ``adata.obsm`` key for PCA coordinates used for KMeans L0
                 clustering and the centroid dendrogram (default ``"X_pca"``).
             z_off: inactive-cluster value in hierarchical ``init_z`` (default
@@ -2770,7 +2817,9 @@ class scDEF(object):
                 nmf_init = False
                 z_init_concentration = 100.0
             elif hierarchical_init:
-                init_z = self.get_hierarchical_init(pca_key=pca_key, z_off=z_off)
+                init_z, init_w = self.get_hierarchical_init(
+                    pca_key=pca_key, z_off=z_off
+                )
                 nmf_init = False
         if is_refit:
             init_brd, init_ard = self._prepare_refit_relevance_inits(
