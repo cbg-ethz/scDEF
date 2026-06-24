@@ -349,6 +349,10 @@ def decompose_batch_effects(
        ``top_layer`` are fully re-learned (both ``W`` and ``z``).
        Layers above ``top_layer`` remain completely fixed.
 
+    L0 factor BRD and ARD are re-initialized from model priors rather than
+    copied from the reference, so factor relevance can be re-estimated during
+    decomposition.
+
     With ``top_layer=1`` (default):
         - L0: W warm-started and re-learned, z re-learned
         - L1: W warm-started and re-learned, z frozen
@@ -438,14 +442,6 @@ def decompose_batch_effects(
                 z_layer[new_idx] = z[ref_idx][:, keep]
             init_z.append(z_layer)
 
-    # BRD and ARD from reference (these apply to L0 factors)
-    init_brd = np.asarray(reference_model.pmeans["brd"], dtype=np.float32)[
-        factor_lists[0]
-    ]
-    init_ard = np.asarray(reference_model.pmeans["factor_means"], dtype=np.float32)[
-        factor_lists[0]
-    ]
-
     # Create new model WITHOUT batch_key
     model_kwargs = _reference_model_kwargs(reference_model, layer_sizes)
     model_kwargs["batch_key"] = None
@@ -465,8 +461,8 @@ def decompose_batch_effects(
         init_alpha=False,
         init_z=init_z,
         init_w=init_w,
-        init_brd=init_brd,
-        init_ard=init_ard,
+        init_brd=None,
+        init_ard=None,
         nmf_init=nmf_init,
         z_init_concentration=100.0,
     )
