@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Optional, Union, Sequence, Mapping, Dict, List, Any
 
 import numpy as np
+import scipy.stats
 import jax.numpy as jnp
 from anndata import AnnData
 
@@ -322,6 +323,141 @@ def add_batch_correction(
     return model
 
 
+def _resolve_batch_factor_local_indices(
+    reference_model,
+    n_slots: int,
+    batch_factor_indices: Optional[Sequence[int]] = None,
+) -> np.ndarray:
+    """Pick ``n_slots`` layer-0 positions (local indices) reserved for batch programs."""
+    l0_keep = np.asarray(reference_model.factor_lists[0], dtype=int)
+    n_l0 = len(l0_keep)
+    if n_slots > n_l0:
+        raise ValueError(
+            f"Need at least {n_slots} L0 factors for batch decomposition, but only "
+            f"{n_l0} remain after filtering. Use a lighter filter_factors pass or "
+            "increase the initial L0 width before fitting with batch_key."
+        )
+
+    if batch_factor_indices is not None:
+        ref_idx = np.asarray(batch_factor_indices, dtype=int)
+        unknown = set(ref_idx.tolist()) - set(l0_keep.tolist())
+        if unknown:
+            raise ValueError(
+                "batch_factor_indices must refer to kept L0 factors in "
+                f"reference_model.factor_lists[0]; unknown indices: {sorted(unknown)}"
+            )
+        local = np.array([int(np.where(l0_keep == i)[0][0]) for i in ref_idx], dtype=int)
+        if len(local) != n_slots:
+            raise ValueError(
+                f"batch_factor_indices has length {len(local)} but {n_slots} "
+                "batch slots are required (one per batch)."
+            )
+        if len(np.unique(local)) != len(local):
+            raise ValueError("batch_factor_indices must be unique.")
+        return local
+
+    brd = np.asarray(reference_model.pmeans["brd"], dtype=np.float64)[l0_keep]
+    z0 = np.asarray(
+        reference_model.pmeans[f"{reference_model.layer_names[0]}z"], dtype=np.float64
+    )[:, l0_keep]
+    z0 = z0 / np.maximum(z0.sum(axis=1, keepdims=True), 1e-12)
+    counts = z0.argmax(axis=1)
+    cell_load = np.array(
+        [np.count_nonzero(counts == j) for j in range(n_l0)], dtype=np.float64
+    )
+    brd_rank = scipy.stats.rankdata(brd, method="average")
+    load_rank = scipy.stats.rankdata(cell_load, method="average")
+    score = brd_rank + load_rank
+    return np.argsort(score)[:n_slots].astype(int)
+
+
+def _apply_batch_factor_inits(
+    reference_model,
+    init_w: List[np.ndarray],
+    init_z: List[np.ndarray],
+    init_brd: np.ndarray,
+    target_adata: AnnData,
+    *,
+    batch_factor_indices: Optional[Sequence[int]] = None,
+    batch_gene_top_n: int = 200,
+) -> Dict[str, Any]:
+    """Seed dedicated L0 batch factors from ``gene_scale``."""
+
+    if reference_model.batch_key is None:
+        raise ValueError(
+            "batch_factors=True requires reference_model to have been fitted with "
+            "batch_key."
+        )
+    if reference_model.n_batches < 2:
+        raise ValueError(
+            "batch_factors=True requires at least two batches in reference_model."
+        )
+
+    batches = [str(b) for b in reference_model.batches]
+    n_slots = len(batches)
+    local_batch = _resolve_batch_factor_local_indices(
+        reference_model, n_slots, batch_factor_indices=batch_factor_indices
+    )
+    bio_local = np.array(
+        [i for i in range(init_w[0].shape[0]) if i not in set(local_batch.tolist())],
+        dtype=int,
+    )
+
+    gs = np.asarray(reference_model.pmeans["gene_scale"], dtype=np.float64)
+    if gs.ndim == 1:
+        gs = gs[None, :]
+    log_gs = np.log(np.clip(gs, 1e-6, None))
+    ref_log = np.mean(log_gs, axis=0)
+    log_ratios = log_gs - ref_log[None, :]
+
+    bio_row_mean = float(np.median(init_w[0][bio_local].mean(axis=1))) if bio_local.size else 1.0
+    w0 = init_w[0].astype(np.float32, copy=True)
+
+    top_n = int(batch_gene_top_n)
+    for slot, batch_idx in enumerate(range(n_slots)):
+        factor_i = int(local_batch[slot])
+        sig = np.clip(log_ratios[batch_idx], 0.0, None)
+        if top_n > 0 and np.any(sig > 0):
+            keep_genes = np.argsort(sig)[-min(top_n, sig.size) :]
+            sparse = np.zeros_like(sig)
+            sparse[keep_genes] = sig[keep_genes]
+            sig = sparse
+        row = sig + 1e-3
+        row_mean = float(np.mean(row))
+        if row_mean > 0:
+            row = row * (bio_row_mean / row_mean)
+        w0[factor_i] = row.astype(np.float32)
+
+    init_w[0] = w0
+
+    if reference_model.batch_key not in target_adata.obs:
+        raise KeyError(
+            f"batch_key {reference_model.batch_key!r} not found in target adata.obs; "
+            "required for batch-factor z initialization."
+        )
+    batch_obs = target_adata.obs[reference_model.batch_key].astype(str).to_numpy()
+    z0 = init_z[0].astype(np.float32, copy=True)
+    row_totals = np.maximum(z0.sum(axis=1, keepdims=True), 1e-8)
+    for slot, batch_label in enumerate(batches):
+        factor_i = int(local_batch[slot])
+        in_batch = batch_obs == batch_label
+        z0[in_batch, factor_i] = np.maximum(z0[in_batch, factor_i], 2.0)
+        z0[~in_batch, factor_i] = np.minimum(z0[~in_batch, factor_i], 0.2)
+    z0 = z0 / np.maximum(z0.sum(axis=1, keepdims=True), 1e-8) * row_totals
+    init_z[0] = z0
+
+    brd_med = float(np.median(init_brd[bio_local])) if bio_local.size else float(np.median(init_brd))
+    for factor_i in local_batch:
+        init_brd[int(factor_i)] = np.float32(max(brd_med * 0.5, 1e-3))
+
+    l0_keep = np.asarray(reference_model.factor_lists[0], dtype=int)
+    return {
+        "batch_labels": batches,
+        "local_indices": [int(i) for i in local_batch],
+        "reference_indices": [int(l0_keep[i]) for i in local_batch],
+    }
+
+
 def decompose_batch_effects(
     reference_model,
     *,
@@ -332,6 +468,9 @@ def decompose_batch_effects(
     lr: float = 0.05,
     tolerance: float = 1e-4,
     nmf_init: bool = False,
+    batch_factors: bool = False,
+    batch_factor_indices: Optional[Sequence[int]] = None,
+    batch_gene_top_n: int = 200,
     **fit_kwargs: Any,
 ):
     """Re-learn lower layers under a frozen upper hierarchy to discover batch programs.
@@ -360,6 +499,11 @@ def decompose_batch_effects(
         - L2: W warm-started and re-learned, z frozen
         - L3+: fully frozen
 
+    When ``batch_factors=True``, marginal L0 slots (lowest BRD / cell load by
+    default) are reserved for batch programs. Their ``W`` rows are initialized
+    from batch-specific ``gene_scale`` signatures and their ``z`` columns are
+    biased toward cells in the matching batch.
+
     Args:
         reference_model: a fitted ``scDEF`` that was trained with
             ``batch_key``.
@@ -373,6 +517,13 @@ def decompose_batch_effects(
         tolerance: early-stopping tolerance.
         nmf_init: if True, initialize L0 W via NMF on the data instead of
             warm-starting from the reference. Default False.
+        batch_factors: if True, reserve dedicated L0 factors for batch
+            signatures derived from the reference ``gene_scale``. Default False.
+        batch_factor_indices: optional reference L0 factor indices
+            (``reference_model.factor_lists[0]`` positions) to use as batch
+            slots. Defaults to the most marginal kept L0 factors, one per batch.
+        batch_gene_top_n: number of top batch-enriched genes per batch used to
+            seed each batch factor's ``W`` row when ``batch_factors=True``.
         **fit_kwargs: additional keyword arguments forwarded to ``_learn``.
 
     Returns:
@@ -380,6 +531,9 @@ def decompose_batch_effects(
         and shared gene programs under the frozen upper-layer cell assignments.
     """
     from scdef.models._scdef import scDEF
+
+    if batch_factors and nmf_init:
+        raise ValueError("batch_factors=True cannot be combined with nmf_init=True.")
 
     top_layer = int(top_layer)
     if reference_model.n_layers < top_layer + 1:
@@ -446,6 +600,18 @@ def decompose_batch_effects(
         factor_lists[0]
     ]
 
+    batch_factor_meta: Optional[Dict[str, Any]] = None
+    if batch_factors:
+        batch_factor_meta = _apply_batch_factor_inits(
+            reference_model,
+            init_w,
+            init_z,
+            init_brd,
+            target_adata,
+            batch_factor_indices=batch_factor_indices,
+            batch_gene_top_n=batch_gene_top_n,
+        )
+
     # Create new model WITHOUT batch_key
     model_kwargs = _reference_model_kwargs(reference_model, layer_sizes)
     model_kwargs["batch_key"] = None
@@ -505,6 +671,15 @@ def decompose_batch_effects(
         freeze_z_layers=freeze_z,
         **learn_kwargs,
     )
+
+    if batch_factor_meta is not None:
+        model.adata.uns["decompose_batch_factors"] = batch_factor_meta
+        from scdef.tools.factor import set_technical_factors
+
+        batch_names = [
+            model.factor_names[0][i] for i in batch_factor_meta["local_indices"]
+        ]
+        set_technical_factors(model, factors=batch_names)
 
     model.clear_runtime_cache(clear_jax_cache=False)
     model._has_fit = True

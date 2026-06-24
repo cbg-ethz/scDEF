@@ -1588,8 +1588,8 @@ class scDEF(object):
                 m = jnp.clip(jnp.asarray(z_init_layer, dtype=jnp.float32), clip, 1e6)
                 m = jnp.clip(
                     tfd.Gamma(
-                        z_init_concentration,
-                        z_init_concentration / m,
+                        (z_init_concentration ),
+                        (z_init_concentration ) / m,
                     ).sample(
                         seed=rngs[rng_cnt],
                     ),
