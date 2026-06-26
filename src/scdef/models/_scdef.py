@@ -497,25 +497,31 @@ class scDEF(object):
 
         self.batch_indices_onehot = np.ones((self.adata.shape[0], 1))
         self.batch_lib_sizes = np.sum(self.X, axis=1)
-        eps = 1e-12
-        lib_mean = float(np.mean(self.batch_lib_sizes))
-        lib_var = float(np.var(self.batch_lib_sizes))
-        # Gamma prior rate for cell_scale: mean / var → prior mean = var / mean.
-        self.batch_lib_ratio = np.ones((self.X.shape[0], 1)) * (
-            lib_mean / (lib_var + eps)
+        self.batch_lib_ratio = (
+            np.ones((self.X.shape[0], 1))
+            * np.mean(self.batch_lib_sizes)
+            / np.var(self.batch_lib_sizes)
         )
         self.exposure = jnp.array(self.batch_lib_sizes / np.mean(self.batch_lib_sizes))
 
-        # Per-gene expression anchor (used for warm-starts / diagnostics).
+        eps = 1e-12
+
+        # ---- NEW: gene_ratio is per-gene and encodes baseline abundance ----
+        # Choose a baseline definition. For raw UMI counts, using mean counts per cell is reasonable.
+        # If you prefer library-normalized baseline, replace mu = X.mean(0) by mu = (X/lib).mean(0).
         mu = self.X.mean(axis=0) + eps
         mu_bar = float(mu.mean())
-        self.gene_ratio_init = np.array(mu_bar / mu, dtype=np.float64)[None, :]
+        # Prior mean of gene_scale_g will be ~ mu_g / mu_bar
+        gene_ratio = mu_bar / mu  # vector length G
+        gene_ratio = np.array(gene_ratio)[None, :]  # shape (1, G)
+        self.gene_ratio_init = (
+            gene_ratio  # will be overridden per batch if batch_key has >1 values
+        )
 
         gene_size = np.sum(self.X, axis=0)
-        gene_means = float(np.mean(gene_size))
-        gene_vars = float(np.var(gene_size))
-        # Gamma prior rate for gene_scale: mean / var → prior mean = var / mean.
-        self.gene_ratio = gene_means / (gene_vars + eps)
+        self.gene_means = np.mean(gene_size)
+        self.gene_vars = np.var(gene_size)
+        self.gene_ratio = self.gene_means / self.gene_vars
 
         if batch_key is not None:
             if batch_key in self.adata.obs.columns:
@@ -540,26 +546,31 @@ class scDEF(object):
                 self.batch_indices_onehot = np.zeros(
                     (self.adata.shape[0], self.n_batches)
                 )
+                # If multiple batches: compute gene_ratio per batch (still per gene)
                 if self.n_batches > 1:
-                    n_genes = self.adata.shape[1]
-                    self.gene_ratio = np.ones((self.n_batches, n_genes), dtype=np.float64)
-                    self.gene_ratio_init = np.zeros((self.n_batches, n_genes), dtype=np.float64)
+                    self.gene_ratio = np.ones((self.n_batches, self.adata.shape[1]))
+                    self.gene_ratio_init = np.ones(
+                        (self.n_batches, self.adata.shape[1])
+                    )
+                    # self.gene_ratio_init = np.tile(
+                    #     (mu_bar / mu)[None, :], (self.n_batches, 1)
+                    # )
                     for i, b in enumerate(batches):
                         cells = np.where(self.adata.obs[batch_key] == b)[0]
                         self.batch_indices_onehot[cells, i] = 1
-                        batch_libs = self.batch_lib_sizes[cells]
-                        batch_lib_mean = float(np.mean(batch_libs))
-                        batch_lib_var = float(np.var(batch_libs))
-                        self.batch_lib_ratio[cells] = batch_lib_mean / (
-                            batch_lib_var + eps
-                        )
+                        self.batch_lib_sizes[cells] = np.sum(self.X, axis=1)[cells]
+                        self.batch_lib_ratio[cells] = np.mean(
+                            self.batch_lib_sizes[cells]
+                        ) / (np.var(self.batch_lib_sizes[cells]) + eps)
                         mu_b = self.X[cells].mean(axis=0) + eps
                         mu_b_bar = float(mu_b.mean())
                         self.gene_ratio_init[i] = mu_b_bar / mu_b
-                        batch_gene_size = np.sum(self.X[cells], axis=0)
-                        batch_gene_mean = float(np.mean(batch_gene_size))
-                        batch_gene_var = float(np.var(batch_gene_size))
-                        self.gene_ratio[i] = batch_gene_mean / (batch_gene_var + eps)
+                        gene_size = np.sum(self.X[cells], axis=0)
+                        gene_means = np.mean(gene_size)
+                        gene_vars = np.var(gene_size)
+                        self.gene_ratio[i] = (
+                            self.gene_ratio[i] * 0 + gene_means / gene_vars
+                        )
 
         self.batch_indices_onehot = jnp.array(self.batch_indices_onehot)
         self.batch_lib_sizes = jnp.array(self.batch_lib_sizes)
@@ -1484,7 +1495,9 @@ class scDEF(object):
             return None
 
         if init_budgets:
-            m = 1.0 / np.array(self.batch_lib_ratio)  # prior mean = var / mean
+            m = np.array(self.batch_lib_sizes / np.mean(self.batch_lib_sizes))[
+                :, None
+            ]  # (N,1)
             m = np.clip(m, 1e-3, 1e2)
             v = m / 10.0
             self.local_params = [
@@ -1497,6 +1510,7 @@ class scDEF(object):
                     )
                 ),
             ]
+            # initialize gene scales at the prior mean (per gene)
             # prior mean under Gamma(shape, rate=shape*gene_ratio) is 1/gene_ratio
             if init_gene_scale is not None:
                 m = np.asarray(init_gene_scale, dtype=np.float32)
@@ -1506,15 +1520,7 @@ class scDEF(object):
                     m = np.tile(m, (int(self.n_batches), 1))
                 m = np.clip(m, 1e-6, 1e6)
             else:
-                ratio = np.asarray(self.gene_ratio)
-                if ratio.ndim == 0:
-                    m = np.full(
-                        (max(int(self.n_batches), 1), int(self.adata.n_vars)),
-                        1.0 / float(ratio),
-                        dtype=np.float64,
-                    )
-                else:
-                    m = 1.0 / ratio  # (1, G) or (B, G); batch rows are mean/var scalars
+                m = 1.0 / np.array(self.gene_ratio_init)  # shape: (G,) or (B,G)
                 m = np.clip(m, 1e-6, 1e6)
             v = m / 10.0
 
@@ -2807,6 +2813,7 @@ class scDEF(object):
                 init_gene_scale = pending_reference_init.get("init_gene_scale")
                 if init_gene_scale is not None:
                     init_gene_scale = np.asarray(init_gene_scale, dtype=np.float32)
+                    self.gene_ratio_init = 1.0 / np.clip(init_gene_scale, 1e-6, 1e6)
                 nmf_init = False
                 z_init_concentration = 100.0
             elif hierarchical_init:
