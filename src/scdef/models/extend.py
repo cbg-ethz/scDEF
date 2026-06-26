@@ -332,7 +332,6 @@ def decompose_batch_effects(
     lr: float = 0.05,
     tolerance: float = 1e-4,
     nmf_init: bool = False,
-    init_gene_scale: Union[str, np.ndarray] = "reference",
     **fit_kwargs: Any,
 ):
     """Re-learn lower layers under a frozen upper hierarchy to discover batch programs.
@@ -353,11 +352,6 @@ def decompose_batch_effects(
     L0 factor BRD and ARD are re-initialized from model priors rather than
     copied from the reference, so factor relevance can be re-estimated during
     decomposition.
-
-    ``gene_scale`` is warm-started from the reference fitted profile by default
-    (geometric mean across batches), because the batch-key model often learns
-    per-batch scales orders of magnitude above the count-derived prior. Starting
-    from that prior alone leaves a large reconstruction gap at decomposition time.
 
     With ``top_layer=1`` (default):
         - L0: W warm-started and re-learned, z re-learned
@@ -383,11 +377,6 @@ def decompose_batch_effects(
         tolerance: early-stopping tolerance.
         nmf_init: if True, initialize L0 W via NMF on the data instead of
             warm-starting from the reference. Default False.
-        init_gene_scale: warm start for the shared ``gene_scale`` in the
-            decomposed model. ``\"reference\"`` (default) uses the geometric
-            mean of ``reference_model.pmeans['gene_scale']`` across batches.
-            ``\"prior\"`` uses only the count-derived prior mean
-            (``1 / gene_ratio_init``). Or pass an explicit ``(n_genes,)`` array.
         **fit_kwargs: additional keyword arguments forwarded to ``_learn``.
 
     Returns:
@@ -465,30 +454,6 @@ def decompose_batch_effects(
     model.top_alpha = reference_model.top_alpha
     model.update_model_priors(update_alpha_from_cov=False)
 
-    init_gene_scale_arr: Optional[np.ndarray] = None
-    if isinstance(init_gene_scale, str):
-        if init_gene_scale == "prior":
-            init_gene_scale_arr = None
-        elif init_gene_scale == "reference":
-            init_gene_scale_arr = _resolve_init_gene_scale_array(
-                reference_model,
-                "reference",
-                n_batches=1,
-                n_genes=int(target_adata.n_vars),
-            )
-        else:
-            raise ValueError(
-                "init_gene_scale must be 'reference', 'prior', or an array; "
-                f"got {init_gene_scale!r}."
-            )
-    else:
-        init_gene_scale_arr = _resolve_init_gene_scale_array(
-            reference_model,
-            np.asarray(init_gene_scale, dtype=np.float32),
-            n_batches=1,
-            n_genes=int(target_adata.n_vars),
-        )
-
     # Initialize variational parameters with high concentration to stay
     # close to reference warm-starts (avoids NaN from large deviations)
     model.init_var_params(
@@ -498,7 +463,6 @@ def decompose_batch_effects(
         init_w=init_w,
         init_brd=None,
         init_ard=None,
-        init_gene_scale=init_gene_scale_arr,
         nmf_init=nmf_init,
         z_init_concentration=100.0,
     )
