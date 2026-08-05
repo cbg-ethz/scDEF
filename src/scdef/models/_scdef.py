@@ -2583,8 +2583,9 @@ class scDEF(object):
             pca_key: ``adata.obsm`` key for PCA coordinates used for KMeans L0
                 clustering and the centroid dendrogram (default ``"X_pca"``).
             z_off: inactive-cluster value in hierarchical ``init_z`` (default
-                ``0.1``). Lower values reduce background loading on non-winning
-                factors and help low-BRD factors shrink toward zero relevance.
+                ``0.1``). Lower values reduce background score mass on
+                non-winning factors and help low-BRD factors shrink toward zero
+                relevance.
             max_cells_init: maximum number of cells to use for initialization.
             z_init_concentration: concentration parameter of a Gamma distribution to
                 sample the initial z values from. Controls the initial spread of

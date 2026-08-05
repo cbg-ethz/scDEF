@@ -109,7 +109,7 @@ def get_prob_scores(model, obs_key, obs_vals):
 def get_score_means(model, obs_key, obs_vals):
     """Mean raw cell-factor score per observation category.
 
-    Uses ``adata.obsm['X_<layer>']`` (unnormalised cell-factor loadings from
+    Uses ``adata.obsm['X_<layer>']`` (unnormalised cell-factor scores from
     :meth:`annotate_adata`).  This is the obs-averaged analogue of
     ``obs_cell_factor_heatmap(values="score")``.
 

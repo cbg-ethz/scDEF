@@ -2690,7 +2690,7 @@ def multilayer_umap(
     through differentiation trajectories: terminally differentiated
     cells form tight clusters by shared fine-layer factor, progenitor
     cells bridge siblings through their shared parent-layer mass, and
-    stem-like cells with diffuse loadings sit in their own regime.
+    stem-like cells with diffuse scores sit in their own regime.
     Contrast with ``umap`` (per-layer), which only captures a single
     scale.
 
@@ -2698,7 +2698,7 @@ def multilayer_umap(
     Set ``normalize_per_layer=True`` to convert each layer's row to
     proportions before optional log/weighting; this makes geometry
     reflect relative composition at each layer rather than absolute
-    loading scale.
+    score scale.
 
     Use ``weights`` to bias the embedding toward fine or coarse
     resolution.
@@ -2719,7 +2719,7 @@ def multilayer_umap(
             block so rows sum to 1 before optional ``log`` and
             weighting. Useful when you want distances to depend on
             relative factor composition rather than total per-layer
-            loading magnitude.
+            score magnitude.
         use_log: if True, replace each sub-vector by ``log(X + eps)``
             before applying weights/concatenation. Helpful when fine
             resolution is dominated by a single factor and small
