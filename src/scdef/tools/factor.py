@@ -131,12 +131,71 @@ def _confidence_mean_score(
     return means * significance
 
 
+def _current_name_by_factor_obs_key(model: "scDEF") -> Dict[Tuple[str, int], str]:
+    """Map ``(layer_name, original_factor_idx)`` to the current model factor name.
+
+    ``factor_obs`` is keyed by the factor names in place when diagnostics ran,
+    while ``model.factor_names`` is renamed contiguously by ``filter_factors``.
+    This map is the bridge between the two.
+    """
+    out: Dict[Tuple[str, int], str] = {}
+    factor_names = getattr(model, "factor_names", None)
+    if factor_names is None:
+        return out
+    for layer_idx, names in enumerate(factor_names):
+        layer_name = str(model.layer_names[layer_idx])
+        factor_list = np.asarray(model.factor_lists[layer_idx], dtype=int)
+        for slot, name in enumerate(names):
+            if slot >= factor_list.size:
+                break
+            out[(layer_name, int(factor_list[slot]))] = str(name)
+    return out
+
+
+def _factor_obs_rows_to_current_names(model: "scDEF", rows: Sequence[str]) -> List[str]:
+    """Translate ``factor_obs`` row names to current model factor names.
+
+    Rows whose factor is no longer kept by the model (no current name) are
+    dropped.
+    """
+    factor_obs = model.adata.uns.get("factor_obs")
+    if factor_obs is None or len(rows) == 0:
+        return []
+    has_meta = (
+        "child_layer" in factor_obs.columns
+        and "original_factor_idx" in factor_obs.columns
+    )
+    if not has_meta:
+        return [str(row) for row in rows]
+    key_to_current = _current_name_by_factor_obs_key(model)
+    out: List[str] = []
+    for row in rows:
+        if row not in factor_obs.index:
+            continue
+        key = (
+            str(factor_obs.at[row, "child_layer"]),
+            int(factor_obs.at[row, "original_factor_idx"]),
+        )
+        current = key_to_current.get(key)
+        if current is not None:
+            out.append(current)
+    return out
+
+
 def get_technical_drop_factors(model: "scDEF") -> List[str]:
-    """Factor names marked technical in ``adata.uns['factor_obs']``."""
+    """Current model names of the factors marked technical in ``factor_obs``.
+
+    ``factor_obs`` rows are keyed by the factor names in place when diagnostics
+    ran; after ``filter_factors`` the model renames factors contiguously. The
+    returned names are always the *current* ``model.factor_names`` entries, so
+    they can be compared directly against the live model. Technical factors that
+    are no longer kept by the model are omitted.
+    """
     factor_obs = model.adata.uns.get("factor_obs")
     if factor_obs is None or "technical" not in factor_obs.columns:
         return []
-    return factor_obs.index[factor_obs["technical"].astype(bool)].tolist()
+    rows = factor_obs.index[factor_obs["technical"].astype(bool)].tolist()
+    return _factor_obs_rows_to_current_names(model, rows)
 
 
 def _resolve_signature_drop_factors(
