@@ -2589,6 +2589,163 @@ def _batch_technical_l0_slots(model: "scDEF") -> List[int]:
     ]
 
 
+def corrected_factor_representation(
+    model: "scDEF",
+    reduce: Literal["sum", "max"] = "sum",
+    key_added: str = "X_L0_corrected",
+) -> Tuple[np.ndarray, List[str]]:
+    """Fold per-batch technical splits into single columns, in score space.
+
+    This is the score-space analogue of the :func:`assign_confident` roll-up: the
+    roll-up moves *cells* up to the batch-corrected parent layer, while this
+    merges the *columns* of the split so downstream geometry (embeddings,
+    heatmaps) sees one program instead of two batch-specific halves.
+
+    Every group of batch-technical siblings — factors flagged by
+    :func:`set_batch_technical_factors` that share an L1 parent — collapses to
+    one merged column. **No factor is deleted and nothing else is touched**: any
+    factor not flagged keeps its own column, including a batch-restricted factor
+    that is genuine biology (an ISG program, say) and any non-flagged sibling of
+    a merged group. An embedding built on the result therefore mixes batches
+    where the split was technical and keeps them apart where it is not.
+
+    Grouping is by L1 parent (``argmax`` over the rows of ``pmeans['L1W']``),
+    matching the roll-up target, so two splits under different parents stay
+    distinct.
+
+    Args:
+        model: scDEF model instance with cell scores annotated (``X_L0`` in
+            ``adata.obsm``).
+        reduce: how to merge a group's columns. ``"sum"`` (default) adds them,
+            which is exact when the halves are disjoint — the usual case, since
+            each cell is dominated by the half from its own batch. ``"max"``
+            takes the per-cell peak instead. The two differ only for cells
+            carrying real mass on *both* halves, where ``"sum"`` reports the
+            combined program and ``"max"`` the stronger half alone.
+        key_added: ``adata.obsm`` key for the corrected matrix. The column
+            labels are stored in ``adata.uns[key_added + '_factors']``, and the
+            factor names that were merged in
+            ``adata.uns[key_added + '_batch_technical']``, so a cached matrix can
+            be checked against the current flags.
+
+    Returns:
+        ``(matrix, labels)`` — the corrected ``(n_cells, n_corrected_factors)``
+        matrix and its column labels. A merged column is labelled by joining its
+        members with ``+`` in layer order, e.g. ``"L0_7+L0_14"``, so a reader can
+        see exactly which split was merged.
+
+    Raises:
+        KeyError: if ``X_L0`` is missing, or if factors are flagged but
+            ``pmeans['L1W']`` is unavailable to group them by parent.
+        ValueError: if ``reduce`` is not ``"sum"`` or ``"max"``.
+
+    Example:
+        >>> model = scdef.scDEF.decompose_batch_effects(ref, top_layer=1)
+        >>> scdef.tl.factor_diagnostics(model, batch_key="Experiment")
+        >>> cand = scdef.tl.suggest_technical_factors(model, batch_key="Experiment")
+        >>> splits = cand.index[cand["batch_split_corr"].fillna(0) >= 0.6]
+        >>> scdef.tl.set_batch_technical_factors(model, splits, top_layer=1)
+        >>> matrix, labels = scdef.tl.corrected_factor_representation(model)
+    """
+    if reduce not in ("sum", "max"):
+        raise ValueError(f"reduce must be 'sum' or 'max'; got {reduce!r}.")
+
+    l0_name = model.layer_names[0]
+    scores_key = f"X_{l0_name}"
+    if scores_key not in model.adata.obsm:
+        raise KeyError(
+            f"{scores_key} not found in adata.obsm. Run model.annotate_adata() "
+            "(or model.fit(annotate=True)) first."
+        )
+    scores = np.asarray(model.adata.obsm[scores_key], dtype=float)
+    current_names = [str(name) for name in model.factor_names[0]]
+    if scores.shape[1] != len(current_names):
+        # Stale scores (e.g. the model was re-filtered without re-annotating)
+        # would silently misalign every column, so fail loudly instead.
+        raise ValueError(
+            f"adata.obsm['{scores_key}'] has {scores.shape[1]} columns but the "
+            f"model has {len(current_names)} layer-0 factors. Re-run "
+            "model.annotate_adata() after filtering."
+        )
+
+    flagged_slots = _batch_technical_l0_slots(model)
+    merged_on = sorted(current_names[slot] for slot in flagged_slots)
+
+    def _store(
+        matrix: np.ndarray,
+        labels: List[str],
+        members: List[List[str]],
+    ) -> Tuple[np.ndarray, List[str]]:
+        model.adata.obsm[key_added] = matrix
+        model.adata.uns[f"{key_added}_factors"] = list(labels)
+        # Per-column member names. Consumers that need to map a column back to
+        # its factors (e.g. hierarchy ordering) must use this rather than
+        # splitting the label on '+', since factor names may themselves contain
+        # '+' (iscDEF names factors after marker sets, e.g. 'CD14+ monocyte').
+        model.adata.uns[f"{key_added}_members"] = [list(m) for m in members]
+        # Provenance: exactly which factors were merged into this matrix, so a
+        # cached matrix can be checked against the current flags.
+        model.adata.uns[f"{key_added}_batch_technical"] = list(merged_on)
+        return matrix, list(labels)
+
+    if len(flagged_slots) == 0:
+        # Nothing flagged: the corrected representation *is* the original one.
+        return _store(scores.copy(), current_names, [[n] for n in current_names])
+
+    if int(model.n_layers) < 2:
+        raise KeyError(
+            "Batch-technical factors are flagged but the model has no layer 1 "
+            "to group them by. Folding needs a parent layer."
+        )
+    w1_key = f"{model.layer_names[1]}W"
+    pmeans = getattr(model, "pmeans", None)
+    if not isinstance(pmeans, dict) or w1_key not in pmeans:
+        raise KeyError(
+            f"Batch-technical factors are flagged but '{w1_key}' is missing from "
+            "model.pmeans, so they cannot be grouped by parent."
+        )
+    w1 = np.asarray(pmeans[w1_key], dtype=float)
+    parent_of = np.argmax(w1, axis=0)  # per original L0 column
+
+    kept_orig = np.asarray(model.factor_lists[0], dtype=int)
+    flagged_set = set(flagged_slots)
+
+    # Group flagged factors by L1 parent, preserving layer order within a group.
+    groups: Dict[int, List[int]] = {}
+    for slot in flagged_slots:
+        orig = int(kept_orig[slot])
+        if orig < 0 or orig >= w1.shape[1]:
+            raise KeyError(
+                f"Factor {current_names[slot]!r} maps to original index {orig}, "
+                f"which is out of bounds for '{w1_key}'."
+            )
+        groups.setdefault(int(parent_of[orig]), []).append(slot)
+
+    columns: List[np.ndarray] = []
+    labels: List[str] = []
+    column_members: List[List[str]] = []
+    emitted_parents: set = set()
+    for slot, name in enumerate(current_names):
+        if slot not in flagged_set:
+            columns.append(scores[:, slot])
+            labels.append(name)
+            column_members.append([name])
+            continue
+        parent = int(parent_of[int(kept_orig[slot])])
+        if parent in emitted_parents:
+            continue  # already merged at the position of the group's first member
+        emitted_parents.add(parent)
+        members = groups[parent]
+        block = scores[:, members]
+        merged = block.sum(axis=1) if reduce == "sum" else block.max(axis=1)
+        columns.append(merged)
+        member_names = [current_names[s] for s in members]
+        labels.append("+".join(member_names))
+        column_members.append(member_names)
+
+    return _store(np.column_stack(columns).astype(float), labels, column_members)
+
+
 def suggest_technical_factors(
     model: "scDEF",
     batch_key: Optional[str] = None,
@@ -3212,6 +3369,7 @@ def umap(
     layers: Optional[List[int]] = None,
     use_log: bool = False,
     metric: str = "euclidean",
+    merge_batch_technical: bool = False,
 ) -> None:
     """Compute UMAP embeddings for each scDEF layer.
 
@@ -3229,6 +3387,15 @@ def umap(
         use_log: whether to use log-transformed cell-factor weights for
             the neighbor graph computation.
         metric: distance metric for neighbors computation.
+        merge_batch_technical: if True, additionally embed the *corrected* layer-0
+            representation from :func:`corrected_factor_representation`, in which
+            each group of batch-technical splits is merged into one column. The
+            embedding is stored as ``adata.obsm['X_umap_L0_corrected']``;
+            batches mix where a split was technical and stay apart where the
+            batch difference is biology. This is computed **in addition** to the
+            per-layer embeddings — pass ``layers=[]`` to compute only this one.
+            With no factors flagged the corrected matrix equals ``X_L0``, so the
+            embedding matches the plain L0 one up to UMAP's own randomness.
     """
     if layers is None:
         layers = [
@@ -3258,6 +3425,24 @@ def umap(
         sc.tl.umap(model.adata)
         # Store under a layer-specific key
         model.adata.obsm[f"X_umap_{layer_name}"] = model.adata.obsm["X_umap"].copy()
+
+    if merge_batch_technical:
+        corrected_key = "X_L0_corrected"
+        corrected_factor_representation(model, key_added=corrected_key)
+        # Same recipe as the per-layer loop above, on the merged matrix.
+        model.adata.obsm[f"{corrected_key}_log"] = np.log(
+            model.adata.obsm[corrected_key]
+        )
+        if use_log:
+            sc.pp.neighbors(model.adata, use_rep=f"{corrected_key}_log")
+        else:
+            sc.pp.neighbors(
+                model.adata,
+                use_rep=corrected_key,
+                metric=metric,
+            )
+        sc.tl.umap(model.adata)
+        model.adata.obsm["X_umap_L0_corrected"] = model.adata.obsm["X_umap"].copy()
 
     _restore_scanpy_graph_state(model.adata, graph_snapshot)
 

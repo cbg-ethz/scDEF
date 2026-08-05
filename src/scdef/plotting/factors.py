@@ -311,6 +311,88 @@ def _resolve_layer_factor_columns(
     return order, np.array(layer_names, dtype=object)[order]
 
 
+def _corrected_hierarchy_order(
+    model: "scDEF",
+    column_members: Sequence[Sequence[str]],
+) -> np.ndarray:
+    """Hierarchy plotting order for the columns of the batch-corrected matrix.
+
+    ``model.get_layer_factor_orders()[0]`` ranks layer-0 *slots* grouped by
+    parent. A merged column's members share a parent, so they are contiguous in
+    that ranking and the group inherits their position: each column is ranked by
+    its best-placed member. Columns whose members cannot be located keep their
+    current position by falling back to a large rank.
+    """
+    slot_of_name = {str(name): i for i, name in enumerate(model.factor_names[0])}
+    try:
+        layer_order = np.asarray(model.get_layer_factor_orders()[0], dtype=int)
+    except (AttributeError, IndexError, KeyError):
+        return np.arange(len(column_members), dtype=int)
+    rank_of_slot = {int(slot): pos for pos, slot in enumerate(layer_order)}
+
+    fallback = len(rank_of_slot) + 1
+    keys: List[Tuple[int, int]] = []
+    for col, members in enumerate(column_members):
+        ranks = [
+            rank_of_slot.get(slot_of_name[str(name)], fallback)
+            for name in members
+            if str(name) in slot_of_name
+        ]
+        # Tie-break on the original column position so the sort stays stable.
+        keys.append((min(ranks) if ranks else fallback, col))
+    return np.array([col for _, col in sorted(keys)], dtype=int)
+
+
+def _resolve_corrected_factor_columns(
+    corrected_labels: Sequence[str],
+    factors: Optional[Sequence[Union[str, int]]],
+    model: Optional["scDEF"] = None,
+    column_members: Optional[Sequence[Sequence[str]]] = None,
+    sort_layer_factors: bool = False,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Column indices and labels for the batch-corrected L0 matrix.
+
+    Labels are the merged names produced by
+    :func:`scdef.tools.corrected_factor_representation` (e.g. ``"L0_7+L0_14"``),
+    which do not exist in ``model.factor_names``; ``factors`` is matched against
+    them directly. With ``sort_layer_factors`` and no explicit ``factors``,
+    columns follow the hierarchy ordering via
+    :func:`_corrected_hierarchy_order`.
+    """
+    labels = [str(label) for label in corrected_labels]
+    if factors is None:
+        if sort_layer_factors and model is not None and column_members is not None:
+            order = _corrected_hierarchy_order(model, column_members)
+        else:
+            order = np.arange(len(labels), dtype=int)
+        return order, np.array(labels, dtype=object)[order]
+
+    if len(factors) == 0:
+        raise ValueError("factors must contain at least one factor.")
+    label_to_idx = {label: i for i, label in enumerate(labels)}
+    col_indices: List[int] = []
+    out_labels: List[str] = []
+    for fac in factors:
+        if isinstance(fac, int):
+            idx = int(fac)
+            if idx < 0 or idx >= len(labels):
+                raise IndexError(
+                    f"Factor index {idx} out of bounds for the corrected layer-0 "
+                    f"matrix ({len(labels)} columns)."
+                )
+        else:
+            name = str(fac)
+            if name not in label_to_idx:
+                raise ValueError(
+                    f"Factor {name!r} not found in the corrected layer-0 columns "
+                    f"({labels}). Merged columns are named like 'L0_7+L0_14'."
+                )
+            idx = label_to_idx[name]
+        col_indices.append(idx)
+        out_labels.append(labels[idx])
+    return np.array(col_indices, dtype=int), np.array(out_labels, dtype=object)
+
+
 def _build_obs_cell_factor_panel(
     cell_matrix: np.ndarray,
     group_labels: pd.Series,
@@ -354,6 +436,7 @@ def obs_cell_factor_heatmap(
     values: Literal["score", "prob"] = "score",
     cluster_cells: bool = True,
     sort_layer_factors: bool = True,
+    merge_batch_technical: bool = False,
     group_order: Optional[Sequence[str]] = None,
     show_group_track: bool = True,
     figsize: Optional[Tuple[float, float]] = None,
@@ -407,11 +490,28 @@ def obs_cell_factor_heatmap(
         factors: Optional list of factor names (or indices within the layer) to
             plot. Columns appear in this order; overrides ``sort_layer_factors``.
         values: ``"score"`` for raw cell factor scores; ``"prob"`` for normalized
-            probabilities from ``X_<layer>_probs``.
+            probabilities from ``X_<layer>_probs``. With
+            ``merge_batch_technical``, probabilities are instead re-derived by
+            row-normalizing the *merged* matrix, so a merged column holds the
+            probability mass of the whole group rather than of one batch half
+            (identical to summing the members' probabilities when
+            ``reduce="sum"``).
         cluster_cells: If True, hierarchically cluster cells within each
             ``group_obs_key`` block (Ward linkage on Euclidean distance).
         sort_layer_factors: If True and ``factors`` is None, order columns with
-            ``model.get_layer_factor_orders()``.
+            ``model.get_layer_factor_orders()``. This applies with
+            ``merge_batch_technical`` too: a merged column's members share a
+            parent, so they are contiguous in the hierarchy ordering and the
+            merged column simply takes their place.
+        merge_batch_technical: If True, replace each group of batch-technical
+            splits with one merged column via
+            :func:`scdef.tools.corrected_factor_representation`, so the program
+            reads as a single column firing across *both* batch blocks instead
+            of two columns each firing in one. Merged columns are labelled
+            ``"L0_7+L0_14"`` so the corrected split stays visible. Layer 0 only.
+            ``factors`` may reference merged labels. With ``values="prob"``,
+            probabilities are re-derived from the merged scores (see
+            ``values``).
         group_order: Optional explicit order of ``group_obs_key`` categories;
             default uses categorical order when available, else sorted unique values.
         show_group_track: Draw a narrow color strip for ``group_obs_key`` to the
@@ -461,6 +561,11 @@ def obs_cell_factor_heatmap(
         raise ValueError("values must be 'score' or 'prob'.")
     if group_separator_linewidth < 0:
         raise ValueError("group_separator_linewidth must be >= 0.")
+    if merge_batch_technical and layer_idx != 0:
+        raise ValueError(
+            "merge_batch_technical only applies to layer_idx=0, where the "
+            f"batch-technical splits live; got layer_idx={layer_idx}."
+        )
 
     layer_name = model.layer_names[layer_idx]
     if values == "score":
@@ -469,9 +574,12 @@ def obs_cell_factor_heatmap(
     else:
         matrix_key = f"X_{layer_name}_probs"
         default_cbar = "Cell factor probability"
-    if matrix_key not in model.adata.obsm:
+    # When merging, probabilities are re-derived from the merged scores rather
+    # than read from X_<layer>_probs, so only the score matrix is required.
+    required_key = f"X_{layer_name}" if merge_batch_technical else matrix_key
+    if required_key not in model.adata.obsm:
         raise KeyError(
-            f"{matrix_key} not found in adata.obsm. "
+            f"{required_key} not found in adata.obsm. "
             "Run model.annotate() (or model.normalize_cellscores() for probabilities) first."
         )
 
@@ -482,15 +590,73 @@ def obs_cell_factor_heatmap(
     if len(subset_vals) == 0:
         raise ValueError("subset_obs must contain at least one value.")
 
-    full_matrix = np.asarray(model.adata.obsm[matrix_key], dtype=float)
-    factor_order, factor_labels = _resolve_layer_factor_columns(
-        model,
-        layer_idx,
-        full_matrix.shape[1],
-        factors,
-        sort_layer_factors,
-    )
-    full_matrix = full_matrix[:, factor_order]
+    if merge_batch_technical:
+        # Merged columns have no counterpart in model.factor_names, so the
+        # normal layer-column resolution is bypassed and the corrected labels
+        # are used directly.
+        from ..tools.factor import (
+            _batch_technical_l0_slots,
+            corrected_factor_representation,
+        )
+
+        corrected_key = "X_L0_corrected"
+        cached_labels = model.adata.uns.get(f"{corrected_key}_factors")
+        cached_merged_on = model.adata.uns.get(f"{corrected_key}_batch_technical")
+        stale = (
+            corrected_key not in model.adata.obsm
+            or cached_labels is None
+            or cached_merged_on is None
+            or model.adata.uns.get(f"{corrected_key}_members") is None
+        )
+        if not stale:
+            # A cached matrix is reused so an explicit `reduce=` choice survives,
+            # but it must reflect the *current* flags: flagging or unflagging
+            # between plots would otherwise silently show the previous merging.
+            currently_flagged = {
+                str(model.factor_names[0][slot])
+                for slot in _batch_technical_l0_slots(model)
+            }
+            stale = bool(
+                {str(name) for name in cached_merged_on} != currently_flagged
+                or len(cached_labels)
+                != np.asarray(model.adata.obsm[corrected_key]).shape[1]
+            )
+        if stale:
+            corrected_factor_representation(model, key_added=corrected_key)
+        full_matrix = np.asarray(model.adata.obsm[corrected_key], dtype=float)
+        if values == "prob":
+            # Same normalization as scDEF.normalize_cellscores, applied *after*
+            # merging: each merged column carries the probability mass of the
+            # whole group. With reduce='sum' that is exactly the sum of its
+            # members' probabilities; with reduce='max' the row is renormalized
+            # over the retained peaks.
+            den = np.clip(np.sum(full_matrix, axis=1, keepdims=True), 1e-12, None)
+            full_matrix = full_matrix / den
+        corrected_labels = [
+            str(label) for label in model.adata.uns[f"{corrected_key}_factors"]
+        ]
+        column_members = [
+            [str(name) for name in members]
+            for members in model.adata.uns[f"{corrected_key}_members"]
+        ]
+        factor_order, factor_labels = _resolve_corrected_factor_columns(
+            corrected_labels,
+            factors,
+            model=model,
+            column_members=column_members,
+            sort_layer_factors=sort_layer_factors,
+        )
+        full_matrix = full_matrix[:, factor_order]
+    else:
+        full_matrix = np.asarray(model.adata.obsm[matrix_key], dtype=float)
+        factor_order, factor_labels = _resolve_layer_factor_columns(
+            model,
+            layer_idx,
+            full_matrix.shape[1],
+            factors,
+            sort_layer_factors,
+        )
+        full_matrix = full_matrix[:, factor_order]
     n_cols = len(factor_labels)
 
     top_annotation_labels: Optional[List[str]] = None
@@ -1069,7 +1235,7 @@ def continuous_obs_scores(
 def umap(
     model: "scDEF",
     color: Union[str, List[str]] = [],
-    layers: Optional[List[int]] = None,
+    layers: Optional[List[Union[int, str]]] = None,
     figsize: Tuple[float, float] = (16, 4),
     fontsize: int = 12,
     legend_fontsize: int = 10,
@@ -1089,7 +1255,11 @@ def umap(
     Args:
         model: scDEF model instance
         color: color key(s) to use for coloring
-        layers: which layers to plot, in panel order
+        layers: which layers to plot, in panel order. Entries are layer indices;
+            a string entry is used as an embedding name directly, so
+            ``layers=['L0_corrected']`` plots
+            ``adata.obsm['X_umap_L0_corrected']`` from
+            ``scdef.tl.umap(model, merge_batch_technical=True)``.
         figsize: figure size
         fontsize: font size for labels
         legend_fontsize: legend font size
@@ -1123,12 +1293,24 @@ def umap(
         axes = axes.reshape(n_rows, 1)
 
     for col, layer in enumerate(layers):
-        layer_name = model.layer_names[layer]
+        # A string entry names an embedding directly (e.g. 'L0_corrected' from
+        # tl.umap(..., merge_batch_technical=True)); ints are layer indices.
+        if isinstance(layer, str):
+            layer_name = layer
+            panel_title = layer
+            hint = (
+                "Run scdef.tl.umap(model, merge_batch_technical=True) first."
+                if layer.endswith("_corrected")
+                else "Run scdef.tl.umap(model) first."
+            )
+        else:
+            layer_name = model.layer_names[layer]
+            panel_title = f"Layer {layer}"
+            hint = "Run scdef.tl.umap(model) first."
         umap_key = f"X_umap_{layer_name}"
         if umap_key not in model.adata.obsm:
             raise KeyError(
-                f"UMAP embedding '{umap_key}' not found in model.adata.obsm. "
-                f"Run scdef.tl.umap(model) first."
+                f"UMAP embedding '{umap_key}' not found in model.adata.obsm. {hint}"
             )
         is_last_col = col == n_layers - 1
         for row in range(len(color)):
@@ -1144,7 +1326,7 @@ def umap(
                 legend_loc=legend_loc,
             )
             if row == 0:
-                ax.set_title(f"Layer {layer}", fontsize=fontsize)
+                ax.set_title(panel_title, fontsize=fontsize)
             else:
                 ax.set_title("")
 
