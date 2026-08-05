@@ -721,41 +721,55 @@ def _compute_l0_batch_split(
     batch_idx: np.ndarray,
     n_batches: int,
     unique_batches: np.ndarray,
-    min_sibling_cells: int = 20,
     min_batch_frac: float = 0.7,
 ) -> None:
-    """Flag per-batch splits of the *same* cell type among layer-0 siblings.
+    """Score how much each L0 factor looks like one half of a per-batch split.
 
     ``decompose_batch_effects`` re-learns L0 without a ``batch_key``, so a purely
-    technical per-batch duplication shows up as two L0 factors that (a) share the
-    same L1 parent, (b) are each dominated by a *different* batch, and (c) have
-    nearly identical cell-score fingerprints over the *other* L0 factors — i.e.
-    the same cells, split by batch rather than by biology.
+    technical per-batch duplication shows up as two L0 factors that (a) sit under
+    the same L1 parent, (b) are each dominated by a *different* batch, and (c)
+    have nearly identical cell-score fingerprints over the *other* L0 factors —
+    i.e. the same cells, split by batch rather than by biology.
 
     Everything here works on the per-cell factor scores ``z`` (``pmeans['L0z']``,
     the cell side of the factorization), *not* on the factor-gene loadings ``W``.
     A factor's "cell-score profile" is the mean ``log1p`` score its own cells
     place on every L0 factor.
 
-    For every kept L0 factor this writes three columns into ``factor_obs``
-    (layer-0 rows only):
+    The score is a **weighted average over every opposite-batch candidate**, not
+    a single best partner, so it is dense: every kept L0 factor gets a value and
+    ``NaN`` never appears. For factor ``i`` and candidate ``j``:
 
-    - ``batch_split_corr``: Pearson correlation of the two factors' mean
-      ``log1p`` cell-score profiles, computed over all kept L0 columns *except*
-      the two factors' own columns (so the trivially anti-correlated self-scores
-      cannot drive the score). Higher means "these two factors sit on the same
-      cells".
-    - ``batch_split_partner``: ``factor_obs`` row name of the best-scoring
-      partner.
-    - ``batch_split_batch``: the partner's dominant batch value.
+    - ``corr_ij``: Pearson correlation of the two cell-score profiles over all
+      kept L0 columns *except* ``{i, j}``, so the trivially anti-correlated
+      self-scores cannot drive it.
+    - ``s_ij = sum_k a_i[k] * a_j[k]`` where ``a_i`` is column ``i`` of ``L1W``
+      normalized to a distribution — a **soft shared-parent** weight that keeps
+      the hierarchy in play without a hard ``argmax`` parent assignment.
+    - ``skew_j``: a ramp on the candidate's dominant-batch fraction, centered on
+      ``min_batch_frac`` (``0.6 -> 0``, ``0.8 -> 1`` at the default ``0.7``).
 
-    Both halves of a real split must be strongly batch-dominated, so a factor is
-    only considered (as ``s`` or as a candidate partner ``t``) when its dominant
-    batch holds at least ``min_batch_frac`` of its cells. Without that gate, two
-    genuine subtypes that merely *lean* opposite ways by batch (e.g. CD4-Memory
-    52% control vs CD4-Naive 52% stimulated) correlate highly and get wrongly
-    called a split. A batch-*balanced* factor is the batch-corrected cell-type
-    factor and must never be flagged — it is the roll-up target, not the split.
+    ``batch_split_corr[i] = sum_j w_ij * corr_ij / sum_j w_ij`` with
+    ``w_ij = s_ij * skew_j``, over ``j != i`` whose dominant batch differs from
+    ``i``'s. A degenerate case (single batch, or no opposite-batch contributor)
+    scores ``0.0`` rather than ``NaN``.
+
+    ``skew_j`` is what spares biology. A real per-batch split needs a batch-*pure*
+    partner; two genuine subtypes that merely lean opposite ways by batch (CD4
+    Memory ~52% control vs CD4 Naive ~52% stimulated) have batch-*balanced*
+    partners, which the ramp weights to ~0. A balanced factor is the
+    batch-corrected cell-type factor — the roll-up target, not a split half.
+
+    Note this metric deliberately does **not** gate on factor ``i``'s own batch
+    skew; that is a separate, plottable condition applied when flagging (see
+    :func:`suggest_technical_factors`). Keeping it out here is what makes the
+    column dense and lets a balanced factor's high correlation stay *visible*
+    while remaining unflagged.
+
+    Writes three layer-0 columns into ``factor_obs``: ``batch_split_corr``,
+    plus the informational ``batch_split_partner`` (the single
+    ``argmax_j w_ij * corr_ij`` contributor) and ``batch_split_batch`` (that
+    partner's dominant batch).
 
     Args:
         model: scDEF model instance (needs ``pmeans`` from a fit).
@@ -767,9 +781,7 @@ def _compute_l0_batch_split(
         batch_idx: per-cell batch index (``-1`` for missing).
         n_batches: number of distinct batches.
         unique_batches: batch values, ordered as in ``batch_idx``.
-        min_sibling_cells: minimum number of cells a candidate partner must own.
-        min_batch_frac: minimum dominant-batch fraction required of *both*
-            halves of a candidate split.
+        min_batch_frac: center of the candidate batch-skew ramp.
     """
     for column, default in (
         ("batch_split_corr", np.nan),
@@ -790,7 +802,7 @@ def _compute_l0_batch_split(
     if w1_key not in pmeans or z0_key not in pmeans:
         return
 
-    # W at layer 1 is (n_L1, n_L0): each L0 column's parent is its argmax row.
+    # W at layer 1 is (n_L1, n_L0); column i is factor i's parent affinity.
     w1 = np.asarray(pmeans[w1_key], dtype=float)
     # Posterior mean per-cell factor scores (non-negative). Note: `local_params`
     # holds the unconstrained log-space parameters, for which log1p(clip(., 0))
@@ -799,7 +811,6 @@ def _compute_l0_batch_split(
     if w1.ndim != 2 or z0.ndim != 2 or w1.shape[1] != z0.shape[1]:
         return
 
-    parent_of = np.argmax(w1, axis=0)
     winner = np.argmax(z0, axis=1)
     logz = np.log1p(np.clip(z0, 0.0, None))
 
@@ -820,10 +831,15 @@ def _compute_l0_batch_split(
         return
 
     kept_cols = np.asarray(sorted(orig_to_row.keys()), dtype=int)
+
+    # Soft parent membership: normalize each L0 column of L1W to a distribution.
+    parent_affinity = np.clip(w1[:, kept_cols], 0.0, None)
+    den = np.clip(parent_affinity.sum(axis=0, keepdims=True), 1e-12, None)
+    parent_affinity = parent_affinity / den
+
     dom_batch: Dict[int, int] = {}
     frac_dom: Dict[int, float] = {}
     profile: Dict[int, np.ndarray] = {}
-    ncells: Dict[int, int] = {}
     for orig in kept_cols:
         cells = np.where(winner == int(orig))[0]
         if cells.size == 0:
@@ -839,53 +855,58 @@ def _compute_l0_batch_split(
         dom_batch[int(orig)] = int(np.argmax(counts))
         frac_dom[int(orig)] = float(np.max(counts) / total)
         profile[int(orig)] = logz[cells].mean(axis=0)
-        ncells[int(orig)] = int(cells.size)
 
-    for s in kept_cols:
-        s = int(s)
-        if s not in profile:
+    col_pos = {int(c): pos for pos, c in enumerate(kept_cols)}
+    ramp_lo = float(min_batch_frac) - 0.1
+    skew = {
+        j: float(np.clip((frac_dom[j] - ramp_lo) / 0.2, 0.0, 1.0)) for j in frac_dom
+    }
+
+    for i in kept_cols:
+        i = int(i)
+        row_name = orig_to_row[i]
+        if i not in profile:
+            # No cells of its own: nothing to compare, but keep the column dense.
+            factor_obs.at[row_name, "batch_split_corr"] = 0.0
             continue
-        # Batch-skew gate: a balanced factor is the batch-corrected cell-type
-        # factor, never a split half.
-        if frac_dom[s] < float(min_batch_frac):
-            continue
-        candidates = [
-            t
-            for t in profile
-            if t != s
-            and int(parent_of[t]) == int(parent_of[s])
-            and dom_batch[t] != dom_batch[s]
-            and ncells[t] >= int(min_sibling_cells)
-            and frac_dom[t] >= float(min_batch_frac)
-        ]
-        best_score = -np.inf
+
+        a_i = parent_affinity[:, col_pos[i]]
+        num = 0.0
+        den_w = 0.0
+        best_contrib = -np.inf
         best_partner: Optional[int] = None
-        for t in candidates:
-            # Compare cell-score fingerprints over the *other* kept L0 factors,
-            # so the two factors' own (mutually exclusive) scores cannot drive
-            # the correlation.
-            mask = (kept_cols != s) & (kept_cols != t)
+        for j in profile:
+            if j == i or dom_batch[j] == dom_batch[i]:
+                continue
+            w = float(np.dot(a_i, parent_affinity[:, col_pos[j]])) * skew[j]
+            if w <= 0.0:
+                continue
+            mask = (kept_cols != i) & (kept_cols != j)
             other = kept_cols[mask]
             if other.size < 2:
                 continue
-            a = profile[s][other]
-            b = profile[t][other]
-            if not (np.std(a) > 0 and np.std(b) > 0):
+            u = profile[i][other]
+            v = profile[j][other]
+            if not (np.std(u) > 0 and np.std(v) > 0):
                 continue
-            score = float(np.corrcoef(a, b)[0, 1])
-            if not np.isfinite(score):
+            corr = float(np.corrcoef(u, v)[0, 1])
+            if not np.isfinite(corr):
                 continue
-            if score > best_score:
-                best_score = score
-                best_partner = t
-        if best_partner is None:
-            continue
-        row_name = orig_to_row[s]
-        factor_obs.at[row_name, "batch_split_corr"] = round(float(best_score), 4)
-        factor_obs.at[row_name, "batch_split_partner"] = str(orig_to_row[best_partner])
-        factor_obs.at[row_name, "batch_split_batch"] = str(
-            unique_batches[dom_batch[best_partner]]
-        )
+            num += w * corr
+            den_w += w
+            if w * corr > best_contrib:
+                best_contrib = w * corr
+                best_partner = j
+
+        score = 0.0 if den_w <= 0.0 else num / den_w
+        factor_obs.at[row_name, "batch_split_corr"] = round(float(score), 4)
+        if best_partner is not None:
+            factor_obs.at[row_name, "batch_split_partner"] = str(
+                orig_to_row[best_partner]
+            )
+            factor_obs.at[row_name, "batch_split_batch"] = str(
+                unique_batches[dom_batch[best_partner]]
+            )
 
 
 def factor_diagnostics(
@@ -902,7 +923,6 @@ def factor_diagnostics(
     min_effect: Optional[float] = None,
     mc_samples: int = 100,
     random_seed: int = 0,
-    batch_split_min_cells: int = 20,
     batch_split_min_batch_frac: float = 0.7,
 ) -> None:
     """Compute/store factor diagnostics in ``model.adata.uns['factor_obs']``.
@@ -948,13 +968,10 @@ def factor_diagnostics(
         min_effect: passed to :func:`set_confident_signatures`.
         mc_samples: passed to :func:`set_confident_signatures`.
         random_seed: passed to :func:`set_confident_signatures`.
-        batch_split_min_cells: minimum number of cells a candidate partner factor
-            must own to count as the other half of a per-batch split (see
-            :func:`_compute_l0_batch_split`). Only used when ``batch_key``
-            is set.
-        batch_split_min_batch_frac: minimum dominant-batch fraction required of both
-            halves of a candidate per-batch split. Only used when ``batch_key``
-            is set.
+        batch_split_min_batch_frac: center of the batch-skew ramp that weights
+            candidate partners in :func:`_compute_l0_batch_split` (default
+            ``0.7``: a candidate at ``0.6`` contributes nothing, one at ``0.8``
+            contributes fully). Only used when ``batch_key`` is set.
     """
     # Keep layer 0 unfiltered, but use a fixed filtered subset on upper layers.
     # Cache and reuse upper-layer factor lists so diagnostics remain stable across
@@ -1207,7 +1224,6 @@ def factor_diagnostics(
                 batch_idx,
                 n_batches,
                 unique_batches,
-                min_sibling_cells=batch_split_min_cells,
                 min_batch_frac=batch_split_min_batch_frac,
             )
 
@@ -2753,6 +2769,7 @@ def suggest_technical_factors(
     batch_purity_min: float = 0.6,
     n_eff_parents_min: float = 1.3,
     batch_split_min: float = 0.6,
+    min_batch_frac: float = 0.7,
 ) -> pd.DataFrame:
     """Surface layer-0 factors that look technical rather than biological.
 
@@ -2762,18 +2779,28 @@ def suggest_technical_factors(
     - **Cross-cell-type** (``avg_n_eff_parents``): the factor spreads over
       several lineages instead of sitting under one parent — an ambient or
       batch-wide program rather than a cell type.
-    - **Within-cell-type** (``batch_split_corr``): the factor is one half of a
-      per-batch duplication of a single cell type; its sibling under the same
-      parent covers the same cells in the other batch (see
-      :func:`_compute_l0_batch_split`).
+    - **Within-cell-type** (``is_split``): the factor is one half of a per-batch
+      duplication of a single cell type. This arm is an explicit **AND** of two
+      dense columns::
+
+          is_split = (batch_split_corr >= batch_split_min)
+                     and (frac_dom_batch >= min_batch_frac)
+
+      ``batch_split_corr`` (see :func:`_compute_l0_batch_split`) says "some
+      opposite-batch, same-parent-ish, batch-pure factor covers my cells";
+      ``frac_dom_batch`` says "and I am batch-skewed myself". Both are needed:
+      a factor can score high on the first while being batch-*balanced*, which
+      is the signature of the batch-corrected cell-type factor, not of a split
+      half. Keeping this second condition here rather than inside the metric
+      leaves it visible and plottable instead of hidden as a ``NaN``.
 
     A factor is ``suggested`` when *either* signature fires. Only diagnostics
     already stored in ``factor_obs`` plus the model's own cell scores are used
     — no raw counts or expression values are read.
 
     Only the within-cell-type signature needs batches. Without a ``batch_key``
-    the cross-cell-type rule still applies on its own, ``batch_split_corr``
-    stays ``NaN``, and the batch-specific columns are omitted.
+    the cross-cell-type rule still applies on its own and the batch-specific
+    columns are not produced, so ``is_split`` is always ``False``.
 
     Args:
         model: scDEF model instance (fitted).
@@ -2791,22 +2818,27 @@ def suggest_technical_factors(
             genuinely batch-restricted biology.
         n_eff_parents_min: minimum ``avg_n_eff_parents`` for the cross-cell-type
             rule.
-        batch_split_min: minimum ``batch_split_corr`` for the
-            within-cell-type rule.
+        batch_split_min: minimum ``batch_split_corr`` for the within-cell-type
+            rule.
+        min_batch_frac: minimum ``frac_dom_batch`` the factor must have *itself*
+            to be called a split half — the second half of the ``is_split``
+            AND. Mirrors the ramp center used for candidate partners in
+            :func:`_compute_l0_batch_split`.
 
     Returns:
         DataFrame indexed by current layer-0 factor name with columns
         ``n_cells``, ``dom_batch`` and ``frac_dom_batch`` (only with a
         ``batch_key``), (optional) ``cell_type``, ``batch_purity``,
         ``avg_n_eff_parents``, ``batch_split_corr``, ``batch_split_partner``,
-        ``batch_split_batch`` and ``suggested``, sorted by ``suggested``,
-        ``batch_split_corr`` and ``avg_n_eff_parents`` (all descending).
+        ``batch_split_batch``, ``is_split`` and ``suggested``, sorted by
+        ``suggested``, ``batch_split_corr`` and ``avg_n_eff_parents`` (all
+        descending).
 
     Example:
         >>> cand = scdef.tl.suggest_technical_factors(
         ...     model, batch_key="Experiment", celltype_key="SubType"
         ... )
-        >>> splits = cand.index[cand["batch_split_corr"].fillna(0) >= 0.6]
+        >>> splits = cand.index[cand["is_split"]]
     """
     if batch_key is not None and batch_key not in model.adata.obs.columns:
         raise KeyError(
@@ -2907,9 +2939,17 @@ def suggest_technical_factors(
         record["batch_split_partner"] = partner_name
         record["batch_split_batch"] = str(_row_value(orig, "batch_split_batch", ""))
 
+        # The within-cell-type arm is an explicit AND of two dense columns: the
+        # factor must look like a split *and* be batch-skewed itself. Keeping
+        # the second condition here (rather than inside the metric) makes it
+        # visible and plottable instead of hiding as a NaN.
         cross_celltype = record["avg_n_eff_parents"] >= float(n_eff_parents_min)
-        within_celltype = record["batch_split_corr"] >= float(batch_split_min)
-        record["suggested"] = bool(cross_celltype or within_celltype)
+        is_split = bool(
+            record["batch_split_corr"] >= float(batch_split_min)
+            and record.get("frac_dom_batch", np.nan) >= float(min_batch_frac)
+        )
+        record["is_split"] = is_split
+        record["suggested"] = bool(cross_celltype or is_split)
 
         records.append(record)
         index.append(name)
@@ -2924,6 +2964,7 @@ def suggest_technical_factors(
     result.attrs["batch_purity_min"] = float(batch_purity_min)
     result.attrs["n_eff_parents_min"] = float(n_eff_parents_min)
     result.attrs["batch_split_min"] = float(batch_split_min)
+    result.attrs["min_batch_frac"] = float(min_batch_frac)
     return result
 
 

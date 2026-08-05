@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
-from typing import Optional, Tuple, Literal, Any, TYPE_CHECKING
+from typing import Optional, Tuple, Literal, Any, Union, TYPE_CHECKING
 
 FactorDiagQuantity = Literal[
     "ARD",
@@ -634,6 +634,52 @@ def _scatter_with_optional_color(
     )
 
 
+_BATCH_PANEL_QUANTITIES = ("frac_dom_batch", "batch_split_corr")
+
+
+def _has_batch_diagnostics(model: "scDEF", source_key: str) -> bool:
+    """Whether the batch-split diagnostics are present and populated."""
+    factor_obs = model.adata.uns.get(source_key)
+    if factor_obs is None:
+        factor_obs = model.adata.uns.get("factor_obs")
+    if factor_obs is None:
+        return False
+    for quantity in _BATCH_PANEL_QUANTITIES:
+        if quantity not in factor_obs.columns:
+            return False
+    values = factor_obs["batch_split_corr"].to_numpy(dtype=float)
+    return bool(np.any(np.isfinite(values)))
+
+
+def _resolve_batch_panel(
+    model: "scDEF",
+    batch_panel: Optional[bool],
+    x: FactorDiagQuantity,
+    y: Optional[FactorDiagQuantity],
+    ax: Optional[Axes],
+    source_key: str,
+) -> bool:
+    """Decide whether to draw the extra per-batch panel."""
+    if batch_panel is False:
+        return False
+    if batch_panel is True:
+        if ax is not None:
+            raise ValueError(
+                "batch_panel=True draws two panels and cannot share a single "
+                "`ax`. Pass ax=None, or batch_panel=False."
+            )
+        if not _has_batch_diagnostics(model, source_key):
+            raise KeyError(
+                "batch_panel=True requires the batch-split diagnostics. Run "
+                "`scdef.tools.factor_diagnostics(model, batch_key=...)` first."
+            )
+        return True
+    # Auto: only when nothing about the axes was chosen explicitly.
+    if ax is not None or x != "BRD" or y is not None:
+        return False
+    return _has_batch_diagnostics(model, source_key)
+
+
 def factor_diagnostics(
     model: "scDEF",
     brd_min: float = 1.0,
@@ -654,8 +700,9 @@ def factor_diagnostics(
     y: Optional[FactorDiagQuantity] = None,
     color: Optional[FactorDiagQuantity] = None,
     size: Optional[FactorDiagQuantity] = "ARD",
+    batch_panel: Optional[bool] = None,
     show: bool = True,
-) -> Optional[Axes]:
+) -> Optional[Union[Axes, np.ndarray]]:
     """
     Diagnostic scatter plot of layer-0 factors with flexible axis/color/size mapping.
 
@@ -672,6 +719,15 @@ def factor_diagnostics(
         scdef.pl.factor_diagnostics(
             model, x="avg_n_eff_parents", y="batch_split_corr", color="frac_dom_batch"
         )
+
+    When those diagnostics exist and the axes are left at their defaults, a
+    second panel showing them is drawn automatically (see ``batch_panel``). Both
+    ``batch_split_corr`` and ``frac_dom_batch`` are dense — every kept factor has
+    a value — so nothing is silently dropped from either panel. A high
+    ``batch_split_corr`` at a *balanced* ``frac_dom_batch`` (top-left of that
+    panel) is the batch-corrected cell-type factor, not a split half; the two
+    are separated by the ``is_split`` rule in
+    :func:`scdef.tools.suggest_technical_factors`, not by this plot.
 
     For the thresholded "which factors look technical" *decision*, use
     :func:`scdef.tools.suggest_technical_factors`, which returns the candidate
@@ -728,11 +784,67 @@ def factor_diagnostics(
             uncolored markers.
         size: quantity for marker size. Default ``ARD``. Pass ``None`` for
             fixed marker size.
+        batch_panel: draw a second panel with the per-batch split diagnostics
+            (``x='frac_dom_batch'``, ``y='batch_split_corr'``,
+            ``size='n_cells'``, ``color='batch_purity'``) beside the usual one.
+            ``None`` (default) enables it automatically when the batch
+            diagnostics exist *and* the axes were left at their defaults;
+            passing ``x``/``y`` or an ``ax`` keeps the single panel. ``True``
+            forces both panels (requires ``ax=None`` and the batch
+            diagnostics); ``False`` forces one. In the two-panel layout the
+            left panel keeps whatever ``x``/``y``/``color``/``size`` you pass.
         show: whether to show the plot
 
     Returns:
-        Axes object if show is False, None otherwise.
+        Axes object if show is False, None otherwise. With two panels, an array
+        of the two Axes.
     """
+    panel_source = "factor_obs_full" if all_factors else "factor_obs"
+    draw_batch_panel = _resolve_batch_panel(model, batch_panel, x, y, ax, panel_source)
+    if draw_batch_panel:
+        fig, axes = plt.subplots(1, 2, figsize=(figsize[0] * 2, figsize[1]))
+        shared = dict(
+            brd_min=brd_min,
+            ard_min=ard_min,
+            clarity_min=clarity_min,
+            batch_purity_soft_max=batch_purity_soft_max,
+            n_eff_parents_max=n_eff_parents_max,
+            brd_exceptional=brd_exceptional,
+            annotate_factors=annotate_factors,
+            annotation_fontsize=annotation_fontsize,
+            annotation_alpha=annotation_alpha,
+            all_factors=all_factors,
+            local_l0_scores=local_l0_scores,
+            batch_panel=False,
+            show=False,
+        )
+        factor_diagnostics(
+            model,
+            x=x,
+            y=y,
+            color=color,
+            size=size,
+            batch_purity_max=batch_purity_max,
+            ax=axes[0],
+            **shared,
+        )
+        factor_diagnostics(
+            model,
+            x="frac_dom_batch",
+            y="batch_split_corr",
+            color="batch_purity",
+            size="n_cells",
+            batch_purity_max=batch_purity_max,
+            ax=axes[1],
+            **shared,
+        )
+        axes[1].set_title("Per-batch split diagnostics")
+        fig.tight_layout()
+        if show:
+            plt.show()
+            return None
+        return axes
+
     source_key = "factor_obs_full" if all_factors else "factor_obs"
     if source_key not in model.adata.uns:
         if all_factors and "factor_obs" in model.adata.uns:
@@ -891,22 +1003,26 @@ def factor_diagnostics(
     ax.set_xlabel(_factor_diag_quantity_label(x))
     ax.set_ylabel(_factor_diag_quantity_label(y_quantity))
     line_color = plt.rcParams["axes.prop_cycle"].by_key()["color"][0]
-    ax.axvline(
-        brd_min,
-        linestyle="--",
-        color=line_color,
-    )
-    if brd_exceptional is not None:
+    # Only draw a threshold line on an axis that actually shows that quantity —
+    # a BRD cutoff means nothing on, say, a dominant-batch-fraction axis.
+    if x == "BRD":
         ax.axvline(
-            brd_exceptional,
+            brd_min,
             linestyle="--",
-            color=plt.rcParams["axes.prop_cycle"].by_key()["color"][1],
+            color=line_color,
         )
-    ax.axhline(
-        neffective_parents_max,
-        linestyle="--",
-        color=line_color,
-    )
+        if brd_exceptional is not None:
+            ax.axvline(
+                brd_exceptional,
+                linestyle="--",
+                color=plt.rcParams["axes.prop_cycle"].by_key()["color"][1],
+            )
+    if y_quantity in ("avg_n_eff_parents", "n_eff_parents"):
+        ax.axhline(
+            neffective_parents_max,
+            linestyle="--",
+            color=line_color,
+        )
 
     cbar = None
     cbar_thresh: Optional[float] = None
