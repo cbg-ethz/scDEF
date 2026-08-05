@@ -26,6 +26,7 @@ from .factor import (
     set_factor_signatures,
     get_confident_signatures,
     set_technical_factors,
+    suggest_technical_factors,
     drop_technical,
     get_technical_drop_factors,
     set_global_factors,

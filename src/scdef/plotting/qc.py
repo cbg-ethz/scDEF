@@ -17,6 +17,8 @@ FactorDiagQuantity = Literal[
     "avg_n_eff_parents",
     "batch_purity",
     "batch_purity_soft",
+    "batch_split_corr",
+    "frac_dom_batch",
     "signature_confidence",
     "n_cells",
 ]
@@ -30,6 +32,8 @@ _FACTOR_DIAG_LABELS: dict[str, str] = {
     "batch_purity_soft": "Batch purity (soft)",
     "signature_confidence": "Signature confidence",
     "n_cells": "Number of cells",
+    "batch_split_corr": "Batch split (sibling cell-score corr.)",
+    "frac_dom_batch": "Dominant batch fraction",
 }
 
 from scdef.tools.hierarchy import effective_parents_from_clarity
@@ -660,6 +664,19 @@ def factor_diagnostics(
     is not overridden, points are colored by the corresponding batch purity
     (sizes still default to ARD).
 
+    Any per-factor column of ``factor_obs`` can be mapped to an axis, color or
+    size. That includes the batch-split diagnostics written by
+    ``scdef.tools.factor_diagnostics(..., batch_key=...)``, so a
+    within-cell-type per-batch split can be inspected directly, e.g.::
+
+        scdef.pl.factor_diagnostics(
+            model, x="avg_n_eff_parents", y="batch_split_corr", color="frac_dom_batch"
+        )
+
+    For the thresholded "which factors look technical" *decision*, use
+    :func:`scdef.tools.suggest_technical_factors`, which returns the candidate
+    table this plot draws from.
+
     Args:
         model: scDEF model instance
         brd_min: minimum BRD filter threshold
@@ -700,7 +717,9 @@ def factor_diagnostics(
             on the y-axis instead of lineage ``avg_n_eff_parents``.
         x: quantity for the x-axis (``ARD``, ``BRD``, ``n_eff_parents``,
             ``avg_n_eff_parents``, ``batch_purity``, ``batch_purity_soft``,
-            ``signature_confidence``, ``n_cells``).
+            ``batch_split_corr``, ``frac_dom_batch``, ``signature_confidence``,
+            ``n_cells``). ``batch_split_corr`` and ``frac_dom_batch`` require
+            ``scdef.tools.factor_diagnostics(..., batch_key=...)``.
         y: quantity for the y-axis; default follows ``local_l0_scores`` /
             ``avg_n_eff_parents`` availability.
         color: quantity for marker color. Default ``None``: use

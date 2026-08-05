@@ -713,6 +713,181 @@ def lookup_factor_obs_n_cells(model: "scDEF", factor_name: str) -> Optional[int]
     return int(value)
 
 
+def _compute_l0_batch_split(
+    model: "scDEF",
+    factor_obs: pd.DataFrame,
+    z_means_full: np.ndarray,
+    offsets: np.ndarray,
+    batch_idx: np.ndarray,
+    n_batches: int,
+    unique_batches: np.ndarray,
+    min_sibling_cells: int = 20,
+    min_batch_frac: float = 0.7,
+) -> None:
+    """Flag per-batch splits of the *same* cell type among layer-0 siblings.
+
+    ``decompose_batch_effects`` re-learns L0 without a ``batch_key``, so a purely
+    technical per-batch duplication shows up as two L0 factors that (a) share the
+    same L1 parent, (b) are each dominated by a *different* batch, and (c) have
+    nearly identical cell-score fingerprints over the *other* L0 factors — i.e.
+    the same cells, split by batch rather than by biology.
+
+    Everything here works on the per-cell factor scores ``z`` (``pmeans['L0z']``,
+    the cell side of the factorization), *not* on the factor-gene loadings ``W``.
+    A factor's "cell-score profile" is the mean ``log1p`` score its own cells
+    place on every L0 factor.
+
+    For every kept L0 factor this writes three columns into ``factor_obs``
+    (layer-0 rows only):
+
+    - ``batch_split_corr``: Pearson correlation of the two factors' mean
+      ``log1p`` cell-score profiles, computed over all kept L0 columns *except*
+      the two factors' own columns (so the trivially anti-correlated self-scores
+      cannot drive the score). Higher means "these two factors sit on the same
+      cells".
+    - ``batch_split_partner``: ``factor_obs`` row name of the best-scoring
+      partner.
+    - ``batch_split_batch``: the partner's dominant batch value.
+
+    Both halves of a real split must be strongly batch-dominated, so a factor is
+    only considered (as ``s`` or as a candidate partner ``t``) when its dominant
+    batch holds at least ``min_batch_frac`` of its cells. Without that gate, two
+    genuine subtypes that merely *lean* opposite ways by batch (e.g. CD4-Memory
+    52% control vs CD4-Naive 52% stimulated) correlate highly and get wrongly
+    called a split. A batch-*balanced* factor is the batch-corrected cell-type
+    factor and must never be flagged — it is the roll-up target, not the split.
+
+    Args:
+        model: scDEF model instance (needs ``pmeans`` from a fit).
+        factor_obs: diagnostics frame to fill in place.
+        z_means_full: per-cell variational ``z`` means for all layers, accepted
+            for API symmetry with the surrounding batch diagnostics (the
+            cell-score profiles use the posterior means in ``pmeans`` instead).
+        offsets: per-layer column offsets into ``z_means_full``, likewise.
+        batch_idx: per-cell batch index (``-1`` for missing).
+        n_batches: number of distinct batches.
+        unique_batches: batch values, ordered as in ``batch_idx``.
+        min_sibling_cells: minimum number of cells a candidate partner must own.
+        min_batch_frac: minimum dominant-batch fraction required of *both*
+            halves of a candidate split.
+    """
+    for column, default in (
+        ("batch_split_corr", np.nan),
+        ("batch_split_partner", ""),
+        ("batch_split_batch", ""),
+    ):
+        if column not in factor_obs.columns:
+            factor_obs[column] = default
+
+    if int(model.n_layers) < 2:
+        return
+    pmeans = getattr(model, "pmeans", None)
+    if not isinstance(pmeans, dict):
+        return
+    l0_name = model.layer_names[0]
+    w1_key = f"{model.layer_names[1]}W"
+    z0_key = f"{l0_name}z"
+    if w1_key not in pmeans or z0_key not in pmeans:
+        return
+
+    # W at layer 1 is (n_L1, n_L0): each L0 column's parent is its argmax row.
+    w1 = np.asarray(pmeans[w1_key], dtype=float)
+    # Posterior mean per-cell factor scores (non-negative). Note: `local_params`
+    # holds the unconstrained log-space parameters, for which log1p(clip(., 0))
+    # would zero out everything -- the posterior means are what we need here.
+    z0 = np.asarray(pmeans[z0_key], dtype=float)
+    if w1.ndim != 2 or z0.ndim != 2 or w1.shape[1] != z0.shape[1]:
+        return
+
+    parent_of = np.argmax(w1, axis=0)
+    winner = np.argmax(z0, axis=1)
+    logz = np.log1p(np.clip(z0, 0.0, None))
+
+    if "child_layer" in factor_obs.columns:
+        l0_rows = factor_obs.index[factor_obs["child_layer"] == l0_name]
+    else:
+        l0_rows = factor_obs.index
+    if "original_factor_idx" not in factor_obs.columns:
+        return
+
+    kept_orig = set(int(o) for o in model.factor_lists[0])
+    orig_to_row: Dict[int, str] = {}
+    for row_name in l0_rows:
+        orig = int(factor_obs.at[row_name, "original_factor_idx"])
+        if orig in kept_orig and 0 <= orig < z0.shape[1]:
+            orig_to_row[orig] = row_name
+    if len(orig_to_row) < 2:
+        return
+
+    kept_cols = np.asarray(sorted(orig_to_row.keys()), dtype=int)
+    dom_batch: Dict[int, int] = {}
+    frac_dom: Dict[int, float] = {}
+    profile: Dict[int, np.ndarray] = {}
+    ncells: Dict[int, int] = {}
+    for orig in kept_cols:
+        cells = np.where(winner == int(orig))[0]
+        if cells.size == 0:
+            continue
+        cell_batches = batch_idx[cells]
+        cell_batches = cell_batches[cell_batches >= 0]
+        if cell_batches.size == 0:
+            continue
+        counts = np.bincount(cell_batches, minlength=n_batches).astype(float)
+        total = float(np.sum(counts))
+        if total <= 0.0:
+            continue
+        dom_batch[int(orig)] = int(np.argmax(counts))
+        frac_dom[int(orig)] = float(np.max(counts) / total)
+        profile[int(orig)] = logz[cells].mean(axis=0)
+        ncells[int(orig)] = int(cells.size)
+
+    for s in kept_cols:
+        s = int(s)
+        if s not in profile:
+            continue
+        # Batch-skew gate: a balanced factor is the batch-corrected cell-type
+        # factor, never a split half.
+        if frac_dom[s] < float(min_batch_frac):
+            continue
+        candidates = [
+            t
+            for t in profile
+            if t != s
+            and int(parent_of[t]) == int(parent_of[s])
+            and dom_batch[t] != dom_batch[s]
+            and ncells[t] >= int(min_sibling_cells)
+            and frac_dom[t] >= float(min_batch_frac)
+        ]
+        best_score = -np.inf
+        best_partner: Optional[int] = None
+        for t in candidates:
+            # Compare cell-score fingerprints over the *other* kept L0 factors,
+            # so the two factors' own (mutually exclusive) scores cannot drive
+            # the correlation.
+            mask = (kept_cols != s) & (kept_cols != t)
+            other = kept_cols[mask]
+            if other.size < 2:
+                continue
+            a = profile[s][other]
+            b = profile[t][other]
+            if not (np.std(a) > 0 and np.std(b) > 0):
+                continue
+            score = float(np.corrcoef(a, b)[0, 1])
+            if not np.isfinite(score):
+                continue
+            if score > best_score:
+                best_score = score
+                best_partner = t
+        if best_partner is None:
+            continue
+        row_name = orig_to_row[s]
+        factor_obs.at[row_name, "batch_split_corr"] = round(float(best_score), 4)
+        factor_obs.at[row_name, "batch_split_partner"] = str(orig_to_row[best_partner])
+        factor_obs.at[row_name, "batch_split_batch"] = str(
+            unique_batches[dom_batch[best_partner]]
+        )
+
+
 def factor_diagnostics(
     model: "scDEF",
     recompute: bool = False,
@@ -727,6 +902,8 @@ def factor_diagnostics(
     min_effect: Optional[float] = None,
     mc_samples: int = 100,
     random_seed: int = 0,
+    batch_split_min_cells: int = 20,
+    batch_split_min_batch_frac: float = 0.7,
 ) -> None:
     """Compute/store factor diagnostics in ``model.adata.uns['factor_obs']``.
 
@@ -749,7 +926,11 @@ def factor_diagnostics(
             (argmax variational ``z``). ``batch_purity_soft`` uses the batch
             distribution of per-cell memberships from ``X_<layer>_probs``
             (or row-normalized ``X_<layer>`` / posterior ``z`` if probs are
-            missing). Both are ``1 - entropy / log(n_batches)``.
+            missing). Both are ``1 - entropy / log(n_batches)``. Also writes
+            ``dom_batch`` / ``frac_dom_batch`` (the factor's dominant batch and
+            its share of the factor's cells) and, for layer 0, the
+            ``batch_split_*`` columns from :func:`_compute_l0_batch_split`.
+            All are plottable via ``scdef.pl.factor_diagnostics``.
         sensible_top_n_eff_parents_max: threshold used to classify
             sensible-top factors on the hierarchy walk.
         sensible_top_min_best_parent_prob: optional best-parent probability
@@ -767,6 +948,13 @@ def factor_diagnostics(
         min_effect: passed to :func:`set_confident_signatures`.
         mc_samples: passed to :func:`set_confident_signatures`.
         random_seed: passed to :func:`set_confident_signatures`.
+        batch_split_min_cells: minimum number of cells a candidate partner factor
+            must own to count as the other half of a per-batch split (see
+            :func:`_compute_l0_batch_split`). Only used when ``batch_key``
+            is set.
+        batch_split_min_batch_frac: minimum dominant-batch fraction required of both
+            halves of a candidate per-batch split. Only used when ``batch_key``
+            is set.
     """
     # Keep layer 0 unfiltered, but use a fixed filtered subset on upper layers.
     # Cache and reuse upper-layer factor lists so diagnostics remain stable across
@@ -870,6 +1058,11 @@ def factor_diagnostics(
     factor_obs["batch_entropy"] = np.nan
     factor_obs["batch_purity"] = np.nan
     factor_obs["batch_purity_soft"] = np.nan
+    factor_obs["dom_batch"] = ""
+    factor_obs["frac_dom_batch"] = np.nan
+    factor_obs["batch_split_corr"] = np.nan
+    factor_obs["batch_split_partner"] = ""
+    factor_obs["batch_split_batch"] = ""
     factor_obs["n_cells"] = 0
 
     for factor_name, row in factor_obs.iterrows():
@@ -971,6 +1164,14 @@ def factor_diagnostics(
                 factor_obs.at[row.name, "batch_entropy"] = entropy
                 factor_obs.at[row.name, "batch_purity"] = purity
 
+                total = float(np.sum(counts))
+                if total > 0.0:
+                    dominant = int(np.argmax(counts))
+                    factor_obs.at[row.name, "dom_batch"] = str(unique_batches[dominant])
+                    factor_obs.at[row.name, "frac_dom_batch"] = float(
+                        counts[dominant] / total
+                    )
+
                 if layer_idx not in layer_probs_cache:
                     try:
                         layer_probs_cache[layer_idx] = _get_layer_cell_probs(
@@ -997,6 +1198,18 @@ def factor_diagnostics(
                             soft_masses, n_batches
                         )
                         factor_obs.at[row.name, "batch_purity_soft"] = purity_soft
+
+            _compute_l0_batch_split(
+                model,
+                factor_obs,
+                z_means_full,
+                offsets,
+                batch_idx,
+                n_batches,
+                unique_batches,
+                min_sibling_cells=batch_split_min_cells,
+                min_batch_frac=batch_split_min_batch_frac,
+            )
 
         if "factor_diagnostics" not in model.adata.uns:
             model.adata.uns["factor_diagnostics"] = {}
@@ -2173,6 +2386,187 @@ def set_technical_factors(
             model.adata.uns["factor_obs"].loc[factor, "technical"] = True
 
     model.annotate_adata()
+
+
+def suggest_technical_factors(
+    model: "scDEF",
+    batch_key: Optional[str] = None,
+    celltype_key: Optional[str] = None,
+    batch_purity_min: float = 0.6,
+    n_eff_parents_min: float = 1.3,
+    batch_split_min: float = 0.6,
+) -> pd.DataFrame:
+    """Surface layer-0 factors that look technical rather than biological.
+
+    Two independent signatures are reported, covering the two ways a batch
+    effect leaks into L0 after :meth:`scDEF.decompose_batch_effects`:
+
+    - **Cross-cell-type** (``avg_n_eff_parents``): the factor spreads over
+      several lineages instead of sitting under one parent — an ambient or
+      batch-wide program rather than a cell type.
+    - **Within-cell-type** (``batch_split_corr``): the factor is one half of a
+      per-batch duplication of a single cell type; its sibling under the same
+      parent covers the same cells in the other batch (see
+      :func:`_compute_l0_batch_split`).
+
+    A factor is ``suggested`` when *either* signature fires. Only diagnostics
+    already stored in ``factor_obs`` plus the model's own cell scores are used
+    — no raw counts or expression values are read.
+
+    Only the within-cell-type signature needs batches. Without a ``batch_key``
+    the cross-cell-type rule still applies on its own, ``batch_split_corr``
+    stays ``NaN``, and the batch-specific columns are omitted.
+
+    Args:
+        model: scDEF model instance (fitted).
+        batch_key: optional key in ``adata.obs`` holding the batch labels. Used
+            to run :func:`factor_diagnostics` when the batch-split columns are
+            missing, and to report each factor's dominant batch. When ``None``,
+            only the cross-cell-type rule can fire and the ``dom_batch`` /
+            ``frac_dom_batch`` columns are not produced.
+        celltype_key: optional key in ``adata.obs``; when given, a ``cell_type``
+            column reports each factor's majority label (useful for confirming
+            that a flagged pair really is one cell type split in two).
+        batch_purity_min: reporting threshold for the ``batch_purity`` column.
+            Recorded in the result's ``.attrs`` for downstream plotting; it does
+            **not** enter the ``suggested`` rule, which would otherwise flag
+            genuinely batch-restricted biology.
+        n_eff_parents_min: minimum ``avg_n_eff_parents`` for the cross-cell-type
+            rule.
+        batch_split_min: minimum ``batch_split_corr`` for the
+            within-cell-type rule.
+
+    Returns:
+        DataFrame indexed by current layer-0 factor name with columns
+        ``n_cells``, ``dom_batch`` and ``frac_dom_batch`` (only with a
+        ``batch_key``), (optional) ``cell_type``, ``batch_purity``,
+        ``avg_n_eff_parents``, ``batch_split_corr``, ``batch_split_partner``,
+        ``batch_split_batch`` and ``suggested``, sorted by ``suggested``,
+        ``batch_split_corr`` and ``avg_n_eff_parents`` (all descending).
+
+    Example:
+        >>> cand = scdef.tl.suggest_technical_factors(
+        ...     model, batch_key="Experiment", celltype_key="SubType"
+        ... )
+        >>> splits = cand.index[cand["batch_split_corr"].fillna(0) >= 0.6]
+    """
+    if batch_key is not None and batch_key not in model.adata.obs.columns:
+        raise KeyError(
+            f"batch_key '{batch_key}' not found in model.adata.obs. "
+            f"Available keys: {list(model.adata.obs.columns)}"
+        )
+    if celltype_key is not None and celltype_key not in model.adata.obs.columns:
+        raise KeyError(
+            f"celltype_key '{celltype_key}' not found in model.adata.obs. "
+            f"Available keys: {list(model.adata.obs.columns)}"
+        )
+
+    factor_obs = model.adata.uns.get("factor_obs")
+    if factor_obs is None or "batch_split_corr" not in factor_obs.columns:
+        factor_diagnostics(model, batch_key=batch_key)
+        factor_obs = model.adata.uns["factor_obs"]
+
+    l0_name = model.layer_names[0]
+    has_meta = (
+        "child_layer" in factor_obs.columns
+        and "original_factor_idx" in factor_obs.columns
+    )
+    row_by_orig: Dict[int, str] = {}
+    if has_meta:
+        l0_rows = factor_obs.index[factor_obs["child_layer"] == l0_name]
+        for row_name in l0_rows:
+            row_by_orig[int(factor_obs.at[row_name, "original_factor_idx"])] = row_name
+
+    # Same hard-assignment convention as the batch metrics in factor_diagnostics.
+    z_means_full = np.asarray(model.local_params[1][0], dtype=float)
+    offsets = np.cumsum([0] + [int(s) for s in model.layer_sizes]).astype(int)
+    layer_scores = z_means_full[:, int(offsets[0]) : int(offsets[1])]
+    winner = np.argmax(layer_scores, axis=1)
+
+    batch_values = (
+        model.adata.obs[batch_key].to_numpy() if batch_key is not None else None
+    )
+    celltype_values = (
+        model.adata.obs[celltype_key].to_numpy() if celltype_key is not None else None
+    )
+
+    def _row_value(orig: int, column: str, default):
+        row_name = row_by_orig.get(int(orig))
+        if row_name is None or column not in factor_obs.columns:
+            return default
+        value = factor_obs.at[row_name, column]
+        if value is None or (np.isscalar(value) and pd.isna(value)):
+            return default
+        return value
+
+    key_to_current = _current_name_by_factor_obs_key(model)
+    records: List[Dict[str, Any]] = []
+    index: List[str] = []
+    for slot, orig in enumerate(np.asarray(model.factor_lists[0], dtype=int)):
+        orig = int(orig)
+        name = str(model.factor_names[0][slot])
+        cells = np.where(winner == orig)[0]
+
+        record: Dict[str, Any] = {"n_cells": int(cells.size)}
+        if batch_values is not None:
+            dom_batch = ""
+            frac_dom_batch = np.nan
+            if cells.size > 0:
+                values = pd.Series(batch_values[cells]).dropna()
+                if len(values) > 0:
+                    counts = values.value_counts()
+                    dom_batch = str(counts.index[0])
+                    frac_dom_batch = float(counts.iloc[0] / counts.sum())
+            record["dom_batch"] = dom_batch
+            record["frac_dom_batch"] = frac_dom_batch
+        if celltype_values is not None:
+            cell_type = ""
+            if cells.size > 0:
+                values = pd.Series(celltype_values[cells]).dropna()
+                if len(values) > 0:
+                    cell_type = str(values.value_counts().index[0])
+            record["cell_type"] = cell_type
+
+        record["batch_purity"] = float(_row_value(orig, "batch_purity", np.nan))
+        record["avg_n_eff_parents"] = float(
+            _row_value(orig, "avg_n_eff_parents", np.nan)
+        )
+        record["batch_split_corr"] = float(_row_value(orig, "batch_split_corr", np.nan))
+
+        # Report the partner under its current model name, so it can be looked
+        # up in this same frame.
+        partner_row = str(_row_value(orig, "batch_split_partner", ""))
+        partner_name = ""
+        if partner_row and partner_row in factor_obs.index:
+            if has_meta:
+                partner_key = (
+                    str(factor_obs.at[partner_row, "child_layer"]),
+                    int(factor_obs.at[partner_row, "original_factor_idx"]),
+                )
+                partner_name = str(key_to_current.get(partner_key, ""))
+            else:
+                partner_name = partner_row
+        record["batch_split_partner"] = partner_name
+        record["batch_split_batch"] = str(_row_value(orig, "batch_split_batch", ""))
+
+        cross_celltype = record["avg_n_eff_parents"] >= float(n_eff_parents_min)
+        within_celltype = record["batch_split_corr"] >= float(batch_split_min)
+        record["suggested"] = bool(cross_celltype or within_celltype)
+
+        records.append(record)
+        index.append(name)
+
+    result = pd.DataFrame(records, index=pd.Index(index, name=l0_name))
+    if len(result) > 0:
+        result = result.sort_values(
+            ["suggested", "batch_split_corr", "avg_n_eff_parents"],
+            ascending=False,
+        )
+    result.attrs["batch_key"] = None if batch_key is None else str(batch_key)
+    result.attrs["batch_purity_min"] = float(batch_purity_min)
+    result.attrs["n_eff_parents_min"] = float(n_eff_parents_min)
+    result.attrs["batch_split_min"] = float(batch_split_min)
+    return result
 
 
 def drop_technical(model: "scDEF") -> None:
