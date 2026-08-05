@@ -2475,17 +2475,39 @@ def set_technical_factors(
 
     model.adata.uns.pop("confident_signatures", None)
 
-    # Get complete hierarchy
+    # Propagate upwards: a parent whose children are all technical is technical.
+    #
+    # `get_hierarchy` speaks *current* model names while `factor_obs` is keyed by
+    # the names in place when diagnostics ran, so every name is resolved before
+    # use. Parents are visited bottom-up (by layer) so that a newly technical
+    # parent propagates to its own parent in the same pass.
     complete_hierarchy = get_hierarchy(model, simplified=False)
-    # Traverse hierarchy. If all the children of a factor are technical, set the factor as technical.
-    for factor, children in complete_hierarchy.items():
-        if all(
-            [
-                model.adata.uns["factor_obs"].loc[child, "technical"]
-                for child in children
-            ]
-        ):
-            model.adata.uns["factor_obs"].loc[factor, "technical"] = True
+    layer_of_name: Dict[str, int] = {}
+    for layer_idx, names in enumerate(model.factor_names):
+        for name in names:
+            layer_of_name[str(name)] = layer_idx
+
+    factor_obs = model.adata.uns["factor_obs"]
+    for parent in sorted(
+        complete_hierarchy, key=lambda name: layer_of_name.get(str(name), 0)
+    ):
+        children = list(complete_hierarchy[parent])
+        # A parent with no children carries no evidence of being technical.
+        if len(children) == 0:
+            continue
+        parent_rows, parent_unknown = _resolve_factor_obs_names(model, [parent])
+        if parent_unknown or not parent_rows:
+            continue
+        parent_row = parent_rows[0]
+        if parent_row not in factor_obs.index:
+            continue
+        child_rows, child_unknown = _resolve_factor_obs_names(model, children)
+        # Conservative: an unknown-status child must never sweep its parent into
+        # the technical set.
+        if child_unknown or len(child_rows) != len(children):
+            continue
+        if all(bool(factor_obs.loc[row, "technical"]) for row in child_rows):
+            factor_obs.loc[parent_row, "technical"] = True
 
     model.annotate_adata()
 
