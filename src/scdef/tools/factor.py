@@ -1484,6 +1484,9 @@ def assign_confident(
     credible_level: float = 0.9,
     key_added: str = "confident",
     rng_key=None,
+    exclude_technical: bool = False,
+    exclude_batch_technical: bool = False,
+    batch_technical_top_layer: Optional[int] = None,
 ) -> None:
     """Pick the finest scDEF layer at which each cell is confidently assigned.
 
@@ -1491,6 +1494,9 @@ def assign_confident(
     ``model.factor_lists[k]``), draws ``n_samples`` reparameterized samples
     ``z^(s) ~ q(z_{c,k})`` from the log-normal variational posterior and
     normalizes each sample: ``ẑ^(s) = z^(s) / sum(z^(s))``.
+    ``exclude_technical`` / ``exclude_batch_technical`` narrow that per-layer
+    candidate set further, and all scores below are then computed among the
+    remaining factors only.
 
     The confidence score is defined on the **gap** between the
     cell-level winner and its nearest competitor, so the score is
@@ -1557,8 +1563,10 @@ def assign_confident(
     - ``adata.obsm[f"{key_added}_entropy_confidence"]`` — ``(n_cells, n_layers)``
       float. Diagnostic: normalized-entropy score.
     - ``adata.obsm[f"{key_added}_argmax_factor"]`` — ``(n_cells, n_layers)`` int,
-      slot indices into the filtered factor list of each layer (``-1`` if the
-      layer has no kept factors).
+      slot indices into the *effective* candidate list of each layer — the
+      filtered factor list minus any factors excluded by
+      ``exclude_technical`` / ``exclude_batch_technical`` (``-1`` if the layer
+      has no candidates left).
     - ``adata.obs[f"{key_added}_confidence_{layer_name}"]`` per layer.
     - ``adata.obs[f"{key_added}_argmax_{layer_name}"]`` per layer (factor name).
     - ``adata.obs[f"{key_added}_best_layer"]`` — layer name of the chosen layer.
@@ -1598,6 +1606,28 @@ def assign_confident(
         key_added: prefix used for all written keys in ``adata``.
         rng_key: optional ``jax.random`` key; if ``None``, derived from
             ``model.seed``.
+        exclude_technical: if True, factors marked ``technical`` in
+            ``factor_obs`` (see :func:`set_technical_factors`) are removed from
+            the candidate set at **every** layer, so no cell is ever assigned to
+            an ambient/stress program. Confidence is then computed among the
+            remaining factors only.
+        exclude_batch_technical: if True, factors marked ``batch_technical``
+            (see :func:`set_batch_technical_factors`) are removed from the
+            candidate set at every layer **below** ``batch_technical_top_layer``,
+            and any cell whose layer-0 winner is one of them is rolled up to
+            that layer. Per-batch splits only exist below the roll-up layer, so
+            the flag is deliberately not applied at or above it.
+        batch_technical_top_layer: layer index the batch-technical roll-up
+            targets. Defaults to ``adata.uns['batch_technical_top_layer']``
+            (recorded by ``decompose_batch_effects`` /
+            :func:`set_batch_technical_factors`), else ``1``.
+
+    Example:
+        >>> # After flagging per-batch splits, their cells attach to the
+        >>> # batch-corrected L1 parent instead of overshooting to the root.
+        >>> scdef.tl.set_batch_technical_factors(model, splits, top_layer=1)
+        >>> scdef.tl.assign_confident(model, exclude_batch_technical=True)
+        >>> model.adata.obs["confident_best_layer"].value_counts()
     """
     import jax
     import jax.numpy as jnp
@@ -1635,9 +1665,46 @@ def assign_confident(
 
     layer_rng_keys = random.split(rng_key, max(n_layers, 1))
 
+    # Effective per-layer candidate sets. Technical factors are dropped
+    # everywhere; batch-technical factors only below the roll-up layer, which
+    # still carries the batch-corrected signal those cells belong to.
+    factor_obs = model.adata.uns.get("factor_obs")
+
+    technical_names: set = set()
+    if exclude_technical:
+        technical_names = set(get_technical_drop_factors(model))
+
+    bt_names: set = set()
+    if (
+        exclude_batch_technical
+        and factor_obs is not None
+        and "batch_technical" in factor_obs.columns
+    ):
+        bt_rows = factor_obs.index[factor_obs["batch_technical"].astype(bool)].tolist()
+        bt_names = set(_factor_obs_rows_to_current_names(model, bt_rows))
+
+    if batch_technical_top_layer is None:
+        bt_top_layer = int(model.adata.uns.get("batch_technical_top_layer", 1))
+    else:
+        bt_top_layer = int(batch_technical_top_layer)
+    bt_top_layer = int(np.clip(bt_top_layer, 0, max(n_layers - 1, 0)))
+
+    eff_lists: List[np.ndarray] = []
+    eff_names: List[List[str]] = []
+    for i in range(n_layers):
+        layer_factor_list = np.asarray(model.factor_lists[i], dtype=int)
+        keep_slots = [
+            slot
+            for slot, name in enumerate(model.factor_names[i])
+            if name not in technical_names
+            and not (name in bt_names and i < bt_top_layer)
+        ]
+        eff_lists.append(layer_factor_list[np.asarray(keep_slots, dtype=int)])
+        eff_names.append([str(model.factor_names[i][slot]) for slot in keep_slots])
+
     for layer_idx in range(n_layers):
         start = int(sum(layer_sizes[:layer_idx]))
-        kept = np.asarray(model.factor_lists[layer_idx], dtype=int)
+        kept = np.asarray(eff_lists[layer_idx], dtype=int)
         K_k = int(len(kept))
         if K_k == 0:
             continue
@@ -1658,7 +1725,7 @@ def assign_confident(
             winner_prob_mat[:, layer_idx] = 1.0
             entropy_conf_mat[:, layer_idx] = 1.0
             argmax_mat[:, layer_idx] = argmax_slot
-            names_arr = np.asarray(model.factor_names[layer_idx], dtype=object)
+            names_arr = np.asarray(eff_names[layer_idx], dtype=object)
             label_mat[:, layer_idx] = names_arr[argmax_slot]
             continue
 
@@ -1747,7 +1814,7 @@ def assign_confident(
         winner_prob_mat[:, layer_idx] = winner_prob
         entropy_conf_mat[:, layer_idx] = entropy_conf
         argmax_mat[:, layer_idx] = argmax_slot
-        names_arr = np.asarray(model.factor_names[layer_idx], dtype=object)
+        names_arr = np.asarray(eff_names[layer_idx], dtype=object)
         label_mat[:, layer_idx] = names_arr[argmax_slot]
 
     # Per-cell aggregation across layers.
@@ -1761,11 +1828,11 @@ def assign_confident(
     #      catch-all for cells not confidently assigned at any finer
     #      multi-factor layer.
     is_primary_layer = np.asarray(
-        [len(model.factor_lists[i]) >= 2 for i in range(n_layers)],
+        [len(eff_lists[i]) >= 2 for i in range(n_layers)],
         dtype=bool,
     )
     has_factors = np.asarray(
-        [len(model.factor_lists[i]) > 0 for i in range(n_layers)],
+        [len(eff_lists[i]) > 0 for i in range(n_layers)],
         dtype=bool,
     )
 
@@ -1812,6 +1879,36 @@ def assign_confident(
         )
         best_label[idxs] = label_mat[idxs, sel]
 
+    # Roll-up cap for batch-technical splits. A cell owned by a per-batch split
+    # at L0 belongs to that split's batch-corrected parent, so pin it there
+    # deterministically. Without this, dropping the split halves from the
+    # candidate set leaves those cells ambiguous among the remaining L0 factors
+    # and the finest-clears-tau rule overshoots all the way to the root.
+    if len(bt_names) > 0 and len(eff_lists[bt_top_layer]) > 0:
+        l0_name = layer_names[0]
+        l0_scores_key = f"X_{l0_name}"
+        if l0_scores_key in model.adata.obsm:
+            l0_scores = np.asarray(model.adata.obsm[l0_scores_key], dtype=float)
+        else:
+            l0_scores = np.asarray(model.pmeans[f"{l0_name}z"], dtype=float)
+            l0_kept = np.asarray(model.factor_lists[0], dtype=int)
+            if l0_scores.shape[1] != l0_kept.size:
+                l0_scores = l0_scores[:, l0_kept]
+        # argmax over ALL kept L0 factors, including the flagged splits.
+        l0_all_names = np.asarray(model.factor_names[0], dtype=object)
+        if l0_scores.shape[1] == l0_all_names.size:
+            l0_winner_name = l0_all_names[np.argmax(l0_scores, axis=1)]
+            rolled = np.isin(l0_winner_name, np.asarray(sorted(bt_names), dtype=object))
+            if np.any(rolled):
+                idxs = np.where(rolled)[0]
+                best_layer_idx[idxs] = bt_top_layer
+                best_confidence[idxs] = confidence_mat[idxs, bt_top_layer]
+                best_effect_size[idxs] = effect_size_mat[idxs, bt_top_layer]
+                best_posterior_sd[idxs] = posterior_sd_mat[idxs, bt_top_layer]
+                best_factor_slot[idxs] = argmax_mat[idxs, bt_top_layer]
+                best_layer_name[idxs] = layer_names[bt_top_layer]
+                best_label[idxs] = label_mat[idxs, bt_top_layer]
+
     depth_score = np.full(n_cells, np.nan, dtype=float)
     if n_layers <= 1:
         depth_score[best_layer_idx >= 0] = 0.0
@@ -1851,6 +1948,11 @@ def assign_confident(
         "layer_sizes_filtered": [
             int(len(model.factor_lists[i])) for i in range(n_layers)
         ],
+        "layer_sizes_effective": [int(len(eff_lists[i])) for i in range(n_layers)],
+        "exclude_technical": bool(exclude_technical),
+        "exclude_batch_technical": bool(exclude_batch_technical),
+        "batch_technical_top_layer": int(bt_top_layer),
+        "n_batch_technical_factors": int(len(bt_names)),
         "tau": float(tau),
         "n_samples": int(n_samples),
         "credible_level": float(credible_level),
@@ -2386,6 +2488,83 @@ def set_technical_factors(
             model.adata.uns["factor_obs"].loc[factor, "technical"] = True
 
     model.annotate_adata()
+
+
+def set_batch_technical_factors(
+    model: "scDEF",
+    factors: Sequence[str],
+    top_layer: int = 1,
+) -> None:
+    """Mark layer-0 factors as *batch*-technical (per-batch splits of one type).
+
+    Unlike :func:`set_technical_factors`, this flag does **not** propagate up the
+    tree and no factor is deleted. Batch-technical factors are the per-batch
+    halves produced by :meth:`scDEF.decompose_batch_effects`: they only exist
+    below ``top_layer``, because the ``top_layer`` re-learned by decomposition
+    still carries the batch-*corrected* cell-type signal. That layer is therefore
+    the roll-up target, and propagating the flag into it would throw away the
+    very signal the roll-up depends on.
+
+    Sets ``factor_obs['batch_technical']`` and records
+    ``adata.uns['batch_technical_top_layer']``, both consumed by
+    :func:`assign_confident` via ``exclude_batch_technical=True``.
+
+    Args:
+        model: scDEF model instance.
+        factors: factor names to flag. Names are resolved against the current
+            ``model.factor_names`` (see :func:`_resolve_factor_obs_names`), so
+            names taken from a filtered model are safe.
+        top_layer: the layer that carries the batch-corrected signal, i.e. the
+            roll-up target. Matches the ``top_layer`` passed to
+            ``decompose_batch_effects`` (default ``1`` = L1).
+
+    Raises:
+        ValueError: if any name in ``factors`` cannot be resolved.
+
+    Example:
+        >>> import scdef
+        >>> # Stage 1: batch-corrected reference fit.
+        >>> ref = scdef.scDEF(adata, counts_layer="counts", batch_key="Experiment")
+        >>> ref.fit()
+        >>> # Stage 2: re-learn L0/L1 without the batch key to expose batch programs.
+        >>> model = scdef.scDEF.decompose_batch_effects(ref, top_layer=1)
+        >>> # Surface the per-batch splits and flag them.
+        >>> cand = scdef.tl.suggest_technical_factors(model, batch_key="Experiment")
+        >>> splits = cand.index[cand["batch_split_corr"].fillna(0) >= 0.6]
+        >>> scdef.tl.set_batch_technical_factors(model, splits, top_layer=1)
+        >>> # Cells owned by a split are assigned at their L1 parent instead.
+        >>> scdef.tl.assign_confident(model, exclude_batch_technical=True)
+    """
+    if "factor_obs" not in model.adata.uns:
+        factor_diagnostics(model)
+    factor_obs = model.adata.uns["factor_obs"]
+    factor_obs["batch_technical"] = False
+
+    names = [str(name) for name in factors]
+    if len(names) > 0:
+        resolved, unknown = _resolve_factor_obs_names(model, names)
+        if len(unknown) > 0:
+            raise ValueError(
+                "Unknown factor name(s) in `factors`: " + ", ".join(map(str, unknown))
+            )
+        factor_obs.loc[resolved, "batch_technical"] = True
+
+    model.adata.uns["factor_obs"] = factor_obs
+    model.adata.uns["batch_technical_top_layer"] = int(top_layer)
+
+
+def _batch_technical_l0_slots(model: "scDEF") -> List[int]:
+    """Slots into ``model.factor_names[0]`` of the batch-technical L0 factors."""
+    factor_obs = model.adata.uns.get("factor_obs")
+    if factor_obs is None or "batch_technical" not in factor_obs.columns:
+        return []
+    rows = factor_obs.index[factor_obs["batch_technical"].astype(bool)].tolist()
+    if len(rows) == 0:
+        return []
+    flagged = set(_factor_obs_rows_to_current_names(model, rows))
+    return [
+        slot for slot, name in enumerate(model.factor_names[0]) if str(name) in flagged
+    ]
 
 
 def suggest_technical_factors(

@@ -541,6 +541,10 @@ def decompose_batch_effects(
     model.clear_runtime_cache(clear_jax_cache=False)
     model._has_fit = True
     model._fit_revision = getattr(model, "_fit_revision", 0) + 1
+    # Layers below `top_layer` are the ones re-learned without a batch key, so
+    # that is where per-batch splits can appear; `top_layer` itself still holds
+    # the batch-corrected signal and is the roll-up target for those splits.
+    model.adata.uns["batch_technical_top_layer"] = int(top_layer)
     return model
 
 
