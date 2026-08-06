@@ -14,6 +14,7 @@ from .hierarchy import (
 )
 from .factor import (
     assign_confident,
+    filter_factors,
     annotate_factors,
     get_factor_annotations,
     compute_within_group_pairwise_dissimilarity,
@@ -48,8 +49,14 @@ from .trajectory import (
 from .batch import get_batch_specific_genes_from_gene_scale
 from .lineage import get_lineage_factors, get_global_factors
 
+# `filter` is the ergonomic alias; the function is defined as
+# `filter_factors` so it does not shadow the builtin inside factor.py.
+filter = filter_factors
+
 __all__ = [
     "assign_confident",
+    "filter",
+    "filter_factors",
     "annotate_factors",
     "get_factor_annotations",
     "multilayer_umap",

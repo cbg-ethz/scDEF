@@ -871,6 +871,19 @@ def factor_diagnostics(
 
     if "original_factor_idx" in factor_obs_l0.columns:
         factor_obs_l0 = factor_obs_l0.sort_values("original_factor_idx")
+        if not all_factors:
+            # factor_diagnostics keeps rows for every original L0 factor so that
+            # a filter can be re-widened; the default view must still show only
+            # the factors the model currently keeps.
+            kept_l0 = set(int(o) for o in model.factor_lists[0])
+            factor_obs_l0 = factor_obs_l0[
+                factor_obs_l0["original_factor_idx"].astype(int).isin(kept_l0)
+            ]
+            if len(factor_obs_l0) == 0:
+                raise ValueError(
+                    "No kept layer-0 factors found in factor_obs. Re-run "
+                    "scdef.tools.factor_diagnostics(model) after filtering."
+                )
 
     labels = factor_obs_l0.index.to_numpy()
     if (

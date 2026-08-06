@@ -265,8 +265,10 @@ def _get_confident_signature_rankings_layer(model, layer_idx, top_genes_layer):
         # factor set changed under a cache keyed by the old names.
         raise KeyError(
             "No factor signatures found (they are cleared when filter_factors "
-            "changes the factor set). Run "
-            "scd.tl.factor_diagnostics(model, batch_key=...) before make_graph."
+            "changes the factor set). Run scd.tl.set_confident_signatures(model) "
+            "to rebuild just the signatures, or "
+            "scd.tl.factor_diagnostics(model, batch_key=...) to also refresh the "
+            "per-factor diagnostics."
         ) from exc
     rankings = []
     scores = []

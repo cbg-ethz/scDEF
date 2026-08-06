@@ -3863,9 +3863,16 @@ class scDEF(object):
                     )
 
             if len(keep_idx) == 0:
-                self.logger.info(
-                    f"No factors in layer {i} satisfy the filtering criterion. Please adjust the filtering parameters."
-                    f"Keeping all factors for layer {i} for now."
+                # This restores the FULL original layer, not the previously kept
+                # subset, so an over-strict threshold hands back more factors
+                # than you started with. Warn rather than log quietly.
+                self.logger.warning(
+                    "No factors in layer %s satisfy the filtering criteria, so "
+                    "all %d original factors of that layer are kept — including "
+                    "any previously filtered out. Loosen the thresholds to "
+                    "actually filter this layer.",
+                    layer_name,
+                    int(self.layer_sizes[i]),
                 )
                 keep_idx = np.arange(self.layer_sizes[i])
             new_factor_lists.append(keep_idx)
@@ -3918,7 +3925,8 @@ class scDEF(object):
         if dropped and hasattr(self, "logger"):
             self.logger.info(
                 "filter_factors: cleared name-keyed caches (%s). Re-run "
-                "scdef.tools.factor_diagnostics before plotting signatures.",
+                "scdef.tools.set_confident_signatures to rebuild signatures, or "
+                "scdef.tools.factor_diagnostics for the full diagnostics.",
                 ", ".join(sorted(set(dropped))),
             )
 

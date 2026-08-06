@@ -905,7 +905,12 @@ def _compute_l0_batch_split(
     if w1.ndim != 2 or z0.ndim != 2 or w1.shape[1] != z0.shape[1]:
         return
 
-    winner = np.argmax(z0, axis=1)
+    # Same cell partition as n_cells / the batch metrics: argmax over the kept
+    # factors only, so a dropped factor never claims cells.
+    kept_l0 = np.asarray(model.factor_lists[0], dtype=int)
+    if kept_l0.size == 0:
+        return
+    winner = kept_l0[np.argmax(z0[:, kept_l0], axis=1)]
     logz = np.log1p(np.clip(z0, 0.0, None))
 
     if "child_layer" in factor_obs.columns:
@@ -1272,10 +1277,17 @@ def factor_diagnostics(
                 ):
                     continue
 
+                # Use the SAME cell partition as `n_cells`: argmax over the
+                # factors the model currently keeps. Scoring against the full
+                # layer would attribute cells to dropped factors and would give
+                # kept factors a different denominator than their own n_cells.
+                kept_layer = np.asarray(model.factor_lists[layer_idx], dtype=int)
+                if original_factor_idx not in kept_layer:
+                    continue  # dropped factor: leave its batch metrics as NaN
                 start = int(offsets[layer_idx])
                 end = int(offsets[layer_idx + 1])
-                layer_scores = z_means_full[:, start:end]
-                winner = np.argmax(layer_scores, axis=1)
+                layer_scores = z_means_full[:, start:end][:, kept_layer]
+                winner = kept_layer[np.argmax(layer_scores, axis=1)]
                 selected_cells = np.where(winner == original_factor_idx)[0]
                 if selected_cells.size == 0:
                     continue
@@ -2981,8 +2993,9 @@ def suggest_technical_factors(
     # Same hard-assignment convention as the batch metrics in factor_diagnostics.
     z_means_full = np.asarray(model.local_params[1][0], dtype=float)
     offsets = np.cumsum([0] + [int(s) for s in model.layer_sizes]).astype(int)
-    layer_scores = z_means_full[:, int(offsets[0]) : int(offsets[1])]
-    winner = np.argmax(layer_scores, axis=1)
+    kept_l0 = np.asarray(model.factor_lists[0], dtype=int)
+    layer_scores = z_means_full[:, int(offsets[0]) : int(offsets[1])][:, kept_l0]
+    winner = kept_l0[np.argmax(layer_scores, axis=1)]
 
     batch_values = (
         model.adata.obs[batch_key].to_numpy() if batch_key is not None else None
@@ -3077,6 +3090,45 @@ def suggest_technical_factors(
     result.attrs["batch_split_min"] = float(batch_split_min)
     result.attrs["min_batch_frac"] = float(min_batch_frac)
     return result
+
+
+def filter_factors(
+    model: "scDEF",
+    batch_key: Optional[str] = None,
+    diagnostics_kwargs: Optional[Mapping[str, Any]] = None,
+    **filter_kwargs: Any,
+) -> None:
+    """Filter factors and refresh the diagnostics and signatures in one step.
+
+    ``model.filter_factors`` renames factors, which invalidates everything keyed
+    by those names — the stored signatures, the hierarchies, and the frozen
+    upper-layer subset used by :func:`factor_diagnostics`. Calling the two
+    separately leaves the model in that in-between state, where
+    ``scd.pl.make_graph(show_signatures=True)`` raises until diagnostics are
+    re-run. This wrapper does both, so the model is immediately usable::
+
+        scd.tl.filter(model, batch_key="Experiment", brd_min=1.0)
+
+    Equivalent to::
+
+        model.filter_factors(brd_min=1.0)
+        scd.tl.factor_diagnostics(model, batch_key="Experiment")
+
+    Args:
+        model: scDEF model instance.
+        batch_key: passed to :func:`factor_diagnostics`; needed for the batch
+            metrics (``batch_purity``, ``frac_dom_batch``, ``batch_split_corr``).
+        diagnostics_kwargs: optional extra keyword arguments for
+            :func:`factor_diagnostics` (e.g. ``{"mc_samples": 200}``).
+        **filter_kwargs: forwarded to :meth:`scDEF.filter_factors`
+            (``brd_min``, ``ard_min``, ``n_eff_parents_max``, ``keep``, ...).
+
+    Example:
+        >>> scdef.tl.filter(model, batch_key="Experiment", brd_min=1.0)
+        >>> scdef.pl.make_graph(model, show_signatures=True)   # works right away
+    """
+    model.filter_factors(**filter_kwargs)
+    factor_diagnostics(model, batch_key=batch_key, **(diagnostics_kwargs or {}))
 
 
 def drop_technical(model: "scDEF") -> None:
