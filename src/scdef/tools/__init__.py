@@ -15,6 +15,7 @@ from .hierarchy import (
 from .factor import (
     assign_confident,
     filter_factors,
+    rollup_batch_factors,
     annotate_factors,
     get_factor_annotations,
     compute_within_group_pairwise_dissimilarity,
@@ -57,6 +58,7 @@ __all__ = [
     "assign_confident",
     "filter",
     "filter_factors",
+    "rollup_batch_factors",
     "annotate_factors",
     "get_factor_annotations",
     "multilayer_umap",

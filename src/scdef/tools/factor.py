@@ -2732,6 +2732,8 @@ def corrected_factor_representation(
     model: "scDEF",
     reduce: Literal["sum", "max"] = "sum",
     key_added: str = "X_L0_corrected",
+    add_labels: bool = True,
+    labels_key_added: str = "batch_corrected",
 ) -> Tuple[np.ndarray, List[str]]:
     """Fold per-batch technical splits into single columns, in score space.
 
@@ -2761,6 +2763,14 @@ def corrected_factor_representation(
             takes the per-cell peak instead. The two differ only for cells
             carrying real mass on *both* halves, where ``"sum"`` reports the
             combined program and ``"max"`` the stronger half alone.
+        add_labels: also write the cell-level roll-up labels via
+            :func:`rollup_batch_factors` (``"L0_batch_corrected"`` and
+            ``"batch_corrected"`` in ``adata.obs``), so the correction can be
+            plotted directly. Skipped with an info log when no factors are
+            flagged. Internal callers that only need the matrix (the folded
+            heatmap and UMAP) pass ``False`` so plotting never mutates ``obs``.
+        labels_key_added: ``key_added`` forwarded to
+            :func:`rollup_batch_factors`.
         key_added: ``adata.obsm`` key for the corrected matrix. The column
             labels are stored in ``adata.uns[key_added + '_factors']``, and the
             factor names that were merged in
@@ -2882,7 +2892,20 @@ def corrected_factor_representation(
         labels.append("+".join(member_names))
         column_members.append(member_names)
 
-    return _store(np.column_stack(columns).astype(float), labels, column_members)
+    result = _store(np.column_stack(columns).astype(float), labels, column_members)
+    if add_labels:
+        # Materialise the same correction as cell-level obs columns, so the
+        # folded assignment can be plotted straight away. Best-effort: this is a
+        # convenience, not a precondition of the returned matrix.
+        try:
+            rollup_batch_factors(model, key_added=labels_key_added)
+        except ValueError as exc:
+            if hasattr(model, "logger"):
+                model.logger.info(
+                    "corrected_factor_representation: skipped the obs labels (%s)",
+                    exc,
+                )
+    return result
 
 
 def suggest_technical_factors(
@@ -3090,6 +3113,178 @@ def suggest_technical_factors(
     result.attrs["batch_split_min"] = float(batch_split_min)
     result.attrs["min_batch_frac"] = float(min_batch_frac)
     return result
+
+
+def _factor_name_sort_key(name: str) -> Tuple[int, int, str]:
+    """Sort factor names by their numeric suffix (``L0_7`` before ``L0_14``)."""
+    tail = str(name).rsplit("_", 1)[-1]
+    if tail.isdigit():
+        return (0, int(tail), str(name))
+    return (1, 0, str(name))
+
+
+def _l0_to_top_layer_weights(model: "scDEF", top_layer: int) -> np.ndarray:
+    """Connection weights from every L0 factor up to the kept ``top_layer`` factors.
+
+    Returns an ``(n_kept_top, n_L0)`` matrix. For ``top_layer == 1`` this is just
+    ``pmeans['L1W']`` restricted to the kept L1 rows; above that the per-layer
+    ``W`` slices are chained the same way :func:`_get_layer_term_means`
+    propagates loadings, always restricted to the currently kept factors.
+    """
+    weights = np.asarray(
+        model.pmeans[f"{model.layer_names[1]}W"], dtype=float
+    )  # (n_L1, n_L0)
+    weights = weights[np.asarray(model.factor_lists[1], dtype=int), :]
+    for layer in range(2, int(top_layer) + 1):
+        upper = np.asarray(model.pmeans[f"{model.layer_names[layer]}W"], dtype=float)[
+            np.asarray(model.factor_lists[layer], dtype=int)
+        ][:, np.asarray(model.factor_lists[layer - 1], dtype=int)]
+        weights = upper.dot(weights)
+    return weights
+
+
+def rollup_batch_factors(
+    model: "scDEF",
+    flagged: Optional[Sequence[str]] = None,
+    key_added: str = "batch_corrected",
+    base_obs: str = "L0",
+    top_layer: Optional[int] = None,
+) -> Dict[str, str]:
+    """Write batch-technical roll-up assignments to ``adata.obs``.
+
+    After :func:`set_batch_technical_factors` and
+    ``assign_confident(exclude_batch_technical=True)``, the per-batch L0 splits
+    of one cell type should be read as a single program. This materialises that
+    view as cell-level labels so it can be plotted on a UMAP.
+
+    Two columns are written. They are the **same partition** of cells, labelled
+    two ways:
+
+    - ``f"{base_obs}_{key_added}"`` (default ``"L0_batch_corrected"``): flagged
+      L0 siblings sharing a parent are merged into one ``"L0_a+L0_b"`` label;
+      every other cell keeps its ``base_obs`` label.
+    - ``key_added`` (default ``"batch_corrected"``): those same merged cells are
+      labelled by their parent factor at ``top_layer`` instead; every other cell
+      keeps its ``base_obs`` label.
+
+    Args:
+        model: scDEF model instance.
+        flagged: current L0 factor names to roll up. Defaults to the factors
+            marked ``batch_technical`` in ``factor_obs``.
+        key_added: name of the parent-labelled column; the sibling-labelled
+            column is ``f"{base_obs}_{key_added}"``.
+        base_obs: source hard-assignment column in ``adata.obs`` (default
+            ``"L0"``, written by ``annotate_adata``).
+        top_layer: parent layer the split cells roll up to. Defaults to
+            ``adata.uns['batch_technical_top_layer']``, else ``1``.
+
+    Returns:
+        ``{sibling_label: parent_name}`` — the 1-1 correspondence between the
+        two columns' merged labels.
+
+    Raises:
+        ValueError: if no factors are flagged and ``flagged`` is None, or if
+            ``base_obs`` is missing from ``adata.obs``.
+
+    Example:
+        >>> scdef.tl.set_batch_technical_factors(model, splits, top_layer=1)
+        >>> scdef.tl.assign_confident(model, exclude_batch_technical=True)
+        >>> mapping = scdef.tl.rollup_batch_factors(model)
+        >>> scdef.pl.umap(model, color=["L0_batch_corrected", "batch_corrected"])
+    """
+    if base_obs not in model.adata.obs.columns:
+        raise ValueError(
+            f"base_obs '{base_obs}' not found in adata.obs. Run "
+            "model.annotate_adata() first, or pass the column holding the "
+            "layer-0 hard assignments."
+        )
+
+    if flagged is None:
+        factor_obs = model.adata.uns.get("factor_obs")
+        rows = []
+        if factor_obs is not None and "batch_technical" in factor_obs.columns:
+            rows = factor_obs.index[factor_obs["batch_technical"].astype(bool)].tolist()
+        flagged = _factor_obs_rows_to_current_names(model, rows)
+        if len(flagged) == 0:
+            raise ValueError(
+                "No batch-technical factors are set. Run "
+                "scdef.tools.set_batch_technical_factors(model, splits) first, "
+                "or pass `flagged` explicitly."
+            )
+    flagged = [str(name) for name in flagged]
+
+    if top_layer is None:
+        top_layer = int(model.adata.uns.get("batch_technical_top_layer", 1))
+    top_layer = int(top_layer)
+    if top_layer < 1 or top_layer >= int(model.n_layers):
+        raise ValueError(
+            f"top_layer must be in [1, {int(model.n_layers) - 1}]; got {top_layer}."
+        )
+
+    weights = _l0_to_top_layer_weights(model, top_layer)
+    kept_top = np.asarray(model.factor_lists[top_layer], dtype=int)
+
+    # Resolve each flagged L0 factor to its parent at `top_layer`.
+    parent_of: Dict[str, str] = {}
+    for name in flagged:
+        key = original_key_of_factor(model, name)
+        if key is None or key[0] != 0:
+            raise ValueError(
+                f"{name!r} is not a current layer-0 factor of this model. "
+                "Roll-up applies to L0 splits."
+            )
+        orig0 = key[1]
+        if orig0 >= weights.shape[1]:
+            raise ValueError(f"{name!r} maps to an out-of-range L0 index {orig0}.")
+        parent_orig = int(kept_top[int(np.argmax(weights[:, orig0]))])
+        parent_name = current_name_of_original(model, top_layer, parent_orig)
+        if parent_name is None:
+            raise ValueError(
+                f"Could not resolve a kept parent at layer {top_layer} for {name!r}."
+            )
+        parent_of[name] = str(parent_name)
+
+    # Group flagged factors by parent: only same-parent siblings merge.
+    groups: Dict[str, List[str]] = {}
+    for name, parent in parent_of.items():
+        groups.setdefault(parent, []).append(name)
+
+    sibling_label_of: Dict[str, str] = {}
+    mapping: Dict[str, str] = {}
+    for parent, members in groups.items():
+        members = sorted(members, key=_factor_name_sort_key)
+        label = "+".join(members)
+        for member in members:
+            sibling_label_of[member] = label
+        mapping[label] = parent
+
+    base = model.adata.obs[base_obs].astype(str)
+    sibling_values = base.map(lambda v: sibling_label_of.get(v, v))
+    parent_values = base.map(lambda v: parent_of.get(v, v))
+
+    def _ordered(source: pd.Series) -> pd.Categorical:
+        # Preserve the base column's category order, with each merged label
+        # sitting where its first member was.
+        if isinstance(model.adata.obs[base_obs].dtype, pd.CategoricalDtype):
+            base_order = [str(c) for c in model.adata.obs[base_obs].cat.categories]
+        else:
+            base_order = sorted(base.unique(), key=_factor_name_sort_key)
+        categories: List[str] = []
+        for value in base_order:
+            mapped = sibling_label_of.get(value) if source is sibling_values else None
+            if source is parent_values:
+                mapped = parent_of.get(value)
+            mapped = mapped if mapped is not None else value
+            if str(mapped) not in categories:
+                categories.append(str(mapped))
+        for value in source.unique():
+            if str(value) not in categories:
+                categories.append(str(value))
+        return pd.Categorical(source.astype(str), categories=categories, ordered=True)
+
+    model.adata.obs[f"{base_obs}_{key_added}"] = _ordered(sibling_values)
+    model.adata.obs[key_added] = _ordered(parent_values)
+    return mapping
 
 
 def filter_factors(
@@ -3573,7 +3768,6 @@ def umap(
     layers: Optional[List[int]] = None,
     use_log: bool = False,
     metric: str = "euclidean",
-    merge_batch_technical: bool = False,
 ) -> None:
     """Compute UMAP embeddings for each scDEF layer.
 
@@ -3591,15 +3785,12 @@ def umap(
         use_log: whether to use log-transformed cell-factor weights for
             the neighbor graph computation.
         metric: distance metric for neighbors computation.
-        merge_batch_technical: if True, additionally embed the *corrected* layer-0
-            representation from :func:`corrected_factor_representation`, in which
-            each group of batch-technical splits is merged into one column. The
-            embedding is stored as ``adata.obsm['X_umap_L0_corrected']``;
-            batches mix where a split was technical and stay apart where the
-            batch difference is biology. This is computed **in addition** to the
-            per-layer embeddings — pass ``layers=[]`` to compute only this one.
-            With no factors flagged the corrected matrix equals ``X_L0``, so the
-            embedding matches the plain L0 one up to UMAP's own randomness.
+
+    When a corrected layer-0 representation is already present in
+    ``adata.obsm['X_L0_corrected']`` (written by
+    :func:`corrected_factor_representation`), it is embedded as well and stored
+    as ``adata.obsm['X_umap_L0_corrected']``, in addition to the per-layer
+    embeddings. This function never *builds* that representation.
     """
     if layers is None:
         layers = [
@@ -3630,9 +3821,9 @@ def umap(
         # Store under a layer-specific key
         model.adata.obsm[f"X_umap_{layer_name}"] = model.adata.obsm["X_umap"].copy()
 
-    if merge_batch_technical:
-        corrected_key = "X_L0_corrected"
-        corrected_factor_representation(model, key_added=corrected_key)
+    corrected_key = "X_L0_corrected"
+    if corrected_key in model.adata.obsm:
+        # Embed the stored corrected representation; never build it here.
         # Same recipe as the per-layer loop above, on the merged matrix.
         model.adata.obsm[f"{corrected_key}_log"] = np.log(
             model.adata.obsm[corrected_key]

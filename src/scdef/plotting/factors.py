@@ -593,36 +593,39 @@ def obs_cell_factor_heatmap(
     if merge_batch_technical:
         # Merged columns have no counterpart in model.factor_names, so the
         # normal layer-column resolution is bypassed and the corrected labels
-        # are used directly.
-        from ..tools.factor import (
-            _batch_technical_l0_slots,
-            corrected_factor_representation,
-        )
+        # are used directly. The representation is READ, never built here: run
+        # scdef.tl.corrected_factor_representation to (re)build it.
+        from ..tools.factor import _batch_technical_l0_slots
 
         corrected_key = "X_L0_corrected"
         cached_labels = model.adata.uns.get(f"{corrected_key}_factors")
         cached_merged_on = model.adata.uns.get(f"{corrected_key}_batch_technical")
-        stale = (
+        if (
             corrected_key not in model.adata.obsm
             or cached_labels is None
             or cached_merged_on is None
             or model.adata.uns.get(f"{corrected_key}_members") is None
-        )
-        if not stale:
-            # A cached matrix is reused so an explicit `reduce=` choice survives,
-            # but it must reflect the *current* flags: flagging or unflagging
-            # between plots would otherwise silently show the previous merging.
-            currently_flagged = {
-                str(model.factor_names[0][slot])
-                for slot in _batch_technical_l0_slots(model)
-            }
-            stale = bool(
-                {str(name) for name in cached_merged_on} != currently_flagged
-                or len(cached_labels)
-                != np.asarray(model.adata.obsm[corrected_key]).shape[1]
+        ):
+            raise KeyError(
+                f"No corrected factor representation in adata.obsm['{corrected_key}']. "
+                "Run scdef.tl.corrected_factor_representation(model) first."
             )
-        if stale:
-            corrected_factor_representation(model, key_added=corrected_key)
+        # The stored matrix must reflect the *current* flags: flagging or
+        # unflagging between plots would otherwise silently show the previous
+        # merging. Report rather than silently rebuilding.
+        currently_flagged = {
+            str(model.factor_names[0][slot])
+            for slot in _batch_technical_l0_slots(model)
+        }
+        if {str(name) for name in cached_merged_on} != currently_flagged or len(
+            cached_labels
+        ) != np.asarray(model.adata.obsm[corrected_key]).shape[1]:
+            raise ValueError(
+                f"adata.obsm['{corrected_key}'] is stale: it was built for a "
+                f"different set of batch-technical factors than the model "
+                "currently has. Re-run "
+                "scdef.tl.corrected_factor_representation(model)."
+            )
         full_matrix = np.asarray(model.adata.obsm[corrected_key], dtype=float)
         if values == "prob":
             # Same normalization as scDEF.normalize_cellscores, applied *after*
