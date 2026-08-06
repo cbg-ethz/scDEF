@@ -131,6 +131,49 @@ def _confidence_mean_score(
     return means * significance
 
 
+def factor_obs_row_label(layer_name: str, original_factor_idx: int) -> str:
+    """Stable ``factor_obs`` row label for a factor.
+
+    Keyed by the *original* factor index, which never changes, rather than by
+    the contiguous ``model.factor_names`` entry, which ``filter_factors``
+    rewrites. This is the canonical key for everything stored per factor.
+    """
+    return f"{layer_name}_{int(original_factor_idx)}"
+
+
+def original_key_of_factor(
+    model: "scDEF", factor_name: str
+) -> Optional[Tuple[int, int]]:
+    """``current name -> (layer_idx, original_factor_idx)``, or None if unknown."""
+    for layer_idx, names in enumerate(model.factor_names):
+        for slot, name in enumerate(names):
+            if str(name) == str(factor_name):
+                return layer_idx, int(model.factor_lists[layer_idx][slot])
+    return None
+
+
+def current_name_of_original(
+    model: "scDEF", layer_idx: int, original_factor_idx: int
+) -> Optional[str]:
+    """``(layer_idx, original_factor_idx) -> current name``, or None if dropped."""
+    if layer_idx < 0 or layer_idx >= len(model.factor_names):
+        return None
+    factor_list = np.asarray(model.factor_lists[layer_idx], dtype=int)
+    matches = np.where(factor_list == int(original_factor_idx))[0]
+    if matches.size == 0:
+        return None
+    return str(model.factor_names[layer_idx][int(matches[0])])
+
+
+def factor_obs_row_for_name(model: "scDEF", factor_name: str) -> Optional[str]:
+    """Stable ``factor_obs`` row label for a *current* model factor name."""
+    key = original_key_of_factor(model, factor_name)
+    if key is None:
+        return None
+    layer_idx, orig = key
+    return factor_obs_row_label(str(model.layer_names[layer_idx]), orig)
+
+
 def _current_name_by_factor_obs_key(model: "scDEF") -> Dict[Tuple[str, int], str]:
     """Map ``(layer_name, original_factor_idx)`` to the current model factor name.
 
@@ -462,17 +505,44 @@ def get_stored_confident_signatures(
         raise ValueError(f"layer_idx must be in [0, {model.n_layers - 1}].")
     cache = _get_confident_signatures_cache(model)
     layer_data = cache["by_layer"][str(int(layer_idx))]
+
+    # Stored keys are the stable original-index labels; translate them to the
+    # current contiguous names so callers keep working with model.factor_names.
+    # Entries whose factor is no longer kept are dropped rather than mislabelled.
+    layer_name = str(model.layer_names[layer_idx])
+    stable_to_current: Dict[str, str] = {}
+    for slot, name in enumerate(model.factor_names[layer_idx]):
+        orig = int(model.factor_lists[layer_idx][slot])
+        stable_to_current[factor_obs_row_label(layer_name, orig)] = str(name)
+
+    def _remap(d: Mapping[str, Any]) -> Dict[str, Any]:
+        out: Dict[str, Any] = {}
+        for key, value in d.items():
+            current = stable_to_current.get(str(key))
+            if current is None:
+                # Either an already-current key (legacy cache) or a factor that
+                # is no longer kept. Pass through only if it names a live factor.
+                if str(key) in stable_to_current.values():
+                    current = str(key)
+                else:
+                    continue
+            out[current] = value
+        return out
+
     signatures: Dict[str, List[str]] = {
-        k: list(v) for k, v in layer_data["signatures"].items()
+        k: list(v) for k, v in _remap(layer_data["signatures"]).items()
     }
     confidences: Dict[str, np.ndarray] = {
-        k: np.asarray(v, dtype=float) for k, v in layer_data["confidences"].items()
+        k: np.asarray(v, dtype=float)
+        for k, v in _remap(layer_data["confidences"]).items()
     }
     combined_scores: Dict[str, np.ndarray] = {
-        k: np.asarray(v, dtype=float) for k, v in layer_data["combined_scores"].items()
+        k: np.asarray(v, dtype=float)
+        for k, v in _remap(layer_data["combined_scores"]).items()
     }
     signature_confidences: Dict[str, float] = {
-        k: float(v) for k, v in layer_data.get("signature_confidences", {}).items()
+        k: float(v)
+        for k, v in _remap(layer_data.get("signature_confidences", {})).items()
     }
     if max_genes is not None:
         kmax = int(max_genes)
@@ -597,14 +667,32 @@ def set_confident_signatures(
                 mc_scores=upper_mc_scores[layer_idx],
             )
 
+        # Store under the STABLE original-index label, not the contiguous name,
+        # so a later filter_factors rename cannot re-attach these genes to a
+        # different factor. `get_stored_confident_signatures` maps back to the
+        # current names when reading.
+        layer_name = str(model.layer_names[layer_idx])
+
+        def _stable(key: str) -> str:
+            orig = original_key_of_factor(model, str(key))
+            if orig is None:
+                return str(key)
+            return factor_obs_row_label(layer_name, orig[1])
+
         cache["by_layer"][str(int(layer_idx))] = {
             "layer_name": model.layer_names[layer_idx],
-            "signatures": {k: list(v) for k, v in sigs.items()},
+            "key_scheme": "original_factor_idx",
+            "signatures": {_stable(k): list(v) for k, v in sigs.items()},
             "confidences": {
-                k: np.asarray(v, dtype=float).tolist() for k, v in confs.items()
+                _stable(k): np.asarray(v, dtype=float).tolist()
+                for k, v in confs.items()
             },
-            "combined_scores": layer_combined_scores,
-            "signature_confidences": signature_jaccard,
+            "combined_scores": {
+                _stable(k): v for k, v in layer_combined_scores.items()
+            },
+            "signature_confidences": {
+                _stable(k): v for k, v in signature_jaccard.items()
+            },
         }
 
     model.adata.uns["confident_signatures"] = cache
@@ -705,9 +793,15 @@ def lookup_factor_obs_n_cells(model: "scDEF", factor_name: str) -> Optional[int]
     factor_obs = model.adata.uns.get("factor_obs")
     if factor_obs is None or "n_cells" not in factor_obs.columns:
         return None
-    if factor_name not in factor_obs.index:
-        return None
-    value = factor_obs.at[factor_name, "n_cells"]
+    # factor_obs is keyed by the stable original-index label, so a current
+    # (contiguous) name must be resolved before lookup.
+    row = factor_obs_row_for_name(model, factor_name)
+    if row is None or row not in factor_obs.index:
+        if factor_name in factor_obs.index:
+            row = factor_name
+        else:
+            return None
+    value = factor_obs.at[row, "n_cells"]
     if pd.isna(value):
         return None
     return int(value)
@@ -1043,7 +1137,24 @@ def factor_diagnostics(
         model.factor_lists = old_factor_lists
         if old_factor_names is not None:
             model.factor_names = old_factor_names
-    model.adata.uns["factor_obs"] = res["per_factor"]
+    # Re-key by the stable (child_layer, original_factor_idx) label so the frame
+    # survives the renaming that filter_factors performs.
+    per_factor = res["per_factor"]
+    if (
+        "child_layer" in per_factor.columns
+        and "original_factor_idx" in per_factor.columns
+    ):
+        per_factor = per_factor.copy()
+        stable_index = [
+            factor_obs_row_label(str(layer), int(orig))
+            for layer, orig in zip(
+                per_factor["child_layer"], per_factor["original_factor_idx"]
+            )
+        ]
+        per_factor.index = pd.Index(stable_index, name=per_factor.index.name)
+        if "child_factor" in per_factor.columns:
+            per_factor["child_factor"] = stable_index
+    model.adata.uns["factor_obs"] = per_factor
     model.adata.uns["factor_obs"]["ARD"] = np.array(
         [np.nan] * len(model.adata.uns["factor_obs"])
     )

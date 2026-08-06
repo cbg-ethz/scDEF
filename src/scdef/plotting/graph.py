@@ -251,13 +251,23 @@ def _get_confident_signature_rankings_layer(model, layer_idx, top_genes_layer):
             [float("nan") for _ in range(n)],
         )
 
-    sigs, combined, signature_conf = get_stored_confident_signatures(
-        model,
-        layer_idx=layer_idx,
-        max_genes=int(top_genes_layer),
-        return_combined_scores=True,
-        return_signature_confidences=True,
-    )
+    try:
+        sigs, combined, signature_conf = get_stored_confident_signatures(
+            model,
+            layer_idx=layer_idx,
+            max_genes=int(top_genes_layer),
+            return_combined_scores=True,
+            return_signature_confidences=True,
+        )
+    except KeyError as exc:
+        # Deliberately not recomputing here: the signature Monte Carlo is
+        # expensive, and silently rebuilding would hide the fact that the
+        # factor set changed under a cache keyed by the old names.
+        raise KeyError(
+            "No factor signatures found (they are cleared when filter_factors "
+            "changes the factor set). Run "
+            "scd.tl.factor_diagnostics(model, batch_key=...) before make_graph."
+        ) from exc
     rankings = []
     scores = []
     signature_confidences = []
@@ -1077,10 +1087,22 @@ def make_graph(
     global_factors = set()
     if "factor_obs" in model.adata.uns:
         factor_obs = model.adata.uns["factor_obs"]
+        # factor_obs rows are keyed by the stable original index; translate to
+        # the current names these sets are compared against.
+        from ..tools.factor import _factor_obs_rows_to_current_names
+
         if "technical" in factor_obs.columns:
-            technical_factors = set(factor_obs.index[factor_obs["technical"]].tolist())
+            technical_factors = set(
+                _factor_obs_rows_to_current_names(
+                    model, factor_obs.index[factor_obs["technical"]].tolist()
+                )
+            )
         if "global" in factor_obs.columns:
-            global_factors = set(factor_obs.index[factor_obs["global"]].tolist())
+            global_factors = set(
+                _factor_obs_rows_to_current_names(
+                    model, factor_obs.index[factor_obs["global"]].tolist()
+                )
+            )
 
     # Process each layer. Shell plots preserve the old no-root visual style by
     # omitting a final width-1 root layer.
@@ -1466,7 +1488,13 @@ def make_technical_hierarchy_graph(
     if "factor_obs" in model.adata.uns:
         factor_obs = model.adata.uns["factor_obs"]
         if "technical" in factor_obs.columns:
-            technical_factors = set(factor_obs.index[factor_obs["technical"]].tolist())
+            from ..tools.factor import _factor_obs_rows_to_current_names
+
+            technical_factors = set(
+                _factor_obs_rows_to_current_names(
+                    model, factor_obs.index[factor_obs["technical"]].tolist()
+                )
+            )
 
     # Process each layer
     for layer_idx in [0, model.n_layers - 1]:
@@ -1715,7 +1743,11 @@ def biological_hierarchy(model: "scDEF", **kwargs: Any) -> Graph:
     drop_mask = factor_obs["technical"]
     if "global" in factor_obs.columns:
         drop_mask = drop_mask | factor_obs["global"]
-    drop_factors = factor_obs.index[drop_mask].tolist()
+    from ..tools.factor import _factor_obs_rows_to_current_names
+
+    drop_factors = _factor_obs_rows_to_current_names(
+        model, factor_obs.index[drop_mask].tolist()
+    )
     g = make_graph(
         model,
         hierarchy=model.adata.uns["biological_hierarchy"],

@@ -1588,8 +1588,8 @@ class scDEF(object):
                 m = jnp.clip(jnp.asarray(z_init_layer, dtype=jnp.float32), clip, 1e6)
                 m = jnp.clip(
                     tfd.Gamma(
-                        (z_init_concentration ),
-                        (z_init_concentration ) / m,
+                        (z_init_concentration),
+                        (z_init_concentration) / m,
                     ).sample(
                         seed=rngs[rng_cnt],
                     ),
@@ -3874,12 +3874,53 @@ class scDEF(object):
         self.set_factor_names()
         if "factor_obs" in self.adata.uns:
             self._sync_factor_obs_with_filter()
+        self._invalidate_name_keyed_caches()
 
         self.make_layercolors(
             layer_cpal=self.layer_cpal, lightness_mult=self.lightness_mult
         )
         if annotate:
             self.annotate_adata()
+
+    def _invalidate_name_keyed_caches(self):
+        """Drop every cached result keyed by the *mutable* contiguous factor names.
+
+        ``filter_factors`` renames factors in place (``set_factor_names``), so any
+        cache keyed by those names silently re-attaches the previous factor set's
+        results to the new nodes. Anything display-facing is therefore cleared
+        here, and the next :func:`scdef.tools.factor_diagnostics` is forced to
+        rebuild rather than reuse its frozen upper-layer subset.
+
+        ``factor_obs`` is deliberately *not* dropped: ``filter_factors`` itself
+        reads BRD/ARD (and optionally batch purity) from it to decide what to
+        keep, and :meth:`_sync_factor_obs_with_filter` has already re-keyed it to
+        the new names.
+        """
+        uns = self.adata.uns
+        # Stored gene signatures: the confident-signature cache, the flattened
+        # view, and the per-layer `<layer>_signatures` written by annotate_adata.
+        dropped = []
+        for key in ("confident_signatures", "factor_signatures"):
+            if uns.pop(key, None) is not None:
+                dropped.append(key)
+        for key in [k for k in list(uns.keys()) if str(k).endswith("_signatures")]:
+            uns.pop(key, None)
+            dropped.append(str(key))
+        # Hierarchies rendered from the previous factor set.
+        for key in ("biological_hierarchy", "technical_hierarchy"):
+            if uns.pop(key, None) is not None:
+                dropped.append(key)
+        # factor_diagnostics' frozen upper-layer subset: clearing the cache keys
+        # forces a rebuild on the next call regardless of its `recompute` flag.
+        for key in ("_factor_obs_upper_lists_fixed", "_factor_obs_fit_revision"):
+            if uns.pop(key, None) is not None:
+                dropped.append(key)
+        if dropped and hasattr(self, "logger"):
+            self.logger.info(
+                "filter_factors: cleared name-keyed caches (%s). Re-run "
+                "scdef.tools.factor_diagnostics before plotting signatures.",
+                ", ".join(sorted(set(dropped))),
+            )
 
     def _sync_factor_obs_with_filter(self):
         """Rebuild ``adata.uns['factor_obs']`` so it reflects the currently
@@ -3928,8 +3969,13 @@ class scDEF(object):
             )
             if mapping is None:
                 continue
-            slot, current_name = mapping
-            rows.append((row["child_layer"], slot, pos, current_name))
+            slot, _current_name = mapping
+            # Keep the STABLE original-index label: renaming rows to the new
+            # contiguous names is exactly what let stale results re-attach to
+            # the wrong factor. Consumers resolve current name -> row via
+            # (child_layer, original_factor_idx).
+            stable_label = f"{row['child_layer']}_{int(row['original_factor_idx'])}"
+            rows.append((row["child_layer"], slot, pos, stable_label))
 
         rows.sort(key=lambda t: (self.layer_names.index(t[0]), t[1]))
         positions = [t[2] for t in rows]
