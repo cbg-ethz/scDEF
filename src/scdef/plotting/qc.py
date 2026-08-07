@@ -702,6 +702,8 @@ def factor_diagnostics(
     size: Optional[FactorDiagQuantity] = "ARD",
     batch_panel: Optional[bool] = None,
     show: bool = True,
+    _draw_colorbar: bool = True,
+    _draw_size_legend: bool = True,
 ) -> Optional[Union[Axes, np.ndarray]]:
     """
     Diagnostic scatter plot of layer-0 factors with flexible axis/color/size mapping.
@@ -781,7 +783,10 @@ def factor_diagnostics(
         color: quantity for marker color. Default ``None``: use
             ``batch_purity`` when ``batch_purity_max`` is set, else
             ``batch_purity_soft`` when ``batch_purity_soft_max`` is set, else
-            uncolored markers.
+            uncolored markers. In the two-panel batch layout the default is
+            ``batch_purity`` for *both* panels, so the same factor reads the
+            same way in each; pass ``color`` explicitly to override the left
+            panel.
         size: quantity for marker size. Default ``ARD``. Pass ``None`` for
             fixed marker size.
         batch_panel: draw a second panel with the per-batch split diagnostics
@@ -818,14 +823,26 @@ def factor_diagnostics(
             batch_panel=False,
             show=False,
         )
+        # Both panels are drawn only when batch diagnostics exist, so colour the
+        # left one by batch_purity as well unless the caller chose otherwise —
+        # the same factors then read the same way across both panels.
+        left_color = "batch_purity" if color is None else color
+        # One colorbar serves both panels when they encode the same quantity —
+        # the factor set is identical, so the scales match exactly.
+        shares_colorbar = left_color == "batch_purity"
+        # Likewise for the size legend: both panels size by ARD by default, so
+        # one legend describes both. Keep it on the right, with the colorbar.
+        shares_size = size == "ARD"
         factor_diagnostics(
             model,
             x=x,
             y=y,
-            color=color,
+            color=left_color,
             size=size,
             batch_purity_max=batch_purity_max,
             ax=axes[0],
+            _draw_colorbar=not shares_colorbar,
+            _draw_size_legend=not shares_size,
             **shared,
         )
         factor_diagnostics(
@@ -833,7 +850,7 @@ def factor_diagnostics(
             x="frac_dom_batch",
             y="batch_split_corr",
             color="batch_purity",
-            size="n_cells",
+            size="ARD",
             batch_purity_max=batch_purity_max,
             ax=axes[1],
             **shared,
@@ -1039,7 +1056,7 @@ def factor_diagnostics(
 
     cbar = None
     cbar_thresh: Optional[float] = None
-    if color_vals is not None:
+    if color_vals is not None and _draw_colorbar:
         cbar_label = _factor_diag_quantity_label(color_quantity)
         cbar = plt.colorbar(im, ax=ax, label=cbar_label)
         if color_quantity == "ARD":
@@ -1069,7 +1086,7 @@ def factor_diagnostics(
                     linewidth=5,
                 )
 
-    if sizes is not None and size_source_vals is not None:
+    if sizes is not None and size_source_vals is not None and _draw_size_legend:
         size_finite = size_source_vals[np.isfinite(size_source_vals)]
         if size_finite.size > 0:
             s_min = float(np.nanmin(size_finite))
@@ -1097,7 +1114,9 @@ def factor_diagnostics(
                 size_legend = ax.legend(
                     handles=handles,
                     title=f"Size ({_factor_diag_quantity_label(size_quantity)})",
-                    loc="upper right",
+                    # "best" places the legend where it overlaps the fewest
+                    # points, rather than pinning it over the data.
+                    loc="best",
                     fontsize=8,
                     title_fontsize=8,
                     labelspacing=1.2,
