@@ -29,6 +29,25 @@ theme:
   custom_dir: docs/overrides/
 
 
+# Without pymdownx.highlight the fenced blocks in the .md pages render as plain
+# unstyled <pre> -- mkdocs' builtin `fenced_code` marks up the block but nothing
+# colours it. `toc` and `tables` are mkdocs builtins and stay enabled whether or
+# not they appear here; `toc` is repeated below only to set `permalink`.
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  # Highlights inline code carrying a shebang hint, e.g. `#!python model.fit()`.
+  - pymdownx.inlinehilite
+  # Superset of `fenced_code`; also what lets a fence sit inside a list item or
+  # an admonition without breaking out of it.
+  - pymdownx.superfences
+  - toc:
+      permalink: true
+
 plugins:
   - search
   - mkdocs-jupyter:

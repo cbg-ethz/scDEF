@@ -12,7 +12,7 @@ Deep exponential families for single-cell data. scDEF learns hierarchies of cell
 ## Installation
 scDEF is available through [PyPI](https://pypi.org/project/scdef):
 
-```
+```bash
 pip install scdef
 ```
 
