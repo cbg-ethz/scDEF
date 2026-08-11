@@ -36,7 +36,8 @@ jobs:
           path: data
           key: scanpy-datasets-pbmc3k
       - run: poetry install --with dev,extras
-      # Includes the network-marked tests: a nightly can tolerate an Enrichr
-      # outage in a way a merge check cannot.
+      # No `-m` filter, unlike the merge check in ci.yml: this runs everything,
+      # including anything marked `network` if such a test is ever added. A
+      # nightly can absorb a third-party outage in a way a merge gate cannot.
       - name: Run all tests
         run: poetry run pytest tests/ -v
