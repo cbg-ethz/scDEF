@@ -2856,9 +2856,7 @@ def _batch_technical_l0_slots(model: "scDEF") -> List[int]:
     ]
 
 
-def _resolve_batch_technical_top_layer(
-    model: "scDEF", top_layer: Optional[int]
-) -> int:
+def _resolve_batch_technical_top_layer(model: "scDEF", top_layer: Optional[int]) -> int:
     """The batch-corrected parent layer flagged L0 factors group and roll up to.
 
     ``None`` reads ``adata.uns['batch_technical_top_layer']``, which
