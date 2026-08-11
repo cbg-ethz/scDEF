@@ -15,7 +15,7 @@ from .hierarchy import (
 from .factor import (
     assign_confident,
     filter_factors,
-    rollup_batch_factors,
+    batch_structure_report,
     annotate_factors,
     get_factor_annotations,
     compute_within_group_pairwise_dissimilarity,
@@ -29,10 +29,10 @@ from .factor import (
     get_confident_signatures,
     set_technical_factors,
     set_batch_technical_factors,
-    suggest_technical_factors,
-    corrected_factor_representation,
+    factor_batch_correction,
     drop_technical,
-    get_technical_drop_factors,
+    get_technical_factors,
+    get_batch_technical_factors,
     set_global_factors,
     get_technical_signature,
     get_global_signature,
@@ -47,7 +47,10 @@ from .trajectory import (
     build_transition_paths,
     score_paths,
 )
-from .batch import get_batch_specific_genes_from_gene_scale
+from .batch import (
+    get_batch_specific_genes_from_gene_scale,
+    get_factor_batch_gene_scale_affinity,
+)
 from .lineage import get_lineage_factors, get_global_factors
 
 # `filter` is the ergonomic alias; the function is defined as
@@ -58,7 +61,7 @@ __all__ = [
     "assign_confident",
     "filter",
     "filter_factors",
-    "rollup_batch_factors",
+    "batch_structure_report",
     "annotate_factors",
     "get_factor_annotations",
     "multilayer_umap",
@@ -78,10 +81,10 @@ __all__ = [
     "get_confident_signatures",
     "set_technical_factors",
     "set_batch_technical_factors",
-    "suggest_technical_factors",
-    "corrected_factor_representation",
+    "factor_batch_correction",
     "drop_technical",
-    "get_technical_drop_factors",
+    "get_technical_factors",
+    "get_batch_technical_factors",
     "set_global_factors",
     "get_technical_signature",
     "get_global_signature",
@@ -97,6 +100,7 @@ __all__ = [
     "score_paths",
     "multilevel_paga",
     "get_batch_specific_genes_from_gene_scale",
+    "get_factor_batch_gene_scale_affinity",
     "get_lineage_factors",
     "get_global_factors",
 ]

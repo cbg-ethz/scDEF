@@ -55,6 +55,23 @@ class scDEF(object):
         counts_layer: key for `adata.layers` specifying which layer to use as expression counts (if not `adata.X`).
         batch_key: key in `adata.obs` containing batch annotations; if provided, batch correction is performed.
             If None or not found, no batch correction is used.
+        batch_gene_scale: whether ``batch_key`` also makes ``gene_scale`` per batch. ``batch_key``
+            controls two independent things, and this flag decouples them:
+
+            * The **cell side** (always on when ``batch_key`` resolves to >= 2 batches):
+              ``batch_lib_sizes`` / ``batch_lib_ratio``, i.e. the per-batch Gamma prior that
+              ``cell_scale`` shrinks toward, plus ``batch_indices_onehot``. This term is
+              gene-*independent*, so it can only express sequencing depth, never a gene
+              programme.
+            * The **gene side** (this flag): ``gene_scale`` gets one row per batch, and
+              ``gene_ratio`` / ``gene_ratio_init`` become per batch. This term is
+              gene-*specific*, so it can and does absorb biology as well as technical
+              differences.
+
+            ``True`` (default) is the historical behaviour. ``False`` keeps ``gene_scale`` a
+            single shared row of shape ``(1, n_genes)`` with the pooled count-derived prior,
+            exactly as when no ``batch_key`` is given, while still fitting the per-batch
+            ``cell_scale`` prior.
         seed: random seed for model initialization and stochastic routines (uses JAX's pseudo-random number generator).
         n_factors: number of latent factors at the lowest layer (L0), denoted ``K_0`` in
             the geometric layer-size schedule when ``layer_sizes`` is None.
@@ -108,6 +125,7 @@ class scDEF(object):
         adata: AnnData,
         counts_layer: Optional[str] = None,
         batch_key: Optional[str] = None,
+        batch_gene_scale: bool = True,
         seed: Optional[int] = 42,
         n_factors: Optional[int] = 100,
         top_factors: int = 1,
@@ -138,6 +156,7 @@ class scDEF(object):
         self.n_batches = 1
         self.batches = [""]
         self.batch_key = batch_key
+        self.batch_gene_scale = bool(batch_gene_scale)
 
         self.seed = seed
         self.batch_cpal = batch_cpal
@@ -229,6 +248,30 @@ class scDEF(object):
         out += "\n\t" + "Number of batches: " + str(self.n_batches)
         out += "\n" + "Contains " + self.adata.__str__()
         return out
+
+    @property
+    def n_gene_scale_batches(self) -> int:
+        """Number of rows in ``gene_scale`` (1 when the gene side is shared).
+
+        This is ``n_batches`` under the default ``batch_gene_scale=True`` and ``1``
+        when the per-batch gene side is switched off, independently of how many
+        batches the cell side uses.
+        """
+        if bool(getattr(self, "batch_gene_scale", True)):
+            return int(self.n_batches)
+        return 1
+
+    def _gene_scale_onehot(self):
+        """Cell-to-``gene_scale``-row indicator, shape ``(n_cells, n_gene_scale_batches)``.
+
+        Equals ``batch_indices_onehot`` under the default per-batch gene side, and a
+        column of ones when ``gene_scale`` is a single shared row. Falls back to
+        ``batch_indices_onehot`` for models pickled before this attribute existed.
+        """
+        onehot = getattr(self, "gene_batch_onehot", None)
+        if onehot is None:
+            onehot = self.batch_indices_onehot
+        return onehot
 
     @staticmethod
     def _resolve_init_gene_scale_array(
@@ -420,6 +463,10 @@ class scDEF(object):
             obj._marginalize_alpha_init = bool(obj.marginalize_alpha)
         if not hasattr(obj, "hierarchy_weight"):
             obj.hierarchy_weight = 1.0
+        if not hasattr(obj, "batch_gene_scale"):
+            # Models pickled before the cell/gene batch sides were decoupled always
+            # had the per-batch gene side whenever batch_key was set.
+            obj.batch_gene_scale = True
         obj.logger = logging.getLogger(payload.get("class_name", cls.__name__))
         if payload.get("logger_level") is not None:
             obj.logger.setLevel(payload["logger_level"])
@@ -546,15 +593,33 @@ class scDEF(object):
                 self.batch_indices_onehot = np.zeros(
                     (self.adata.shape[0], self.n_batches)
                 )
-                # If multiple batches: compute gene_ratio per batch (still per gene)
+                # `batch_key` controls two independent things:
+                #   (a) the CELL side -- batch_indices_onehot, batch_lib_sizes and the
+                #       per-batch batch_lib_ratio that cell_scale shrinks toward. This
+                #       term is gene-independent, so it can only carry sequencing depth.
+                #   (b) the GENE side -- a gene_scale row per batch, via per-batch
+                #       gene_ratio / gene_ratio_init. This term is gene-specific, so it
+                #       can absorb biological programmes as well as technical ones.
+                # (a) always runs with >= 2 batches; (b) is gated on `batch_gene_scale`.
+                use_batch_gene_scale = bool(getattr(self, "batch_gene_scale", True))
                 if self.n_batches > 1:
-                    self.gene_ratio = np.ones((self.n_batches, self.adata.shape[1]))
-                    self.gene_ratio_init = np.ones(
-                        (self.n_batches, self.adata.shape[1])
-                    )
-                    # self.gene_ratio_init = np.tile(
-                    #     (mu_bar / mu)[None, :], (self.n_batches, 1)
-                    # )
+                    if use_batch_gene_scale:
+                        self.gene_ratio = np.ones((self.n_batches, self.adata.shape[1]))
+                        self.gene_ratio_init = np.ones(
+                            (self.n_batches, self.adata.shape[1])
+                        )
+                        # self.gene_ratio_init = np.tile(
+                        #     (mu_bar / mu)[None, :], (self.n_batches, 1)
+                        # )
+                    else:
+                        # Shared gene side: keep the POOLED per-gene profile computed
+                        # above, shape (1, G), and the pooled scalar gene_ratio. This is
+                        # byte-for-byte what the no-batch_key path produces.
+                        self.logger.info(
+                            "batch_gene_scale=False: keeping a single shared "
+                            "`gene_scale` row while fitting the per-batch `cell_scale` "
+                            "prior."
+                        )
                     for i, b in enumerate(batches):
                         cells = np.where(self.adata.obs[batch_key] == b)[0]
                         self.batch_indices_onehot[cells, i] = 1
@@ -562,6 +627,8 @@ class scDEF(object):
                         self.batch_lib_ratio[cells] = np.mean(
                             self.batch_lib_sizes[cells]
                         ) / (np.var(self.batch_lib_sizes[cells]) + eps)
+                        if not use_batch_gene_scale:
+                            continue
                         mu_b = self.X[cells].mean(axis=0) + eps
                         mu_b_bar = float(mu_b.mean())
                         self.gene_ratio_init[i] = mu_b_bar / mu_b
@@ -576,6 +643,14 @@ class scDEF(object):
         self.batch_lib_sizes = jnp.array(self.batch_lib_sizes)
         self.batch_lib_ratio = jnp.array(self.batch_lib_ratio)
         self.gene_ratio = jnp.array(self.gene_ratio)
+
+        # Row selector for `gene_scale` in the likelihood. Identical to
+        # `batch_indices_onehot` when the gene side is per batch; a single column of
+        # ones when `gene_scale` is shared, so the cell side can stay per batch.
+        if self.n_gene_scale_batches == self.batch_indices_onehot.shape[1]:
+            self.gene_batch_onehot = self.batch_indices_onehot
+        else:
+            self.gene_batch_onehot = jnp.ones((self.adata.shape[0], 1))
 
     def _geometric_layer_sizes(self, n_layers: int) -> List[int]:
         """Layer counts from ``n_factors`` (L0) through the ``top_factors`` layer, optional root.
@@ -1513,12 +1588,22 @@ class scDEF(object):
             # initialize gene scales at the prior mean (per gene)
             # prior mean under Gamma(shape, rate=shape*gene_ratio) is 1/gene_ratio
             if init_gene_scale is not None:
+                # gene_scale has one row per *gene-side* batch, which is 1 when
+                # `batch_gene_scale` is off even if the cell side is per batch.
+                n_gs_rows = int(self.n_gene_scale_batches)
                 m = np.asarray(init_gene_scale, dtype=np.float32)
                 if m.ndim == 1:
-                    m = np.tile(m[None, :], (max(int(self.n_batches), 1), m.shape[0]))
-                elif m.shape[0] == 1 and int(self.n_batches) > 1:
-                    m = np.tile(m, (int(self.n_batches), 1))
-                m = np.clip(m, 1e-6, 1e6)
+                    m = np.tile(m[None, :], (max(n_gs_rows, 1), m.shape[0]))
+                elif m.shape[0] == 1 and n_gs_rows > 1:
+                    m = np.tile(m, (n_gs_rows, 1))
+                elif m.shape[0] > 1 and n_gs_rows == 1:
+                    # Collapse an accidentally per-batch warm start onto the single
+                    # shared row (geometric mean, matching _resolve_init_gene_scale_array).
+                    m = np.exp(np.mean(np.log(np.clip(m, 1e-6, None)), axis=0))[None, :]
+                # Upper bound matches `extend._GENE_SCALE_MAX`: the pooled-marginal
+                # warm start legitimately reaches ~1e7 for the most abundant genes,
+                # and a 1e6 bound here would silently undo it.
+                m = np.clip(m, 1e-6, 1e7)
             else:
                 m = 1.0 / np.array(self.gene_ratio_init)  # shape: (G,) or (B,G)
                 m = np.clip(m, 1e-6, 1e6)
@@ -2050,7 +2135,9 @@ class scDEF(object):
         annealing_scales = 1.0  # fixed
 
         # Single-sample Monte Carlo estimate of the variational lower bound.
-        batch_indices_onehot = self.batch_indices_onehot[indices]
+        # One column per `gene_scale` row: per-batch when `batch_gene_scale` is on,
+        # a single column of ones when the gene side is shared.
+        gene_batch_onehot = self._gene_scale_onehot()[indices]
 
         cell_budget_params = local_params[0]
         z_params = local_params[1]
@@ -2305,7 +2392,7 @@ class scDEF(object):
         mean_bottom = (
             jnp.einsum("nk,kg->ng", n_z_sample, n_w_sample) * cell_budget_sample
         )  # self.exposures[indices]
-        mean_bottom = mean_bottom * (batch_indices_onehot.dot(gene_budget_sample))
+        mean_bottom = mean_bottom * (gene_batch_onehot.dot(gene_budget_sample))
 
         # x = jnp.array(batch)
         # lam = mean_bottom  # same shape
@@ -2814,7 +2901,10 @@ class scDEF(object):
                 init_gene_scale = pending_reference_init.get("init_gene_scale")
                 if init_gene_scale is not None:
                     init_gene_scale = np.asarray(init_gene_scale, dtype=np.float32)
-                    self.gene_ratio_init = 1.0 / np.clip(init_gene_scale, 1e-6, 1e6)
+                    # Same upper bound as the warm start itself (see
+                    # `extend._GENE_SCALE_MAX`), so the derived prior mean does not
+                    # disagree with the warm-start value for very abundant genes.
+                    self.gene_ratio_init = 1.0 / np.clip(init_gene_scale, 1e-6, 1e7)
                 nmf_init = False
                 z_init_concentration = 100.0
             elif hierarchical_init:
@@ -4008,13 +4098,17 @@ class scDEF(object):
 
     def annotate_adata(self):
         self.adata.obs["cell_scale"] = self.pmeans["cell_scale"]
-        if self.n_batches == 1:
-            self.adata.var["gene_scale"] = self.pmeans["gene_scale"][0]
+        # Number of rows actually present in gene_scale, which is 1 whenever the gene
+        # side is shared (`batch_gene_scale=False`) regardless of `n_batches`.
+        _gene_scale_pm = np.asarray(self.pmeans["gene_scale"])
+        _n_gene_scale_rows = _gene_scale_pm.shape[0] if _gene_scale_pm.ndim > 1 else 1
+        if _n_gene_scale_rows == 1:
+            self.adata.var["gene_scale"] = _gene_scale_pm.reshape(-1)
             self.logger.info("Updated adata.var: `gene_scale`")
         else:
-            for batch_idx in range(self.n_batches):
+            for batch_idx in range(_n_gene_scale_rows):
                 name = f"gene_scale_{batch_idx}"
-                self.adata.var[name] = self.pmeans["gene_scale"][batch_idx]
+                self.adata.var[name] = _gene_scale_pm[batch_idx]
                 self.logger.info(f"Updated adata.var: `{name}` for batch {batch_idx}.")
 
         if not getattr(self, "_preserve_factor_names_on_annotate", False):

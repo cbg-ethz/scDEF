@@ -9,6 +9,11 @@ from scipy.spatial.distance import pdist
 from sklearn.preprocessing import minmax_scale
 import pandas as pd
 from .hierarchy import get_hierarchy, compute_hierarchy_scores
+from .batch import (
+    get_factor_batch_gene_scale_affinity,
+    TOP_BATCH_COL,
+    TOP_SCORE_COL,
+)
 from typing import (
     Optional,
     Sequence,
@@ -225,7 +230,7 @@ def _factor_obs_rows_to_current_names(model: "scDEF", rows: Sequence[str]) -> Li
     return out
 
 
-def get_technical_drop_factors(model: "scDEF") -> List[str]:
+def get_technical_factors(model: "scDEF") -> List[str]:
     """Current model names of the factors marked technical in ``factor_obs``.
 
     ``factor_obs`` rows are keyed by the factor names in place when diagnostics
@@ -241,13 +246,41 @@ def get_technical_drop_factors(model: "scDEF") -> List[str]:
     return _factor_obs_rows_to_current_names(model, rows)
 
 
+def get_batch_technical_factors(model: "scDEF") -> List[str]:
+    """Current model names of the factors marked ``batch_technical``.
+
+    The counterpart of :func:`set_batch_technical_factors`, and the batch-side
+    analogue of :func:`get_technical_factors`. Names are translated to the
+    *current* ``model.factor_names`` entries the same way, so they can be
+    compared directly against the live model, and flagged factors the model no
+    longer keeps are omitted.
+
+    The two flags mean different things and are not interchangeable. A
+    ``technical`` factor is a candidate for deletion by :func:`drop_technical`,
+    and the flag propagates up the tree. A ``batch_technical`` factor is a
+    layer-0 per-batch view of a program the corrected parent layer already
+    represents: nothing is deleted and nothing propagates —
+    :func:`factor_batch_correction` merges or drops it in the corrected
+    representation and leaves the model itself untouched.
+
+    Returns:
+        Current layer-0 factor names flagged batch-technical, or ``[]`` if none
+        are flagged or diagnostics have not been computed.
+    """
+    factor_obs = model.adata.uns.get("factor_obs")
+    if factor_obs is None or "batch_technical" not in factor_obs.columns:
+        return []
+    rows = factor_obs.index[factor_obs["batch_technical"].astype(bool)].tolist()
+    return _factor_obs_rows_to_current_names(model, rows)
+
+
 def _resolve_signature_drop_factors(
     model: "scDEF", drop_factors: Optional[Sequence[str]]
 ) -> List[str]:
     """Drop list for hierarchical gene signatures (defaults to technical factors)."""
     if drop_factors is not None:
         return list(drop_factors)
-    return get_technical_drop_factors(model)
+    return get_technical_factors(model)
 
 
 def _l0_keep_indices(model: "scDEF", drop_factors: Sequence[str]) -> np.ndarray:
@@ -855,10 +888,18 @@ def _compute_l0_batch_split(
     batch-corrected cell-type factor — the roll-up target, not a split half.
 
     Note this metric deliberately does **not** gate on factor ``i``'s own batch
-    skew; that is a separate, plottable condition applied when flagging (see
-    :func:`suggest_technical_factors`). Keeping it out here is what makes the
-    column dense and lets a balanced factor's high correlation stay *visible*
-    while remaining unflagged.
+    skew; that is a separate, plottable condition. Keeping it out here is what
+    makes the column dense and lets a balanced factor's high correlation stay
+    *visible*.
+
+    .. warning::
+        Read this column as a diagnostic, never as a ranking of "how technical"
+        a factor is. On the paired pbmcs2b data it saturates in the 0.79-0.99
+        band across many factor pairs, including pairs that share no genes, and
+        it ranks the genuine Cytotoxic-T per-batch split *below* unrelated
+        pairs. The verdict layer that used to be built on it has been removed
+        for exactly this reason; use :func:`batch_structure_report`, which
+        describes the same geometry without a verdict.
 
     Writes three layer-0 columns into ``factor_obs``: ``batch_split_corr``,
     plus the informational ``batch_split_partner`` (the single
@@ -1023,6 +1064,7 @@ def factor_diagnostics(
     mc_samples: int = 100,
     random_seed: int = 0,
     batch_split_min_batch_frac: float = 0.7,
+    gene_scale_reference: Optional[Any] = None,
 ) -> None:
     """Compute/store factor diagnostics in ``model.adata.uns['factor_obs']``.
 
@@ -1071,6 +1113,18 @@ def factor_diagnostics(
             candidate partners in :func:`_compute_l0_batch_split` (default
             ``0.7``: a candidate at ``0.6`` contributes nothing, one at ``0.8``
             contributes fully). Only used when ``batch_key`` is set.
+        gene_scale_reference: optional gene-side batch diagnostic, off by
+            default. Pass the REFERENCE fit (the model made with ``batch_key``
+            and per-batch ``gene_scale``) — or anything else
+            :func:`~scdef.tools.batch.get_factor_batch_gene_scale_affinity`
+            accepts — to add two layer-0 columns: ``gene_scale_affinity``, the
+            Spearman correlation between the factor's gene loadings and the
+            per-batch ``gene_scale`` log-ratio of the batch it matches best,
+            and ``gene_scale_affinity_batch``, that batch. High values say the
+            factor is built from the genes the reference fit's per-batch term
+            absorbed; they do **not** say the factor is technical (on a
+            condition-like batch key that programme is the biology of the
+            experiment). See that function's docstring.
     """
     # Keep layer 0 unfiltered, but use a fixed filtered subset on upper layers.
     # Cache and reuse upper-layer factor lists so diagnostics remain stable across
@@ -1379,6 +1433,26 @@ def factor_diagnostics(
         "ignore_root": bool(sensible_top_ignore_root),
         "use_filtered": bool(sensible_top_use_filtered),
     }
+
+    if gene_scale_reference is not None:
+        from scdef.tools.batch import get_factor_batch_gene_scale_affinity
+
+        affinity = get_factor_batch_gene_scale_affinity(model, gene_scale_reference)
+        factor_obs["gene_scale_affinity"] = np.nan
+        factor_obs["gene_scale_affinity_batch"] = ""
+        l0_layer_name = model.layer_names[0]
+        for original_factor_idx, (_, aff_row) in zip(
+            np.asarray(model.factor_lists[0], dtype=int), affinity.iterrows()
+        ):
+            label = factor_obs_row_label(l0_layer_name, int(original_factor_idx))
+            if label in factor_obs.index:
+                factor_obs.at[label, "gene_scale_affinity"] = float(
+                    aff_row["top_score"]
+                )
+                factor_obs.at[label, "gene_scale_affinity_batch"] = str(
+                    aff_row["top_batch"]
+                )
+        model.adata.uns["factor_obs"] = factor_obs
 
     # Cache a complete snapshot of factor_obs keyed by (child_layer,
     # original_factor_idx). This is the source of truth for filtering
@@ -1757,14 +1831,13 @@ def assign_confident(
             that layer. Per-batch splits only exist below the roll-up layer, so
             the flag is deliberately not applied at or above it.
         batch_technical_top_layer: layer index the batch-technical roll-up
-            targets. Defaults to ``adata.uns['batch_technical_top_layer']``
-            (recorded by ``decompose_batch_effects`` /
-            :func:`set_batch_technical_factors`), else ``1``.
+            targets. Defaults to ``adata.uns['batch_technical_top_layer']``,
+            recorded by :meth:`scDEF.decompose_batch_effects`, else ``1``.
 
     Example:
         >>> # After flagging per-batch splits, their cells attach to the
         >>> # batch-corrected L1 parent instead of overshooting to the root.
-        >>> scdef.tl.set_batch_technical_factors(model, splits, top_layer=1)
+        >>> scdef.tl.set_batch_technical_factors(model, splits)
         >>> scdef.tl.assign_confident(model, exclude_batch_technical=True)
         >>> model.adata.obs["confident_best_layer"].value_counts()
     """
@@ -1807,20 +1880,13 @@ def assign_confident(
     # Effective per-layer candidate sets. Technical factors are dropped
     # everywhere; batch-technical factors only below the roll-up layer, which
     # still carries the batch-corrected signal those cells belong to.
-    factor_obs = model.adata.uns.get("factor_obs")
-
     technical_names: set = set()
     if exclude_technical:
-        technical_names = set(get_technical_drop_factors(model))
+        technical_names = set(get_technical_factors(model))
 
     bt_names: set = set()
-    if (
-        exclude_batch_technical
-        and factor_obs is not None
-        and "batch_technical" in factor_obs.columns
-    ):
-        bt_rows = factor_obs.index[factor_obs["batch_technical"].astype(bool)].tolist()
-        bt_names = set(_factor_obs_rows_to_current_names(model, bt_rows))
+    if exclude_batch_technical:
+        bt_names = set(get_batch_technical_factors(model))
 
     if batch_technical_top_layer is None:
         bt_top_layer = int(model.adata.uns.get("batch_technical_top_layer", 1))
@@ -2654,30 +2720,36 @@ def set_technical_factors(
 def set_batch_technical_factors(
     model: "scDEF",
     factors: Sequence[str],
-    top_layer: int = 1,
 ) -> None:
     """Mark layer-0 factors as *batch*-technical (per-batch splits of one type).
 
     Unlike :func:`set_technical_factors`, this flag does **not** propagate up the
-    tree and no factor is deleted. Batch-technical factors are the per-batch
-    halves produced by :meth:`scDEF.decompose_batch_effects`: they only exist
-    below ``top_layer``, because the ``top_layer`` re-learned by decomposition
-    still carries the batch-*corrected* cell-type signal. That layer is therefore
-    the roll-up target, and propagating the flag into it would throw away the
-    very signal the roll-up depends on.
+    tree and no factor is deleted. Batch-technical factors are layer-0 per-batch
+    views of a program that the parent layer already represents once, so that
+    parent is the roll-up target and propagating the flag into it would throw
+    away the very signal the roll-up depends on.
 
-    Sets ``factor_obs['batch_technical']`` and records
-    ``adata.uns['batch_technical_top_layer']``, both consumed by
-    :func:`assign_confident` via ``exclude_batch_technical=True``.
+    This works on any fitted model with a batch column in ``adata.obs``, not only
+    on one from :meth:`scDEF.decompose_batch_effects` — a plain fit made without
+    a ``batch_key`` leaves batch structure in the factors directly, and can be
+    flagged and corrected the same way. See :func:`batch_structure_report` for
+    how the reading differs between the two.
+
+    This records *which* factors are batch-technical and nothing else. The
+    roll-up target comes from ``adata.uns['batch_technical_top_layer']``, written
+    by :meth:`scDEF.decompose_batch_effects` as the layer whose ``z`` it froze —
+    the only place that knows it. Consumers
+    (:func:`factor_batch_correction`, :func:`assign_confident`) read it by
+    default and take an override argument, so there is no second copy here to
+    fall out of step with the decomposition.
+
+    Sets ``factor_obs['batch_technical']``.
 
     Args:
         model: scDEF model instance.
         factors: factor names to flag. Names are resolved against the current
             ``model.factor_names`` (see :func:`_resolve_factor_obs_names`), so
             names taken from a filtered model are safe.
-        top_layer: the layer that carries the batch-corrected signal, i.e. the
-            roll-up target. Matches the ``top_layer`` passed to
-            ``decompose_batch_effects`` (default ``1`` = L1).
 
     Raises:
         ValueError: if any name in ``factors`` cannot be resolved.
@@ -2689,10 +2761,12 @@ def set_batch_technical_factors(
         >>> ref.fit()
         >>> # Stage 2: re-learn L0/L1 without the batch key to expose batch programs.
         >>> model = scdef.scDEF.decompose_batch_effects(ref, top_layer=1)
-        >>> # Surface the per-batch splits and flag them.
-        >>> cand = scdef.tl.suggest_technical_factors(model, batch_key="Experiment")
-        >>> splits = cand.index[cand["batch_split_corr"].fillna(0) >= 0.6]
-        >>> scdef.tl.set_batch_technical_factors(model, splits, top_layer=1)
+        >>> # Describe the batch geometry, then decide from the design which
+        >>> # branch splits are technical (here both batches are one donor).
+        >>> rep = scdef.tl.batch_structure_report(model, batch_key="Experiment")
+        >>> splits = rep.index[rep["shape"] == "branch_split"]
+        >>> scdef.tl.set_batch_technical_factors(model, splits)
+        >>> scdef.tl.factor_batch_correction(model, top_layer=1)
         >>> # Cells owned by a split are assigned at their L1 parent instead.
         >>> scdef.tl.assign_confident(model, exclude_batch_technical=True)
     """
@@ -2711,90 +2785,150 @@ def set_batch_technical_factors(
         factor_obs.loc[resolved, "batch_technical"] = True
 
     model.adata.uns["factor_obs"] = factor_obs
-    model.adata.uns["batch_technical_top_layer"] = int(top_layer)
 
 
 def _batch_technical_l0_slots(model: "scDEF") -> List[int]:
     """Slots into ``model.factor_names[0]`` of the batch-technical L0 factors."""
-    factor_obs = model.adata.uns.get("factor_obs")
-    if factor_obs is None or "batch_technical" not in factor_obs.columns:
+    flagged = set(get_batch_technical_factors(model))
+    if len(flagged) == 0:
         return []
-    rows = factor_obs.index[factor_obs["batch_technical"].astype(bool)].tolist()
-    if len(rows) == 0:
-        return []
-    flagged = set(_factor_obs_rows_to_current_names(model, rows))
     return [
         slot for slot, name in enumerate(model.factor_names[0]) if str(name) in flagged
     ]
 
 
-def corrected_factor_representation(
+def _resolve_batch_technical_top_layer(
+    model: "scDEF", top_layer: Optional[int]
+) -> int:
+    """The batch-corrected parent layer flagged L0 factors group and roll up to.
+
+    ``None`` reads ``adata.uns['batch_technical_top_layer']``, which
+    :meth:`scDEF.decompose_batch_effects` records as the layer whose ``z`` it
+    froze, falling back to ``1``. That record is the single source of truth: no
+    other function writes it, so the roll-up target cannot drift from what the
+    decomposition actually froze.
+    """
+    if int(model.n_layers) < 2:
+        raise KeyError(
+            "Batch-technical factors are flagged but the model has only one "
+            "layer, so there is no parent layer to group them by."
+        )
+    if top_layer is None:
+        top_layer = int(model.adata.uns.get("batch_technical_top_layer", 1))
+    top_layer = int(top_layer)
+    if top_layer < 1 or top_layer >= int(model.n_layers):
+        raise ValueError(
+            f"top_layer must be in [1, {int(model.n_layers) - 1}]; got {top_layer}."
+        )
+    return top_layer
+
+
+def _l0_parent_slots(model: "scDEF", top_layer: int) -> np.ndarray:
+    """Parent slot at ``top_layer`` for every kept layer-0 factor.
+
+    Indexes ``model.factor_lists[top_layer]`` / ``factor_names[top_layer]``, and
+    the ``argmax`` runs over the **kept** parents only, so a filtered-out factor
+    can never win. Shared by :func:`factor_batch_correction` and
+    :func:`_rollup_batch_factors` so the two cannot disagree about which flagged
+    factors are siblings.
+    """
+    weights = _l0_to_top_layer_weights(model, top_layer)
+    kept0 = np.asarray(model.factor_lists[0], dtype=int)
+    if kept0.size == 0:
+        return np.empty(0, dtype=int)
+    if np.any(kept0 >= weights.shape[1]):
+        raise KeyError(
+            "model.factor_lists[0] indexes outside the layer-1 connection "
+            "weights; the model's factor lists and posterior means are out of sync."
+        )
+    return np.argmax(weights[:, kept0], axis=0).astype(int)
+
+
+def factor_batch_correction(
     model: "scDEF",
     reduce: Literal["sum", "max"] = "sum",
-    key_added: str = "X_L0_corrected",
-    add_labels: bool = True,
+    key_added: str = "X_L0_batch_corrected",
     labels_key_added: str = "batch_corrected",
+    top_layer: Optional[int] = None,
 ) -> Tuple[np.ndarray, List[str]]:
-    """Fold per-batch technical splits into single columns, in score space.
+    """Apply the batch-technical correction to the scores and to the labels.
 
-    This is the score-space analogue of the :func:`assign_confident` roll-up: the
-    roll-up moves *cells* up to the batch-corrected parent layer, while this
-    merges the *columns* of the split so downstream geometry (embeddings,
-    heatmaps) sees one program instead of two batch-specific halves.
+    Factors flagged by :func:`set_batch_technical_factors` are per-batch views of
+    a program that the batch-corrected ``top_layer`` already represents once.
+    This removes them from the layer-0 representation and writes the same
+    correction as cell-level labels, so an embedding, a heatmap and a UMAP
+    colouring all describe one corrected view.
 
-    Every group of batch-technical siblings — factors flagged by
-    :func:`set_batch_technical_factors` that share an L1 parent — collapses to
-    one merged column. **No factor is deleted and nothing else is touched**: any
-    factor not flagged keeps its own column, including a batch-restricted factor
-    that is genuine biology (an ISG program, say) and any non-flagged sibling of
-    a merged group. An embedding built on the result therefore mixes batches
-    where the split was technical and keeps them apart where it is not.
+    Flagged factors are grouped by their ``top_layer`` parent and handled by
+    group size:
 
-    Grouping is by L1 parent (``argmax`` over the rows of ``pmeans['L1W']``),
-    matching the roll-up target, so two splits under different parents stay
-    distinct.
+    - **Two or more flagged siblings** under one parent -- the per-batch halves
+      of a single program -- collapse into one merged column, labelled by
+      joining the members with ``+`` in layer order (e.g. ``"L0_7+L0_14"``).
+    - **A lone flagged factor** under a parent, with no flagged counterpart --
+      a batch-skewed program with no opposite-batch half -- has nothing to merge
+      with, so its column is **dropped**. The cells it claimed are then described
+      by the factors they still score on, and their labels roll up to the parent.
+
+    Anything not flagged is untouched and keeps its own column, including a
+    batch-restricted factor that is genuine biology (an ISG program, say) and any
+    non-flagged sibling of a flagged one. An embedding built on the result
+    therefore mixes batches where the split was judged technical and keeps them
+    apart where it was not.
+
+    Two ``adata.obs`` columns are always written, from the same grouping:
+    ``f"L0_{labels_key_added}"`` labels merged siblings by their joined name and
+    a lone flagged factor by its parent, while ``labels_key_added`` labels every
+    flagged cell by its parent. All other cells keep their layer-0 label in both.
+
+    This addresses one shape of batch structure only: the one that appears as an
+    *extra column per batch*. It does nothing about a factor that both batches
+    use and merely score differently in magnitude -- on pbmcs2b, correcting the
+    ``branch_split`` columns moves the median within-branch batch AUC only
+    0.970 -> 0.930, because what is left is not confined to a clean pair of
+    sibling columns.
 
     Args:
         model: scDEF model instance with cell scores annotated (``X_L0`` in
-            ``adata.obsm``).
-        reduce: how to merge a group's columns. ``"sum"`` (default) adds them,
-            which is exact when the halves are disjoint — the usual case, since
-            each cell is dominated by the half from its own batch. ``"max"``
-            takes the per-cell peak instead. The two differ only for cells
-            carrying real mass on *both* halves, where ``"sum"`` reports the
-            combined program and ``"max"`` the stronger half alone.
-        add_labels: also write the cell-level roll-up labels via
-            :func:`rollup_batch_factors` (``"L0_batch_corrected"`` and
-            ``"batch_corrected"`` in ``adata.obs``), so the correction can be
-            plotted directly. Skipped with an info log when no factors are
-            flagged. Internal callers that only need the matrix (the folded
-            heatmap and UMAP) pass ``False`` so plotting never mutates ``obs``.
-        labels_key_added: ``key_added`` forwarded to
-            :func:`rollup_batch_factors`.
-        key_added: ``adata.obsm`` key for the corrected matrix. The column
-            labels are stored in ``adata.uns[key_added + '_factors']``, and the
-            factor names that were merged in
-            ``adata.uns[key_added + '_batch_technical']``, so a cached matrix can
-            be checked against the current flags.
+            ``adata.obsm``) and factors flagged by
+            :func:`set_batch_technical_factors`.
+        reduce: how to merge a group of two or more flagged siblings. ``"sum"``
+            (default) adds them, which is exact when the halves are disjoint --
+            the usual case, since each cell is dominated by the half from its own
+            batch. ``"max"`` takes the per-cell peak instead. The two differ only
+            for cells carrying real mass on *both* halves, where ``"sum"``
+            reports the combined program and ``"max"`` the stronger half alone.
+            Irrelevant to a lone flagged factor, which is dropped either way.
+        key_added: ``adata.obsm`` key for the corrected matrix. The column labels
+            go to ``adata.uns[key_added + '_factors']``, the per-column member
+            names to ``..._members``, the flagged factors to
+            ``..._batch_technical`` and the dropped ones to ``..._dropped``, so a
+            cached matrix can be checked against the current flags.
+        labels_key_added: base name for the two ``adata.obs`` columns.
+        top_layer: the batch-corrected parent layer flagged factors group and
+            roll up to. Defaults to ``adata.uns['batch_technical_top_layer']``,
+            recorded by :meth:`scDEF.decompose_batch_effects` as the layer whose
+            ``z`` it froze, else ``1``. Override only to inspect a different
+            grouping.
 
     Returns:
-        ``(matrix, labels)`` — the corrected ``(n_cells, n_corrected_factors)``
-        matrix and its column labels. A merged column is labelled by joining its
-        members with ``+`` in layer order, e.g. ``"L0_7+L0_14"``, so a reader can
-        see exactly which split was merged.
+        ``(matrix, labels)`` -- the corrected ``(n_cells, n_corrected_factors)``
+        matrix and its column labels. The matrix has **fewer columns** than
+        ``X_L0`` whenever anything was flagged.
 
     Raises:
-        KeyError: if ``X_L0`` is missing, or if factors are flagged but
-            ``pmeans['L1W']`` is unavailable to group them by parent.
-        ValueError: if ``reduce`` is not ``"sum"`` or ``"max"``.
+        KeyError: ``X_L0`` is missing, the model has no parent layer to group by,
+            or the connection weights are unavailable.
+        ValueError: ``reduce`` is not ``"sum"`` or ``"max"``, ``top_layer`` is out
+            of range, the stored scores are stale, or every column was dropped.
 
     Example:
         >>> model = scdef.scDEF.decompose_batch_effects(ref, top_layer=1)
-        >>> scdef.tl.factor_diagnostics(model, batch_key="Experiment")
-        >>> cand = scdef.tl.suggest_technical_factors(model, batch_key="Experiment")
-        >>> splits = cand.index[cand["batch_split_corr"].fillna(0) >= 0.6]
-        >>> scdef.tl.set_batch_technical_factors(model, splits, top_layer=1)
-        >>> matrix, labels = scdef.tl.corrected_factor_representation(model)
+        >>> rep = scdef.tl.batch_structure_report(model, batch_key="Experiment")
+        >>> flagged = rep.index[rep["shape"].isin(["branch_split", "branch_skewed"])]
+        >>> scdef.tl.set_batch_technical_factors(model, flagged)
+        >>> matrix, labels = scdef.tl.factor_batch_correction(model)
+        >>> scdef.pl.umap(model, color=["L0_batch_corrected", "batch_corrected"])
     """
     if reduce not in ("sum", "max"):
         raise ValueError(f"reduce must be 'sum' or 'max'; got {reduce!r}.")
@@ -2818,7 +2952,8 @@ def corrected_factor_representation(
         )
 
     flagged_slots = _batch_technical_l0_slots(model)
-    merged_on = sorted(current_names[slot] for slot in flagged_slots)
+    flagged_on = sorted(current_names[slot] for slot in flagged_slots)
+    dropped: List[str] = []
 
     def _store(
         matrix: np.ndarray,
@@ -2832,43 +2967,25 @@ def corrected_factor_representation(
         # splitting the label on '+', since factor names may themselves contain
         # '+' (iscDEF names factors after marker sets, e.g. 'CD14+ monocyte').
         model.adata.uns[f"{key_added}_members"] = [list(m) for m in members]
-        # Provenance: exactly which factors were merged into this matrix, so a
-        # cached matrix can be checked against the current flags.
-        model.adata.uns[f"{key_added}_batch_technical"] = list(merged_on)
+        # Provenance: which factors were flagged and which lost their column, so
+        # a cached matrix can be checked against the current flags.
+        model.adata.uns[f"{key_added}_batch_technical"] = list(flagged_on)
+        model.adata.uns[f"{key_added}_dropped"] = list(dropped)
         return matrix, list(labels)
 
     if len(flagged_slots) == 0:
-        # Nothing flagged: the corrected representation *is* the original one.
+        # Nothing flagged: the corrected representation *is* the original one,
+        # and there are no labels to write.
         return _store(scores.copy(), current_names, [[n] for n in current_names])
 
-    if int(model.n_layers) < 2:
-        raise KeyError(
-            "Batch-technical factors are flagged but the model has no layer 1 "
-            "to group them by. Folding needs a parent layer."
-        )
-    w1_key = f"{model.layer_names[1]}W"
-    pmeans = getattr(model, "pmeans", None)
-    if not isinstance(pmeans, dict) or w1_key not in pmeans:
-        raise KeyError(
-            f"Batch-technical factors are flagged but '{w1_key}' is missing from "
-            "model.pmeans, so they cannot be grouped by parent."
-        )
-    w1 = np.asarray(pmeans[w1_key], dtype=float)
-    parent_of = np.argmax(w1, axis=0)  # per original L0 column
-
-    kept_orig = np.asarray(model.factor_lists[0], dtype=int)
+    top_layer = _resolve_batch_technical_top_layer(model, top_layer)
+    parent_slot_of = _l0_parent_slots(model, top_layer)
     flagged_set = set(flagged_slots)
 
-    # Group flagged factors by L1 parent, preserving layer order within a group.
+    # Group flagged factors by parent, preserving layer order within a group.
     groups: Dict[int, List[int]] = {}
     for slot in flagged_slots:
-        orig = int(kept_orig[slot])
-        if orig < 0 or orig >= w1.shape[1]:
-            raise KeyError(
-                f"Factor {current_names[slot]!r} maps to original index {orig}, "
-                f"which is out of bounds for '{w1_key}'."
-            )
-        groups.setdefault(int(parent_of[orig]), []).append(slot)
+        groups.setdefault(int(parent_slot_of[slot]), []).append(slot)
 
     columns: List[np.ndarray] = []
     labels: List[str] = []
@@ -2880,11 +2997,16 @@ def corrected_factor_representation(
             labels.append(name)
             column_members.append([name])
             continue
-        parent = int(parent_of[int(kept_orig[slot])])
+        parent = int(parent_slot_of[slot])
+        members = groups[parent]
+        if len(members) < 2:
+            # No opposite-batch half to fold into, so the batch-specific program
+            # leaves the representation; the cells roll up to the parent in obs.
+            dropped.append(name)
+            continue
         if parent in emitted_parents:
             continue  # already merged at the position of the group's first member
         emitted_parents.add(parent)
-        members = groups[parent]
         block = scores[:, members]
         merged = block.sum(axis=1) if reduce == "sum" else block.max(axis=1)
         columns.append(merged)
@@ -2892,226 +3014,17 @@ def corrected_factor_representation(
         labels.append("+".join(member_names))
         column_members.append(member_names)
 
+    if len(columns) == 0:
+        raise ValueError(
+            "Every layer-0 factor was flagged batch-technical, so the corrected "
+            "representation would have no columns left. Flag fewer factors -- "
+            "check the `shape` column of batch_structure_report."
+        )
+
     result = _store(np.column_stack(columns).astype(float), labels, column_members)
-    if add_labels:
-        # Materialise the same correction as cell-level obs columns, so the
-        # folded assignment can be plotted straight away. Best-effort: this is a
-        # convenience, not a precondition of the returned matrix.
-        try:
-            rollup_batch_factors(model, key_added=labels_key_added)
-        except ValueError as exc:
-            if hasattr(model, "logger"):
-                model.logger.info(
-                    "corrected_factor_representation: skipped the obs labels (%s)",
-                    exc,
-                )
-    return result
-
-
-def suggest_technical_factors(
-    model: "scDEF",
-    batch_key: Optional[str] = None,
-    celltype_key: Optional[str] = None,
-    batch_purity_min: float = 0.6,
-    n_eff_parents_min: float = 1.3,
-    batch_split_min: float = 0.6,
-    min_batch_frac: float = 0.7,
-) -> pd.DataFrame:
-    """Surface layer-0 factors that look technical rather than biological.
-
-    Two independent signatures are reported, covering the two ways a batch
-    effect leaks into L0 after :meth:`scDEF.decompose_batch_effects`:
-
-    - **Cross-cell-type** (``avg_n_eff_parents``): the factor spreads over
-      several lineages instead of sitting under one parent — an ambient or
-      batch-wide program rather than a cell type.
-    - **Within-cell-type** (``is_split``): the factor is one half of a per-batch
-      duplication of a single cell type. This arm is an explicit **AND** of two
-      dense columns::
-
-          is_split = (batch_split_corr >= batch_split_min)
-                     and (frac_dom_batch >= min_batch_frac)
-
-      ``batch_split_corr`` (see :func:`_compute_l0_batch_split`) says "some
-      opposite-batch, same-parent-ish, batch-pure factor covers my cells";
-      ``frac_dom_batch`` says "and I am batch-skewed myself". Both are needed:
-      a factor can score high on the first while being batch-*balanced*, which
-      is the signature of the batch-corrected cell-type factor, not of a split
-      half. Keeping this second condition here rather than inside the metric
-      leaves it visible and plottable instead of hidden as a ``NaN``.
-
-    A factor is ``suggested`` when *either* signature fires. Only diagnostics
-    already stored in ``factor_obs`` plus the model's own cell scores are used
-    — no raw counts or expression values are read.
-
-    Only the within-cell-type signature needs batches. Without a ``batch_key``
-    the cross-cell-type rule still applies on its own and the batch-specific
-    columns are not produced, so ``is_split`` is always ``False``.
-
-    Args:
-        model: scDEF model instance (fitted).
-        batch_key: optional key in ``adata.obs`` holding the batch labels. Used
-            to run :func:`factor_diagnostics` when the batch-split columns are
-            missing, and to report each factor's dominant batch. When ``None``,
-            only the cross-cell-type rule can fire and the ``dom_batch`` /
-            ``frac_dom_batch`` columns are not produced.
-        celltype_key: optional key in ``adata.obs``; when given, a ``cell_type``
-            column reports each factor's majority label (useful for confirming
-            that a flagged pair really is one cell type split in two).
-        batch_purity_min: reporting threshold for the ``batch_purity`` column.
-            Recorded in the result's ``.attrs`` for downstream plotting; it does
-            **not** enter the ``suggested`` rule, which would otherwise flag
-            genuinely batch-restricted biology.
-        n_eff_parents_min: minimum ``avg_n_eff_parents`` for the cross-cell-type
-            rule.
-        batch_split_min: minimum ``batch_split_corr`` for the within-cell-type
-            rule.
-        min_batch_frac: minimum ``frac_dom_batch`` the factor must have *itself*
-            to be called a split half — the second half of the ``is_split``
-            AND. Mirrors the ramp center used for candidate partners in
-            :func:`_compute_l0_batch_split`.
-
-    Returns:
-        DataFrame indexed by current layer-0 factor name with columns
-        ``n_cells``, ``dom_batch`` and ``frac_dom_batch`` (only with a
-        ``batch_key``), (optional) ``cell_type``, ``batch_purity``,
-        ``avg_n_eff_parents``, ``batch_split_corr``, ``batch_split_partner``,
-        ``batch_split_batch``, ``is_split`` and ``suggested``, sorted by
-        ``suggested``, ``batch_split_corr`` and ``avg_n_eff_parents`` (all
-        descending).
-
-    Example:
-        >>> cand = scdef.tl.suggest_technical_factors(
-        ...     model, batch_key="Experiment", celltype_key="SubType"
-        ... )
-        >>> splits = cand.index[cand["is_split"]]
-    """
-    if batch_key is not None and batch_key not in model.adata.obs.columns:
-        raise KeyError(
-            f"batch_key '{batch_key}' not found in model.adata.obs. "
-            f"Available keys: {list(model.adata.obs.columns)}"
-        )
-    if celltype_key is not None and celltype_key not in model.adata.obs.columns:
-        raise KeyError(
-            f"celltype_key '{celltype_key}' not found in model.adata.obs. "
-            f"Available keys: {list(model.adata.obs.columns)}"
-        )
-
-    factor_obs = model.adata.uns.get("factor_obs")
-    if factor_obs is None or "batch_split_corr" not in factor_obs.columns:
-        factor_diagnostics(model, batch_key=batch_key)
-        factor_obs = model.adata.uns["factor_obs"]
-
-    l0_name = model.layer_names[0]
-    has_meta = (
-        "child_layer" in factor_obs.columns
-        and "original_factor_idx" in factor_obs.columns
-    )
-    row_by_orig: Dict[int, str] = {}
-    if has_meta:
-        l0_rows = factor_obs.index[factor_obs["child_layer"] == l0_name]
-        for row_name in l0_rows:
-            row_by_orig[int(factor_obs.at[row_name, "original_factor_idx"])] = row_name
-
-    # Same hard-assignment convention as the batch metrics in factor_diagnostics.
-    z_means_full = np.asarray(model.local_params[1][0], dtype=float)
-    offsets = np.cumsum([0] + [int(s) for s in model.layer_sizes]).astype(int)
-    kept_l0 = np.asarray(model.factor_lists[0], dtype=int)
-    layer_scores = z_means_full[:, int(offsets[0]) : int(offsets[1])][:, kept_l0]
-    winner = kept_l0[np.argmax(layer_scores, axis=1)]
-
-    batch_values = (
-        model.adata.obs[batch_key].to_numpy() if batch_key is not None else None
-    )
-    celltype_values = (
-        model.adata.obs[celltype_key].to_numpy() if celltype_key is not None else None
-    )
-
-    def _row_value(orig: int, column: str, default):
-        row_name = row_by_orig.get(int(orig))
-        if row_name is None or column not in factor_obs.columns:
-            return default
-        value = factor_obs.at[row_name, column]
-        if value is None or (np.isscalar(value) and pd.isna(value)):
-            return default
-        return value
-
-    key_to_current = _current_name_by_factor_obs_key(model)
-    records: List[Dict[str, Any]] = []
-    index: List[str] = []
-    for slot, orig in enumerate(np.asarray(model.factor_lists[0], dtype=int)):
-        orig = int(orig)
-        name = str(model.factor_names[0][slot])
-        cells = np.where(winner == orig)[0]
-
-        record: Dict[str, Any] = {"n_cells": int(cells.size)}
-        if batch_values is not None:
-            dom_batch = ""
-            frac_dom_batch = np.nan
-            if cells.size > 0:
-                values = pd.Series(batch_values[cells]).dropna()
-                if len(values) > 0:
-                    counts = values.value_counts()
-                    dom_batch = str(counts.index[0])
-                    frac_dom_batch = float(counts.iloc[0] / counts.sum())
-            record["dom_batch"] = dom_batch
-            record["frac_dom_batch"] = frac_dom_batch
-        if celltype_values is not None:
-            cell_type = ""
-            if cells.size > 0:
-                values = pd.Series(celltype_values[cells]).dropna()
-                if len(values) > 0:
-                    cell_type = str(values.value_counts().index[0])
-            record["cell_type"] = cell_type
-
-        record["batch_purity"] = float(_row_value(orig, "batch_purity", np.nan))
-        record["avg_n_eff_parents"] = float(
-            _row_value(orig, "avg_n_eff_parents", np.nan)
-        )
-        record["batch_split_corr"] = float(_row_value(orig, "batch_split_corr", np.nan))
-
-        # Report the partner under its current model name, so it can be looked
-        # up in this same frame.
-        partner_row = str(_row_value(orig, "batch_split_partner", ""))
-        partner_name = ""
-        if partner_row and partner_row in factor_obs.index:
-            if has_meta:
-                partner_key = (
-                    str(factor_obs.at[partner_row, "child_layer"]),
-                    int(factor_obs.at[partner_row, "original_factor_idx"]),
-                )
-                partner_name = str(key_to_current.get(partner_key, ""))
-            else:
-                partner_name = partner_row
-        record["batch_split_partner"] = partner_name
-        record["batch_split_batch"] = str(_row_value(orig, "batch_split_batch", ""))
-
-        # The within-cell-type arm is an explicit AND of two dense columns: the
-        # factor must look like a split *and* be batch-skewed itself. Keeping
-        # the second condition here (rather than inside the metric) makes it
-        # visible and plottable instead of hiding as a NaN.
-        cross_celltype = record["avg_n_eff_parents"] >= float(n_eff_parents_min)
-        is_split = bool(
-            record["batch_split_corr"] >= float(batch_split_min)
-            and record.get("frac_dom_batch", np.nan) >= float(min_batch_frac)
-        )
-        record["is_split"] = is_split
-        record["suggested"] = bool(cross_celltype or is_split)
-
-        records.append(record)
-        index.append(name)
-
-    result = pd.DataFrame(records, index=pd.Index(index, name=l0_name))
-    if len(result) > 0:
-        result = result.sort_values(
-            ["suggested", "batch_split_corr", "avg_n_eff_parents"],
-            ascending=False,
-        )
-    result.attrs["batch_key"] = None if batch_key is None else str(batch_key)
-    result.attrs["batch_purity_min"] = float(batch_purity_min)
-    result.attrs["n_eff_parents_min"] = float(n_eff_parents_min)
-    result.attrs["batch_split_min"] = float(batch_split_min)
-    result.attrs["min_batch_frac"] = float(min_batch_frac)
+    # The labels are part of the correction, not an optional extra: they express
+    # the same grouping over cells that the columns express over factors.
+    _rollup_batch_factors(model, key_added=labels_key_added, top_layer=top_layer)
     return result
 
 
@@ -3143,7 +3056,7 @@ def _l0_to_top_layer_weights(model: "scDEF", top_layer: int) -> np.ndarray:
     return weights
 
 
-def rollup_batch_factors(
+def _rollup_batch_factors(
     model: "scDEF",
     flagged: Optional[Sequence[str]] = None,
     key_added: str = "batch_corrected",
@@ -3152,19 +3065,21 @@ def rollup_batch_factors(
 ) -> Dict[str, str]:
     """Write batch-technical roll-up assignments to ``adata.obs``.
 
-    After :func:`set_batch_technical_factors` and
-    ``assign_confident(exclude_batch_technical=True)``, the per-batch L0 splits
-    of one cell type should be read as a single program. This materialises that
-    view as cell-level labels so it can be plotted on a UMAP.
+    Internal: :func:`factor_batch_correction` calls this so the labels always
+    express the same grouping as the corrected columns. It is not part of the
+    public API, because writing the labels without the matching score correction
+    produces two views of the data that disagree.
 
     Two columns are written. They are the **same partition** of cells, labelled
     two ways:
 
     - ``f"{base_obs}_{key_added}"`` (default ``"L0_batch_corrected"``): flagged
-      L0 siblings sharing a parent are merged into one ``"L0_a+L0_b"`` label;
-      every other cell keeps its ``base_obs`` label.
-    - ``key_added`` (default ``"batch_corrected"``): those same merged cells are
-      labelled by their parent factor at ``top_layer`` instead; every other cell
+      L0 siblings sharing a parent are merged into one ``"L0_a+L0_b"`` label. A
+      *lone* flagged factor has no sibling to merge with, so it takes its
+      parent's name -- matching :func:`factor_batch_correction`, which drops that
+      factor's column outright. Every other cell keeps its ``base_obs`` label.
+    - ``key_added`` (default ``"batch_corrected"``): every flagged cell is
+      labelled by its parent factor at ``top_layer`` instead; every other cell
       keeps its ``base_obs`` label.
 
     Args:
@@ -3179,17 +3094,18 @@ def rollup_batch_factors(
             ``adata.uns['batch_technical_top_layer']``, else ``1``.
 
     Returns:
-        ``{sibling_label: parent_name}`` — the 1-1 correspondence between the
-        two columns' merged labels.
+        ``{merged_label: parent_name}`` — the correspondence between the two
+        columns for groups of two or more siblings. Lone flagged factors are
+        omitted: both columns already show the parent for those.
 
     Raises:
         ValueError: if no factors are flagged and ``flagged`` is None, or if
             ``base_obs`` is missing from ``adata.obs``.
 
     Example:
-        >>> scdef.tl.set_batch_technical_factors(model, splits, top_layer=1)
+        >>> scdef.tl.set_batch_technical_factors(model, splits)
         >>> scdef.tl.assign_confident(model, exclude_batch_technical=True)
-        >>> mapping = scdef.tl.rollup_batch_factors(model)
+        >>> mapping = _rollup_batch_factors(model)
         >>> scdef.pl.umap(model, color=["L0_batch_corrected", "batch_corrected"])
     """
     if base_obs not in model.adata.obs.columns:
@@ -3200,11 +3116,7 @@ def rollup_batch_factors(
         )
 
     if flagged is None:
-        factor_obs = model.adata.uns.get("factor_obs")
-        rows = []
-        if factor_obs is not None and "batch_technical" in factor_obs.columns:
-            rows = factor_obs.index[factor_obs["batch_technical"].astype(bool)].tolist()
-        flagged = _factor_obs_rows_to_current_names(model, rows)
+        flagged = get_batch_technical_factors(model)
         if len(flagged) == 0:
             raise ValueError(
                 "No batch-technical factors are set. Run "
@@ -3213,16 +3125,15 @@ def rollup_batch_factors(
             )
     flagged = [str(name) for name in flagged]
 
-    if top_layer is None:
-        top_layer = int(model.adata.uns.get("batch_technical_top_layer", 1))
-    top_layer = int(top_layer)
-    if top_layer < 1 or top_layer >= int(model.n_layers):
-        raise ValueError(
-            f"top_layer must be in [1, {int(model.n_layers) - 1}]; got {top_layer}."
-        )
-
-    weights = _l0_to_top_layer_weights(model, top_layer)
+    top_layer = _resolve_batch_technical_top_layer(model, top_layer)
+    # Same parent resolution as `factor_batch_correction`, so the labels and the
+    # corrected columns cannot disagree about which factors are siblings.
+    parent_slot_of = _l0_parent_slots(model, top_layer)
     kept_top = np.asarray(model.factor_lists[top_layer], dtype=int)
+    slot_of_orig = {
+        int(orig): slot
+        for slot, orig in enumerate(np.asarray(model.factor_lists[0], dtype=int))
+    }
 
     # Resolve each flagged L0 factor to its parent at `top_layer`.
     parent_of: Dict[str, str] = {}
@@ -3233,10 +3144,13 @@ def rollup_batch_factors(
                 f"{name!r} is not a current layer-0 factor of this model. "
                 "Roll-up applies to L0 splits."
             )
-        orig0 = key[1]
-        if orig0 >= weights.shape[1]:
-            raise ValueError(f"{name!r} maps to an out-of-range L0 index {orig0}.")
-        parent_orig = int(kept_top[int(np.argmax(weights[:, orig0]))])
+        slot = slot_of_orig.get(int(key[1]))
+        if slot is None:
+            raise ValueError(
+                f"{name!r} maps to layer-0 index {key[1]}, which is not among the "
+                "factors currently kept."
+            )
+        parent_orig = int(kept_top[int(parent_slot_of[slot])])
         parent_name = current_name_of_original(model, top_layer, parent_orig)
         if parent_name is None:
             raise ValueError(
@@ -3253,6 +3167,12 @@ def rollup_batch_factors(
     mapping: Dict[str, str] = {}
     for parent, members in groups.items():
         members = sorted(members, key=_factor_name_sort_key)
+        if len(members) < 2:
+            # Nothing to merge with: a lone flagged factor rolls up to its parent
+            # in both columns, matching `factor_batch_correction`, which drops
+            # that factor's column outright.
+            sibling_label_of[members[0]] = parent
+            continue
         label = "+".join(members)
         for member in members:
             sibling_label_of[member] = label
@@ -3285,6 +3205,562 @@ def rollup_batch_factors(
     model.adata.obs[f"{base_obs}_{key_added}"] = _ordered(sibling_values)
     model.adata.obs[key_added] = _ordered(parent_values)
     return mapping
+
+
+# `shape` cut points. Deliberately module constants rather than parameters:
+# `shape` is a coarse descriptive bucket, and letting callers tune the cut
+# points would invite reading it as a tuned classifier, which it is not.
+_SHAPE_FRAC_DOM_MIN = 0.7
+_SHAPE_EFF_PARENTS_MAX = 1.5
+
+# Cross-validation settings for the per-branch batch AUC.
+_BRANCH_AUC_N_SPLITS = 3
+_BRANCH_AUC_MIN_CLASS = 15
+
+
+def _batch_codes_for_report(
+    model: "scDEF", batch_key: str, caller: str = "batch_structure_report"
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Per-cell integer batch codes (``-1`` for missing) and the batch labels.
+
+    Raises with an actionable message when ``batch_key`` is absent or carries
+    fewer than two observed values, since every quantity built from these codes
+    is a contrast between batches. ``caller`` names the public function in the
+    error text, so the message points at what the user actually called.
+    """
+    obs = model.adata.obs
+    if batch_key not in obs.columns:
+        raise KeyError(
+            f"batch_key '{batch_key}' not found in model.adata.obs. "
+            f"Available keys: {list(obs.columns)}"
+        )
+    values = pd.Series(np.asarray(obs[batch_key].to_numpy(), dtype=object))
+    codes, uniques = pd.factorize(values, sort=True)
+    codes = np.asarray(codes, dtype=int)
+    labels = np.asarray([str(u) for u in uniques], dtype=object)
+    if labels.size < 2:
+        observed = list(labels)
+        raise ValueError(
+            f"batch_key '{batch_key}' has {labels.size} distinct non-missing "
+            f"value(s) ({observed}); {caller} contrasts batches "
+            "and needs at least 2."
+        )
+    return codes, labels
+
+
+def _branch_batch_auc(
+    features: np.ndarray,
+    batch_codes: np.ndarray,
+    cells: np.ndarray,
+    min_cells: int,
+    random_seed: int,
+) -> float:
+    """Cross-validated AUC for predicting batch from L0 scores inside one branch.
+
+    ``features`` is ``log1p`` of the kept-L0 cell scores for *all* cells;
+    ``cells`` selects the branch. Features are standardized inside each fold.
+    Returns ``NaN`` when the branch is too small or too imbalanced to score.
+    """
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.metrics import roc_auc_score
+    from sklearn.model_selection import StratifiedKFold
+    from sklearn.preprocessing import StandardScaler
+
+    cells = np.asarray(cells, dtype=int)
+    cells = cells[batch_codes[cells] >= 0]
+    if cells.size < int(min_cells):
+        return np.nan
+    y = batch_codes[cells]
+    classes, counts = np.unique(y, return_counts=True)
+    if classes.size < 2 or int(counts.min()) < _BRANCH_AUC_MIN_CLASS:
+        return np.nan
+
+    X = features[cells]
+    splitter = StratifiedKFold(
+        n_splits=_BRANCH_AUC_N_SPLITS, shuffle=True, random_state=int(random_seed)
+    )
+    scores: List[float] = []
+    for train_idx, test_idx in splitter.split(X, y):
+        y_train, y_test = y[train_idx], y[test_idx]
+        if np.unique(y_train).size < 2 or np.unique(y_test).size < 2:
+            continue
+        scaler = StandardScaler().fit(X[train_idx])
+        clf = LogisticRegression(max_iter=2000, C=1.0)
+        clf.fit(scaler.transform(X[train_idx]), y_train)
+        proba = clf.predict_proba(scaler.transform(X[test_idx]))
+        try:
+            if len(clf.classes_) == 2:
+                score = roc_auc_score(y_test, proba[:, 1])
+            else:
+                score = roc_auc_score(
+                    y_test,
+                    proba,
+                    multi_class="ovr",
+                    average="macro",
+                    labels=clf.classes_,
+                )
+        except ValueError:
+            # A class missing from this test fold: skip rather than crash.
+            continue
+        scores.append(float(score))
+    if len(scores) == 0:
+        return np.nan
+    return float(np.mean(scores))
+
+
+def batch_structure_report(
+    model: "scDEF",
+    batch_key: str,
+    group_layer: int = 1,
+    min_group_cells: int = 80,
+    random_seed: int = 0,
+    reference: Union["scDEF", pd.DataFrame, np.ndarray, None] = None,
+) -> pd.DataFrame:
+    """Describe *how* batch structure appears among the layer-0 factors.
+
+    Summarises the **shape** of that structure — how batch-skewed each L0 factor
+    is, whether it has an opposite-batch sibling under the same parent, whether
+    it is confined to one branch or overlaid across several, and how separable
+    the batches are inside each branch — so that the analyst can decide what to
+    filter, correct (:func:`factor_batch_correction`) or keep.
+
+    **Any fitted model with two layers works**, provided ``batch_key`` is a
+    column of ``adata.obs``. The model need not have been fitted with that key,
+    and need not have come from :meth:`scDEF.decompose_batch_effects`. What the
+    report *means* does depend on which it is:
+
+    - a **plain fit with no** ``batch_key`` — the batch was never corrected, so
+      this is the raw batch structure as the factorization happened to capture
+      it. The natural first look, before deciding whether to use a batch key at
+      all.
+    - a **decomposed model** — the upper layers are batch-corrected and frozen
+      while L0 was re-learned without per-batch gene scales, so batch structure
+      is pushed into L0 and read against a corrected hierarchy. This is the
+      configuration the ``shape`` buckets were designed around.
+    - a **fit made with** ``batch_key`` — what is left is the *residual*
+      structure the per-batch ``gene_scale`` did not absorb, which is a smaller
+      and different quantity. Useful for auditing a correction, but do not read
+      its magnitudes as the batch effect in the data.
+
+    It deliberately emits **no verdict**. Nothing here distinguishes a technical
+    per-batch duplication of one cell type from a genuine condition-specific
+    biological program: in paired reference data the two are indistinguishable on
+    every column below (same ``eff_parents`` ~1, same ``opp_batch_sibling``, same
+    near-ceiling ``branch_auc``). Only the experimental design can settle that,
+    which is why ``shape`` is a geometric label and never a cause.
+
+    This function supersedes the removed verdict-style "which factors look
+    technical" suggester, whose flag columns did not hold up: its split rule
+    fired on the IFN data's *biological* monocyte factors, and the
+    ``batch_split_corr`` it ranked on saturates at 0.79-0.99 across factor pairs
+    sharing no genes, placing the genuine pbmcs2b Cytotoxic-T split below
+    unrelated pairs. The same geometry is reported here, descriptively.
+
+    No cell-type or other biological annotation is read. The inputs are
+    ``model.pmeans``, ``model.factor_lists`` / ``factor_names``,
+    ``adata.obs[batch_key]``, and — for the two optional gene-side columns — the
+    reference fit's per-batch ``gene_scale``.
+
+    **Cell side and gene side.** Every column below except the last two is
+    *cell*-side: it asks which cells score on a factor and how they are spread
+    over batches. ``gene_scale_affinity`` is *gene*-side: it asks whether the
+    factor's gene programme is the one the reference fit's per-batch
+    ``gene_scale`` absorbed, and never looks at a cell. A factor can be perfectly
+    mixed across batches and still be built from exactly those genes, or the
+    reverse, so the two are worth reading together.
+
+    .. warning::
+
+       ``gene_scale_affinity`` is **not** a technical-vs-biological score and
+       must not be sorted on as if it were. The per-batch ``gene_scale`` absorbs
+       whatever differs between batches at the gene level, and what that is
+       depends entirely on what the batch key encodes. On Kang CTRL/STIM the
+       top-scoring factor is the interferon-response factor — the biology the
+       experiment is about, which must be kept. On pbmcs2b (two runs of one
+       donor) the top-scoring factor is a stress/ambient programme — an artefact
+       to remove. Identical statistic, opposite verdicts; only the experimental
+       design settles it. This is the same trap that the removed
+       "which factors look technical" suggester fell into.
+
+    Notation: ``kept0 = model.factor_lists[0]``, ``Z = pmeans['L0z'][:, kept0]``,
+    ``W`` the connection weights from L0 up to the kept ``group_layer`` factors,
+    ``a0(c) = argmax_k Z[c, k]`` the hard L0 assignment, ``S_k`` the cells
+    assigned to factor ``k``, and ``Znorm`` the row-normalized ``Z`` (each cell's
+    loading distributed over the kept L0 factors).
+
+    Columns, one row per kept L0 factor:
+
+    - ``n_cells``: ``|S_k|``. Sums to ``n_obs`` over the frame. This is the only
+      column that counts cells with a missing ``batch_key`` value; every
+      batch-derived column below is computed on the labelled cells alone.
+    - ``dom_batch``: modal batch of ``S_k`` (empty string if the factor has no
+      cells with a batch label).
+    - ``frac_dom_batch``: fraction of the *batch-labelled* cells of ``S_k`` that
+      lie in ``dom_batch``. Hard purity, with a floor at the largest batch prior
+      and a ceiling of 1.
+    - ``batch_purity_soft``: ``max_b mass_b / sum_b mass_b`` where
+      ``mass_b = sum_{c in batch b} Znorm[c, k]`` over **all** cells. Floored near
+      ``1/n_batches`` and strongly compressed relative to ``frac_dom_batch``,
+      because normalized loading has a wide background across cells that the
+      factor does not explain.
+    - ``loading_ratio``: median ``Znorm[:, k]`` in ``dom_batch`` over the median
+      in the other batches, taken over **all** cells. See the note on estimator
+      sensitivity below — read it as a rough direction check, not as a ranking.
+    - ``eff_parents``: ``exp(H(p))`` for ``p`` the factor's ``W`` column
+      normalized to a distribution, i.e. the effective number of ``group_layer``
+      parents it loads on. Range ``[1, n_kept_group]``. Values below ~1.1 are
+      indistinguishable from the numerical noise in tiny ``W`` entries; read the
+      column as a coarse "one parent" vs "several parents" flag.
+    - ``parent``: current name of the ``argmax`` ``group_layer`` parent.
+    - ``opp_batch_sibling``: ``True`` when another kept L0 factor shares this
+      ``parent`` and has a *different* ``dom_batch`` — the geometry of a
+      per-batch split of one branch, whatever its cause.
+    - ``branch_auc``: cross-validated AUC (3-fold stratified logistic regression
+      on ``log1p(Z)``, standardized in-fold) for predicting batch from the L0
+      scores of the cells in ``parent``'s branch. A **branch-level** quantity: it
+      is identical for all children of a parent and cannot separate siblings.
+      ``NaN`` when the branch has fewer than ``min_group_cells`` labelled cells,
+      fewer than two batches, or a batch with fewer than 15 cells.
+    - ``shape``: descriptive bucket, **geometry only, never cause**:
+
+      ==================  ==========================================================
+      ``branch_split``    ``frac_dom_batch >= 0.7``, ``eff_parents < 1.5``, has an
+                          opposite-batch sibling. One branch appearing as two
+                          batch-skewed halves.
+      ``branch_skewed``   same but with no opposite-batch sibling. A batch-skewed
+                          factor whose branch has no counterpart half.
+      ``overlaid``        ``frac_dom_batch >= 0.7`` and ``eff_parents >= 1.5``. A
+                          batch-skewed program spread over several branches rather
+                          than confined to one.
+      ``balanced``        everything else, i.e. ``frac_dom_batch < 0.7``.
+      ==================  ==========================================================
+
+    - ``gene_scale_affinity_<batch>``, one per batch, plus
+      ``gene_scale_affinity_max`` and ``gene_scale_affinity_batch``: **present
+      only when the reference fit's per-batch gene_scale is available** (see
+      ``reference``). Each per-batch column is the Spearman correlation, over all
+      genes, between the factor's gene loadings and the per-gene log-ratio of
+      that batch's ``gene_scale`` against the other batches. ``_max`` is the
+      largest of them and ``_batch`` names which batch attains it — the
+      ``top_score`` and ``top_batch`` of
+      :func:`get_factor_batch_gene_scale_affinity`. With exactly two batches the
+      two contrasts are mirror images, so the per-batch columns are exact
+      negatives of each other, ``_max`` is non-negative and ``_batch`` only says
+      which side; the magnitude is the information. With many batches the frame
+      gets correspondingly wide — ``attrs['gene_scale_affinity']`` holds the same
+      numbers. Read the warning above before using any of them.
+
+    Rows are sorted by ``frac_dom_batch`` descending.
+
+    ``result.attrs`` carries ``batch_key``, ``group_layer``, ``min_group_cells``,
+    ``random_seed``, the ``shape`` cut points (``frac_dom_min``,
+    ``eff_parents_max``) and ``branch_summary``: a DataFrame indexed by kept
+    ``group_layer`` factor with ``n_cells`` (cells whose hard assignment at
+    ``group_layer`` is this factor), ``n_l0_children`` (kept L0 factors whose
+    ``argmax`` parent is this factor), ``batch_auc`` and ``max_child_frac_dom``.
+    When the gene-side columns are present it also carries
+    ``gene_scale_affinity``: the full factors-by-batches frame, with one column
+    per batch rather than only the best one.
+
+    Args:
+        model: any fitted scDEF model with at least two layers; see above for
+            how the reading changes with how it was fitted.
+        batch_key: key in ``adata.obs`` holding the batch labels. Needs at least
+            two observed values; the model itself need not have been fitted with
+            this key.
+        group_layer: layer whose factors define the branches (default ``1``,
+            the layer usually frozen by the decomposition). Above ``1`` the
+            per-layer ``W`` slices are chained, as in
+            :func:`factor_batch_correction`.
+        min_group_cells: minimum labelled cells in a branch before its
+            ``batch_auc`` is estimated; smaller branches report ``NaN``.
+        random_seed: seed for the cross-validation splits.
+        reference: where the per-batch ``gene_scale`` contrast for the two
+            gene-side columns comes from — a fitted reference scDEF model, a
+            genes-by-batches DataFrame of log-ratios, or a
+            ``(n_batches, n_genes)`` array, as accepted by
+            :func:`get_factor_batch_gene_scale_affinity`. ``None`` (default) uses
+            the profile :meth:`scDEF.decompose_batch_effects` stored on this
+            model. If neither is available the two columns are simply **omitted**
+            and the rest of the report is unaffected — a model decomposed before
+            that record existed needs the reference passed explicitly.
+
+    Returns:
+        DataFrame indexed by current L0 factor name with columns ``n_cells``,
+        ``dom_batch``, ``frac_dom_batch``, ``batch_purity_soft``,
+        ``loading_ratio``, ``eff_parents``, ``parent``, ``opp_batch_sibling``,
+        ``branch_auc`` and ``shape``, sorted by ``frac_dom_batch`` descending.
+
+    Raises:
+        KeyError: ``batch_key`` is not in ``adata.obs``.
+        ValueError: ``batch_key`` has fewer than two observed values, or
+            ``group_layer`` is out of range.
+
+    Note:
+        Three caveats worth carrying into any reading of the frame.
+
+        ``loading_ratio`` is estimator-sensitive. Taking the median over all
+        cells measures the factor's *background* loading level rather than its
+        loading where it is active, and it can point at the opposite batch from
+        ``frac_dom_batch``. Restricting the median to ``S_k`` compresses every
+        factor into a narrow band; using means tracks ``frac_dom_batch`` much
+        more closely. The all-cell median is reported for continuity, but the
+        column should not be used to rank factors.
+
+        ``parent`` and ``branch_auc`` use *different* definitions of the
+        hierarchy: ``parent`` is the ``argmax`` over the ``W`` column, while the
+        branch is defined by the ``argmax`` over the ``group_layer`` cell scores.
+        These disagree for some factors, and where they do, ``branch_auc`` is
+        measured on a cell population that largely excludes the factor's own
+        cells.
+
+        Small ``n_cells`` rows (a few tens of cells) have a binomial standard
+        error on ``frac_dom_batch`` of 0.05-0.10 and should not be compared with
+        rows of several hundred cells.
+
+    Example:
+        >>> ref = scdef.scDEF(adata, counts_layer="counts", batch_key="stim")
+        >>> ref.fit()
+        >>> model = scdef.scDEF.decompose_batch_effects(ref, top_layer=1)
+        >>> report = scdef.tl.batch_structure_report(model, batch_key="stim")
+        >>> report.loc[report["shape"] == "branch_split", ["parent", "dom_batch"]]
+        >>> report.attrs["branch_summary"].head()
+    """
+    batch_codes, batch_labels = _batch_codes_for_report(model, batch_key)
+
+    group_layer = int(group_layer)
+    if group_layer < 1 or group_layer >= int(model.n_layers):
+        raise ValueError(
+            f"group_layer must be in [1, {int(model.n_layers) - 1}]; got {group_layer}."
+        )
+
+    l0_name = str(model.layer_names[0])
+    kept0 = np.asarray(model.factor_lists[0], dtype=int)
+    kept_group = np.asarray(model.factor_lists[group_layer], dtype=int)
+    if kept0.size == 0 or kept_group.size == 0:
+        raise ValueError(
+            "The model has no kept factors at layer 0 or at "
+            f"layer {group_layer}; nothing to report."
+        )
+
+    # Read the cell scores from `pmeans` rather than `adata.obsm`, so the
+    # partition here is by construction the same one `hard_assignment_*` and
+    # `factor_diagnostics` use even if `annotate_adata` has not been re-run.
+    scores = np.asarray(model.pmeans[f"{l0_name}z"], dtype=float)[:, kept0]
+    n_cells_total = scores.shape[0]
+    if batch_codes.size != n_cells_total:
+        raise ValueError(
+            f"adata.obs['{batch_key}'] has {batch_codes.size} entries but the "
+            f"model's layer-0 scores have {n_cells_total} cells."
+        )
+    assignment = np.argmax(scores, axis=1)
+    normalized = scores / np.clip(scores.sum(axis=1, keepdims=True), 1e-9, None)
+    features = np.log1p(np.clip(scores, 0.0, None))
+
+    # (n_kept_group, n_L0_full) -> restrict columns to the kept L0 factors.
+    weights = _l0_to_top_layer_weights(model, group_layer)[:, kept0]
+
+    # Branch = hard assignment at `group_layer`; slot indexes factor_names.
+    group_assignment = hard_assignment_name_indices(model, group_layer)
+    group_names = [str(n) for n in model.factor_names[group_layer]]
+    branch_auc_by_slot: Dict[int, float] = {}
+    branch_cells_by_slot: Dict[int, int] = {}
+    for slot in range(kept_group.size):
+        cells = np.where(group_assignment == slot)[0]
+        branch_cells_by_slot[slot] = int(cells.size)
+        branch_auc_by_slot[slot] = _branch_batch_auc(
+            features, batch_codes, cells, min_group_cells, random_seed
+        )
+
+    n_batches = int(batch_labels.size)
+    labelled = batch_codes >= 0
+
+    names: List[str] = []
+    records: List[Dict[str, Any]] = []
+    parent_slots: List[int] = []
+    for slot, orig in enumerate(kept0):
+        name = str(model.factor_names[0][slot])
+        cells = np.where(assignment == slot)[0]
+
+        # --- batch skew of the cells this factor claims (hard) ---
+        dom_batch = ""
+        frac_dom = np.nan
+        dom_code = -1
+        cell_codes = batch_codes[cells]
+        cell_codes = cell_codes[cell_codes >= 0]
+        if cell_codes.size > 0:
+            counts = np.bincount(cell_codes, minlength=n_batches).astype(float)
+            dom_code = int(np.argmax(counts))
+            dom_batch = str(batch_labels[dom_code])
+            frac_dom = float(counts[dom_code] / counts.sum())
+
+        # --- batch skew of the loading mass, over every cell (soft) ---
+        column = normalized[:, slot]
+        purity_soft = np.nan
+        loading_ratio = np.nan
+        if n_batches >= 2:
+            mass = np.array(
+                [
+                    float(column[labelled & (batch_codes == b)].sum())
+                    for b in range(n_batches)
+                ]
+            )
+            total_mass = float(mass.sum())
+            if total_mass > 0.0:
+                purity_soft = float(mass.max() / total_mass)
+        if dom_code >= 0:
+            in_dom = labelled & (batch_codes == dom_code)
+            out_dom = labelled & (batch_codes != dom_code)
+            if in_dom.any() and out_dom.any():
+                loading_ratio = float(
+                    np.median(column[in_dom]) / (np.median(column[out_dom]) + 1e-9)
+                )
+
+        # --- position in the hierarchy ---
+        parent_column = np.clip(weights[:, slot], 0.0, None)
+        parent_total = float(parent_column.sum())
+        eff_parents = np.nan
+        if parent_total > 0.0:
+            probs = parent_column / parent_total
+            probs = probs[probs > 0.0]
+            eff_parents = float(np.exp(-np.sum(probs * np.log(probs))))
+        parent_slot = int(np.argmax(parent_column))
+        parent_slots.append(parent_slot)
+        parent_name = current_name_of_original(
+            model, group_layer, int(kept_group[parent_slot])
+        )
+
+        names.append(name)
+        records.append(
+            {
+                "n_cells": int(cells.size),
+                "dom_batch": dom_batch,
+                "frac_dom_batch": frac_dom,
+                "batch_purity_soft": purity_soft,
+                "loading_ratio": loading_ratio,
+                "eff_parents": eff_parents,
+                "parent": "" if parent_name is None else str(parent_name),
+                "branch_auc": branch_auc_by_slot.get(parent_slot, np.nan),
+            }
+        )
+
+    # --- opposite-batch sibling: same argmax parent, different dominant batch ---
+    for i, record in enumerate(records):
+        opp = False
+        if record["n_cells"] > 0 and record["dom_batch"]:
+            for j, other in enumerate(records):
+                if j == i or other["n_cells"] <= 0 or not other["dom_batch"]:
+                    continue
+                if (
+                    parent_slots[j] == parent_slots[i]
+                    and other["dom_batch"] != record["dom_batch"]
+                ):
+                    opp = True
+                    break
+        record["opp_batch_sibling"] = opp
+
+        # `shape` is a description of geometry, not a claim about cause.
+        frac_dom = record["frac_dom_batch"]
+        eff_parents = record["eff_parents"]
+        skewed = bool(np.isfinite(frac_dom) and frac_dom >= _SHAPE_FRAC_DOM_MIN)
+        multi_parent = bool(
+            np.isfinite(eff_parents) and eff_parents >= _SHAPE_EFF_PARENTS_MAX
+        )
+        if not skewed:
+            shape = "balanced"
+        elif multi_parent:
+            shape = "overlaid"
+        elif opp:
+            shape = "branch_split"
+        else:
+            shape = "branch_skewed"
+        record["shape"] = shape
+
+    columns = [
+        "n_cells",
+        "dom_batch",
+        "frac_dom_batch",
+        "batch_purity_soft",
+        "loading_ratio",
+        "eff_parents",
+        "parent",
+        "opp_batch_sibling",
+        "branch_auc",
+        "shape",
+    ]
+    result = pd.DataFrame(records, index=pd.Index(names, name=l0_name))[columns]
+
+    # --- gene-side evidence, when the reference profile is available ---
+    # Everything above is cell-side. This asks whether a factor's gene programme
+    # is the one the reference fit's per-batch `gene_scale` absorbed. It is
+    # optional: a model decomposed before that profile was recorded, or a model
+    # that never had a per-batch gene side, simply gets no such columns.
+    affinity: Optional[pd.DataFrame] = None
+    try:
+        affinity = get_factor_batch_gene_scale_affinity(model, reference)
+    except (ValueError, TypeError, KeyError) as exc:
+        if reference is not None:
+            # The caller explicitly asked for it, so do not silently drop it.
+            raise
+        if hasattr(model, "logger"):
+            model.logger.info(
+                "batch_structure_report: no gene_scale affinity columns (%s)", exc
+            )
+    if affinity is not None:
+        aff = affinity.reindex(result.index)
+        summary_names = ("gene_scale_affinity_max", "gene_scale_affinity_batch")
+        for label in affinity.attrs.get("batch_columns", []):
+            name = f"gene_scale_affinity_{label}"
+            # A batch literally named "max" or "batch" would shadow a summary
+            # column; suffix it rather than silently overwrite.
+            if name in summary_names or name in result.columns:
+                name = f"{name}_"
+            result[name] = aff[label]
+        result["gene_scale_affinity_max"] = aff[TOP_SCORE_COL]
+        result["gene_scale_affinity_batch"] = aff[TOP_BATCH_COL]
+
+    if len(result) > 0:
+        result = result.sort_values("frac_dom_batch", ascending=False, kind="stable")
+
+    # --- per-branch summary ---
+    summary_records: List[Dict[str, Any]] = []
+    for slot in range(kept_group.size):
+        children = [i for i, p in enumerate(parent_slots) if p == slot]
+        child_fracs = [
+            records[i]["frac_dom_batch"]
+            for i in children
+            if np.isfinite(records[i]["frac_dom_batch"])
+        ]
+        summary_records.append(
+            {
+                "n_cells": branch_cells_by_slot.get(slot, 0),
+                "n_l0_children": len(children),
+                "batch_auc": branch_auc_by_slot.get(slot, np.nan),
+                "max_child_frac_dom": (
+                    float(np.max(child_fracs)) if len(child_fracs) > 0 else np.nan
+                ),
+            }
+        )
+    branch_summary = pd.DataFrame(
+        summary_records,
+        index=pd.Index(group_names, name=str(model.layer_names[group_layer])),
+        columns=["n_cells", "n_l0_children", "batch_auc", "max_child_frac_dom"],
+    )
+
+    result.attrs["batch_key"] = str(batch_key)
+    result.attrs["batches"] = [str(b) for b in batch_labels]
+    result.attrs["group_layer"] = group_layer
+    result.attrs["min_group_cells"] = int(min_group_cells)
+    result.attrs["random_seed"] = int(random_seed)
+    result.attrs["frac_dom_min"] = float(_SHAPE_FRAC_DOM_MIN)
+    result.attrs["eff_parents_max"] = float(_SHAPE_EFF_PARENTS_MAX)
+    result.attrs["branch_auc_n_splits"] = int(_BRANCH_AUC_N_SPLITS)
+    result.attrs["branch_auc_min_class"] = int(_BRANCH_AUC_MIN_CLASS)
+    result.attrs["branch_summary"] = branch_summary
+    if affinity is not None:
+        # The full factors-by-batches frame, not just the best-matching batch.
+        result.attrs["gene_scale_affinity"] = affinity
+    return result
 
 
 def filter_factors(
@@ -3338,7 +3814,7 @@ def drop_technical(model: "scDEF") -> None:
         factor_diagnostics(model)
 
     if "technical" in model.adata.uns["factor_obs"].columns:
-        technical_names = set(get_technical_drop_factors(model))
+        technical_names = set(get_technical_factors(model))
         if len(technical_names) > 0:
             new_factor_lists = []
             for layer_idx in range(model.n_layers):
@@ -3787,8 +4263,8 @@ def umap(
         metric: distance metric for neighbors computation.
 
     When a corrected layer-0 representation is already present in
-    ``adata.obsm['X_L0_corrected']`` (written by
-    :func:`corrected_factor_representation`), it is embedded as well and stored
+    ``adata.obsm['X_L0_batch_corrected']`` (written by
+    :func:`factor_batch_correction`), it is embedded as well and stored
     as ``adata.obsm['X_umap_L0_corrected']``, in addition to the per-layer
     embeddings. This function never *builds* that representation.
     """
@@ -3821,7 +4297,7 @@ def umap(
         # Store under a layer-specific key
         model.adata.obsm[f"X_umap_{layer_name}"] = model.adata.obsm["X_umap"].copy()
 
-    corrected_key = "X_L0_corrected"
+    corrected_key = "X_L0_batch_corrected"
     if corrected_key in model.adata.obsm:
         # Embed the stored corrected representation; never build it here.
         # Same recipe as the per-layer loop above, on the merged matrix.

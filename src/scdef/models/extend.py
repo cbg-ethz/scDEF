@@ -8,6 +8,18 @@ import numpy as np
 import jax.numpy as jnp
 from anndata import AnnData
 
+# Bounds applied to any warm-started ``gene_scale`` mean. The pooled-marginal MLE
+# reaches ~1e7 for the most abundant genes in real data, so the historical 1e6
+# upper bound silently truncated exactly the genes these warm starts exist to get
+# right.
+_GENE_SCALE_MIN = 1e-6
+_GENE_SCALE_MAX = 1e7
+
+# Denominator floor for the pooled-marginal MLE. Genes whose expected
+# reconstruction is at or below this have no factor support to divide by and fall
+# back to the geometric-mean profile instead of producing inf/nan.
+_POOLED_U_FLOOR = 1e-12
+
 
 def _resolve_init_gene_scale_array(
     reference_model,
@@ -16,6 +28,12 @@ def _resolve_init_gene_scale_array(
     n_genes: int,
 ) -> np.ndarray:
     """Build ``(n_batches, n_genes)`` gene-scale means for warm-starting pass 2.
+
+    With ``init_gene_scale='reference'`` the reference's per-batch rows are pooled
+    with a geometric mean (a straight copy when there is only one row). This is the
+    warm start used by :func:`from_reference`, and the fallback used by
+    :func:`decompose_batch_effects` when the pooled-marginal MLE is unavailable; see
+    :func:`_pooled_marginal_gene_scale` for the difference between the two.
 
     Returns:
         Per-batch gene-scale means to pass to ``init_var_params``.
@@ -50,7 +68,7 @@ def _resolve_init_gene_scale_array(
             profile = gs[0]
         else:
             profile = np.exp(np.mean(np.log(np.clip(gs, 1e-6, None)), axis=0))
-        profile = np.clip(profile, 1e-6, 1e6)
+        profile = np.clip(profile, _GENE_SCALE_MIN, _GENE_SCALE_MAX)
         return np.tile(profile[None, :], (n_batches, 1))
 
     arr = np.asarray(init_gene_scale, dtype=np.float32)
@@ -73,6 +91,89 @@ def _resolve_init_gene_scale_array(
             f"init_gene_scale array has {arr.shape[1]} genes but adata has {n_genes}."
         )
     return np.clip(arr, 1e-6, 1e6)
+
+
+def _pooled_marginal_gene_scale(
+    model,
+    init_z: Sequence[np.ndarray],
+    init_w: Sequence[np.ndarray],
+    fallback_profile: np.ndarray,
+    logger=None,
+) -> np.ndarray:
+    """Shared ``gene_scale`` profile that reproduces the pooled counts at init.
+
+    The likelihood mean is ``(z @ W) * cell_scale * gene_scale``. Summing over cells
+    at the model's own initialization gives, for gene ``g``,
+
+    .. math::
+        U_g = \\big((c^\\top Z_0)\\, W_0\\big)_g, \\qquad s_g = S_g / U_g,
+
+    where ``c`` is the ``cell_scale`` warm start that ``init_var_params`` builds when
+    ``init_budgets=True`` (``clip(lib / mean(lib), 1e-3, 1e2)``, ``lib = X.sum(1)``),
+    ``Z_0``/``W_0`` are the layer-0 warm starts after the same clipping
+    ``init_var_params`` applies to them, and ``S_g = X.sum(0)`` are the observed
+    pooled counts. ``s_g`` is therefore the maximum-likelihood shared scale for the
+    pooled marginal of gene ``g`` under the model's actual initialization.
+
+    Why not the geometric mean across the reference's batch rows: that profile was
+    fitted against the *reference's* ``cell_scale``, which the decomposed model
+    discards, and a geometric middle under-predicts the pooled arithmetic level of
+    any gene whose batch levels differ. Both defects are level errors in the warm
+    start, and both disappear here because ``s_g`` is derived from the pooled counts
+    directly rather than transplanted.
+
+    This does not read the reference's per-batch rows at all, so it applies equally
+    to one-row and multi-row references, and it carries no batch information: the
+    resulting profile depends only on the pooled totals.
+
+    Args:
+        model: the freshly constructed (unfitted) target model. Supplies ``X`` and
+            ``batch_lib_sizes``.
+        init_z: per-layer ``z`` warm starts; only layer 0 is used.
+        init_w: per-layer ``W`` warm starts; only layer 0 is used.
+        fallback_profile: ``(n_genes,)`` profile used for genes with no factor
+            support, i.e. where ``U_g`` underflows.
+        logger: optional logger used to report the fallback count.
+
+    Returns:
+        A ``(n_genes,)`` array of gene-scale means, clipped to
+        ``[_GENE_SCALE_MIN, _GENE_SCALE_MAX]``.
+    """
+    # numpy raises spurious divide/overflow/invalid flags from the Accelerate BLAS
+    # matmul even for wholly finite operands, so the flags are muted here and the
+    # result is validated explicitly by the `isfinite` check below instead.
+    with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+        # Mirror `init_var_params(init_budgets=True)`: cell_scale means are the
+        # library sizes divided by their mean, clipped.
+        lib = np.asarray(model.batch_lib_sizes, dtype=np.float64).reshape(-1)
+        cell_scale = np.clip(lib / np.mean(lib), 1e-3, 1e2)
+
+        # Mirror the clipping `init_var_params` applies to the layer-0 warm starts
+        # before they become variational means.
+        z0 = np.clip(np.asarray(init_z[0], dtype=np.float64), 1e-3, 1e6)
+        w0 = np.clip(np.asarray(init_w[0], dtype=np.float64), 1e-3, 1e8)
+
+        # ((c^T Z) W)_g -- O(NK + KG), never forms the (N, G) reconstruction.
+        u = (cell_scale @ z0) @ w0
+
+    pooled_counts = np.asarray(model.X, dtype=np.float64).sum(axis=0)
+
+    unsupported = ~np.isfinite(u) | (u <= _POOLED_U_FLOOR)
+    n_unsupported = int(np.count_nonzero(unsupported))
+    if n_unsupported and logger is not None:
+        logger.info(
+            f"Pooled-marginal gene_scale warm start: {n_unsupported} of {u.size} "
+            "genes have no factor support at initialization; falling back to the "
+            "geometric mean of the reference gene_scale for those genes."
+        )
+
+    safe_u = np.where(unsupported, 1.0, u)
+    profile = np.where(
+        unsupported,
+        np.asarray(fallback_profile, dtype=np.float64).reshape(-1),
+        pooled_counts / safe_u,
+    )
+    return np.clip(profile, _GENE_SCALE_MIN, _GENE_SCALE_MAX).astype(np.float32)
 
 
 def _reference_model_kwargs(
@@ -236,7 +337,7 @@ def from_reference(
         init_gene_scale_arr = _resolve_init_gene_scale_array(
             reference_model,
             init_gene_scale,
-            int(model.n_batches),
+            int(model.n_gene_scale_batches),
             int(model.adata.n_vars),
         )
     model._pending_reference_init = {
@@ -322,11 +423,156 @@ def add_batch_correction(
     return model
 
 
+def _resolve_decompose_batch_kwargs(
+    reference_model,
+    target_adata: AnnData,
+    batch_cell_scale: bool,
+    logger=None,
+) -> Dict[str, Any]:
+    """Resolve the batch-related constructor kwargs for ``decompose_batch_effects``.
+
+    ``batch_key`` in ``scDEF`` controls two independent things. The **cell side** is
+    the per-batch Gamma prior that ``cell_scale`` shrinks toward (``batch_lib_ratio``);
+    it is gene-independent and can therefore only carry sequencing depth. The **gene
+    side** gives ``gene_scale`` one row per batch; it is gene-specific and can absorb
+    gene programmes. Decomposition wants the gene side *off* -- that is the whole point
+    of pushing structure into the L0 factors -- but there is no reason to also discard
+    the depth prior.
+
+    Args:
+        reference_model: the fitted model being decomposed.
+        target_adata: the AnnData the decomposed model will be built on.
+        batch_cell_scale: whether to keep the reference's per-batch ``cell_scale`` prior.
+        logger: optional logger used to report graceful degradation.
+
+    Returns:
+        Constructor kwargs: ``{"batch_key": None}`` to reproduce the historical
+        construction, or ``{"batch_key": <key>, "batch_gene_scale": False}`` to keep
+        only the cell side.
+    """
+
+    def _log(msg: str) -> None:
+        if logger is not None:
+            logger.info(msg)
+
+    if not batch_cell_scale:
+        return {"batch_key": None}
+
+    batch_key = getattr(reference_model, "batch_key", None)
+    if batch_key is None:
+        _log(
+            "batch_cell_scale=True but the reference model has no batch_key; "
+            "building the decomposed model without a batch key."
+        )
+        return {"batch_key": None}
+
+    if batch_key not in target_adata.obs.columns:
+        _log(
+            f"batch_cell_scale=True but `{batch_key}` is not a column of the target "
+            "adata.obs; building the decomposed model without a batch key."
+        )
+        return {"batch_key": None}
+
+    n_present = int(len(np.unique(np.asarray(target_adata.obs[batch_key].values))))
+    if n_present < 2:
+        _log(
+            f"batch_cell_scale=True but `{batch_key}` has only {n_present} distinct "
+            "value(s) in the cells being fitted; building the decomposed model "
+            "without a batch key."
+        )
+        return {"batch_key": None}
+
+    _log(
+        f"batch_cell_scale=True: keeping the per-batch cell_scale prior from "
+        f"`{batch_key}` ({n_present} batches) while gene_scale stays a single "
+        "shared row."
+    )
+    return {"batch_key": batch_key, "batch_gene_scale": False}
+
+
+def _resolve_decompose_gene_scale(
+    reference_model,
+    model,
+    init_z: Sequence[np.ndarray],
+    init_w: Sequence[np.ndarray],
+    init_gene_scale: Union[str, np.ndarray],
+    nmf_init: bool,
+) -> Optional[np.ndarray]:
+    """Resolve the shared ``gene_scale`` warm start for ``decompose_batch_effects``.
+
+    ``gene_scale`` is a single shared row in every decomposition, because the
+    decomposed model is always built with ``batch_gene_scale=False`` (or no batch
+    key), so this returns one row tiled to ``model.n_gene_scale_batches``.
+
+    Args:
+        reference_model: the fitted model being decomposed.
+        model: the freshly constructed (unfitted) decomposed model.
+        init_z: per-layer ``z`` warm starts passed to ``init_var_params``.
+        init_w: per-layer ``W`` warm starts passed to ``init_var_params``.
+        init_gene_scale: ``'reference'``, ``'prior'``, or an explicit array.
+        nmf_init: whether layer-0 ``W`` will be set by NMF instead of ``init_w``.
+
+    Returns:
+        The gene-scale means to pass to ``init_var_params``, or ``None`` for
+        ``'prior'`` (which leaves the count-derived prior mean in place).
+
+    Raises:
+        ValueError: if ``init_gene_scale`` is an unrecognized string.
+    """
+    n_rows = int(model.n_gene_scale_batches)
+    n_genes = int(model.adata.n_vars)
+    logger = getattr(model, "logger", None)
+
+    if not isinstance(init_gene_scale, str):
+        return _resolve_init_gene_scale_array(
+            reference_model,
+            np.asarray(init_gene_scale, dtype=np.float32),
+            n_batches=n_rows,
+            n_genes=n_genes,
+        )
+
+    if init_gene_scale == "prior":
+        return None
+    if init_gene_scale != "reference":
+        raise ValueError(
+            "init_gene_scale must be 'reference', 'prior', or an array; "
+            f"got {init_gene_scale!r}."
+        )
+
+    geometric_arr = _resolve_init_gene_scale_array(
+        reference_model,
+        "reference",
+        n_batches=n_rows,
+        n_genes=n_genes,
+    )
+    if nmf_init:
+        # `init_var_params` ignores `init_w` under `nmf_init`, so a profile derived
+        # from the reference W would not describe this model's actual initialization.
+        if logger is not None:
+            logger.info(
+                "nmf_init=True: layer-0 W is set by NMF rather than by the reference, "
+                "so the pooled-marginal gene_scale warm start does not describe this "
+                "model's initialization; falling back to the geometric mean of the "
+                "reference gene_scale."
+            )
+        return geometric_arr
+
+    profile = _pooled_marginal_gene_scale(
+        model,
+        init_z,
+        init_w,
+        geometric_arr[0],
+        logger=logger,
+    )
+    return np.tile(profile[None, :], (n_rows, 1))
+
+
 def decompose_batch_effects(
     reference_model,
     *,
     adata: Optional[AnnData] = None,
     counts_layer: Optional[str] = None,
+    batch_cell_scale: bool = True,
     top_layer: int = 1,
     n_epoch: int = 400,
     lr: float = 0.05,
@@ -340,24 +586,61 @@ def decompose_batch_effects(
     Two-stage workflow:
 
     1. ``reference_model`` was fitted **with** a ``batch_key``, producing a
-       batch-corrected hierarchy where per-batch ``gene_scale`` absorbed
-       technical variance.
-    2. This function creates a new model **without** ``batch_key``,
-       warm-starts all ``W`` from the reference, and re-learns all layers
-       up to ``top_layer``.  At the boundary (``top_layer``), only ``W`` is
-       re-learned while ``z`` stays fixed — preserving the cell-to-group
+       hierarchy where per-batch ``gene_scale`` absorbed between-batch variance.
+    2. This function creates a new model with the per-batch ``gene_scale``
+       **switched off**, warm-starts all ``W`` from the reference, and re-learns
+       all layers up to ``top_layer``.  At the boundary (``top_layer``), only
+       ``W`` is re-learned while ``z`` stays fixed — preserving the cell-to-group
        assignments as the structural constraint.  Layers below
        ``top_layer`` are fully re-learned (both ``W`` and ``z``).
        Layers above ``top_layer`` remain completely fixed.
+
+    **Which half of ``batch_key`` is discarded.** ``batch_key`` in ``scDEF``
+    controls two independent quantities:
+
+    * the **gene side** — ``gene_scale`` with one row per batch, i.e. a
+      gene-*specific* per-batch multiplier;
+    * the **cell side** — ``batch_lib_sizes`` / ``batch_lib_ratio``, the
+      per-batch Gamma prior that ``cell_scale`` shrinks toward, i.e. a
+      gene-*independent* per-batch multiplier.
+
+    Only the gene side must go. A gene-specific term can express a gene
+    programme, so leaving it in place would let it re-absorb exactly the
+    structure this function is trying to surface in the L0 factors. A
+    gene-independent term cannot express a programme at all — it is one number
+    per batch, so the most it can represent is sequencing depth. Historically
+    both were discarded together; ``batch_cell_scale=True`` (the default) now
+    keeps the cell side.
+
+    Keeping the cell side is *expected* to reduce the depth component that would
+    otherwise have to land in ``z``: with ``batch_key=None`` the model shrinks
+    every ``cell_scale`` toward a single Gamma fitted to the pooled library-size
+    mean and variance, which is misspecified for both batches when they differ
+    in depth. This expectation has **not** been validated by refitting; no claim
+    is made here about the effect on the resulting factors.
 
     L0 factor BRD and ARD are re-initialized from model priors rather than
     copied from the reference, so factor relevance can be re-estimated during
     decomposition.
 
-    ``gene_scale`` is warm-started from the reference fitted profile by default
-    (geometric mean across batches), because the batch-key model often learns
-    per-batch scales orders of magnitude above the count-derived prior. Starting
-    from that prior alone leaves a large reconstruction gap at decomposition time.
+    **How the shared ``gene_scale`` is warm-started.** The count-derived prior alone
+    leaves a large reconstruction gap here, because the batch-key model often learns
+    per-batch scales orders of magnitude above it. The default
+    (``init_gene_scale='reference'``) instead solves for the shared scale directly:
+    with the likelihood mean ``(z @ W) * cell_scale * gene_scale``, summing over
+    cells at this model's own initialization gives
+    ``U_g = ((cell_scale^T z_0) W_0)_g``, and ``s_g = X.sum(0)_g / U_g`` is the
+    maximum-likelihood shared scale for the pooled marginal of gene ``g``. It is
+    computed from the target data and this model's warm starts, so it needs no
+    transplant of the reference's fitted scale, and it applies whether the reference
+    had one ``gene_scale`` row or several.
+
+    This is exact **for the pooled marginal only**. A single shared row still cannot
+    fit two batches whose levels for a gene differ — no shared scale can. That
+    residual is left deliberately unabsorbed: pushing it into ``z @ W`` is what makes
+    per-batch structure visible in the re-learned lower layers, which is the point of
+    the decomposition. What the pooled MLE removes is the part that is *not*
+    structure, namely a systematic level offset in the warm start.
 
     With ``top_layer=1`` (default):
         - L0: W warm-started and re-learned, z re-learned
@@ -376,6 +659,14 @@ def decompose_batch_effects(
         adata: AnnData for the second stage. Defaults to
             ``reference_model.adata``.
         counts_layer: counts layer for ``adata``.
+        batch_cell_scale: if True (default), carry the reference model's
+            ``batch_key`` into the decomposed model with ``batch_gene_scale=False``,
+            so the per-batch ``cell_scale`` prior is kept while ``gene_scale``
+            stays a single shared row. Degrades gracefully (with a log message) to
+            no batch key when the reference has no ``batch_key``, when that key is
+            absent from the target ``adata.obs``, or when fewer than two batches
+            are present in the cells being fitted. Set to False to reproduce the
+            historical construction, which discarded both sides.
         top_layer: the highest layer whose ``W`` is re-learned. Its ``z``
             remains frozen as the structural anchor. Default ``1``.
         n_epoch: training epochs for the re-learning phase.
@@ -384,10 +675,19 @@ def decompose_batch_effects(
         nmf_init: if True, initialize L0 W via NMF on the data instead of
             warm-starting from the reference. Default False.
         init_gene_scale: warm start for the shared ``gene_scale`` in the
-            decomposed model. ``\"reference\"`` (default) uses the geometric
-            mean of ``reference_model.pmeans['gene_scale']`` across batches.
-            ``\"prior\"`` uses only the count-derived prior mean
-            (``1 / gene_ratio_init``). Or pass an explicit ``(n_genes,)`` array.
+            decomposed model.
+
+            * ``\"reference\"`` (default): the pooled-marginal MLE
+              ``X.sum(0)_g / ((cell_scale^T z_0) W_0)_g``, which reproduces the
+              observed pooled counts exactly at initialization (see above). Falls
+              back to the geometric mean of
+              ``reference_model.pmeans['gene_scale']`` across batches when
+              ``nmf_init=True`` — layer-0 ``W`` is then set by NMF, so a profile
+              derived from the reference ``W`` would not describe the model's actual
+              initialization — and, per gene, for genes with no factor support.
+            * ``\"prior\"``: only the count-derived prior mean
+              (``1 / gene_ratio_init``).
+            * an explicit ``(n_genes,)`` array.
         **fit_kwargs: additional keyword arguments forwarded to ``_learn``.
 
     Returns:
@@ -453,9 +753,17 @@ def decompose_batch_effects(
                 z_layer[new_idx] = z[ref_idx][:, keep]
             init_z.append(z_layer)
 
-    # Create new model WITHOUT batch_key
+    # Create the new model with the per-batch gene side switched off. The cell side
+    # (per-batch cell_scale prior) is kept when `batch_cell_scale` is True.
     model_kwargs = _reference_model_kwargs(reference_model, layer_sizes)
-    model_kwargs["batch_key"] = None
+    model_kwargs.update(
+        _resolve_decompose_batch_kwargs(
+            reference_model,
+            target_adata,
+            bool(batch_cell_scale),
+            logger=getattr(reference_model, "logger", None),
+        )
+    )
     model = scDEF(
         target_adata,
         counts_layer=counts_layer,
@@ -465,29 +773,14 @@ def decompose_batch_effects(
     model.top_alpha = reference_model.top_alpha
     model.update_model_priors(update_alpha_from_cov=False)
 
-    init_gene_scale_arr: Optional[np.ndarray] = None
-    if isinstance(init_gene_scale, str):
-        if init_gene_scale == "prior":
-            init_gene_scale_arr = None
-        elif init_gene_scale == "reference":
-            init_gene_scale_arr = _resolve_init_gene_scale_array(
-                reference_model,
-                "reference",
-                n_batches=1,
-                n_genes=int(target_adata.n_vars),
-            )
-        else:
-            raise ValueError(
-                "init_gene_scale must be 'reference', 'prior', or an array; "
-                f"got {init_gene_scale!r}."
-            )
-    else:
-        init_gene_scale_arr = _resolve_init_gene_scale_array(
-            reference_model,
-            np.asarray(init_gene_scale, dtype=np.float32),
-            n_batches=1,
-            n_genes=int(target_adata.n_vars),
-        )
+    init_gene_scale_arr = _resolve_decompose_gene_scale(
+        reference_model,
+        model,
+        init_z,
+        init_w,
+        init_gene_scale,
+        bool(nmf_init),
+    )
 
     # Initialize variational parameters with high concentration to stay
     # close to reference warm-starts (avoids NaN from large deviations)
@@ -545,6 +838,26 @@ def decompose_batch_effects(
     # that is where per-batch splits can appear; `top_layer` itself still holds
     # the batch-corrected signal and is the roll-up target for those splits.
     model.adata.uns["batch_technical_top_layer"] = int(top_layer)
+
+    # Record the reference fit's per-batch `gene_scale` -- the term this model
+    # deliberately does without. It is what the decomposed L0 factors have to
+    # re-absorb, so keeping it here lets `batch_structure_report` and
+    # `get_factor_batch_gene_scale_affinity` score them against it without the
+    # reference model being kept around. A (n_batches, n_genes) profile is tens
+    # of KB, and the gene axes match by construction.
+    ref_pmeans = getattr(reference_model, "pmeans", None)
+    ref_gene_scale = (
+        ref_pmeans.get("gene_scale") if isinstance(ref_pmeans, dict) else None
+    )
+    if ref_gene_scale is not None:
+        gs = np.asarray(ref_gene_scale, dtype=float)
+        # Only a genuinely per-batch profile carries a contrast worth storing: a
+        # single shared row has nothing to score factors against.
+        if gs.ndim == 2 and gs.shape[0] > 1 and gs.shape[1] == int(model.adata.n_vars):
+            model.adata.uns["reference_gene_scale"] = gs
+            model.adata.uns["reference_gene_scale_batches"] = [
+                str(b) for b in getattr(reference_model, "batches", [])
+            ]
     return model
 
 

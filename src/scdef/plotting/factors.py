@@ -353,7 +353,7 @@ def _resolve_corrected_factor_columns(
     """Column indices and labels for the batch-corrected L0 matrix.
 
     Labels are the merged names produced by
-    :func:`scdef.tools.corrected_factor_representation` (e.g. ``"L0_7+L0_14"``),
+    :func:`scdef.tools.factor_batch_correction` (e.g. ``"L0_7+L0_14"``),
     which do not exist in ``model.factor_names``; ``factors`` is matched against
     them directly. With ``sort_layer_factors`` and no explicit ``factors``,
     columns follow the hierarchy ordering via
@@ -505,7 +505,7 @@ def obs_cell_factor_heatmap(
             merged column simply takes their place.
         merge_batch_technical: If True, replace each group of batch-technical
             splits with one merged column via
-            :func:`scdef.tools.corrected_factor_representation`, so the program
+            :func:`scdef.tools.factor_batch_correction`, so the program
             reads as a single column firing across *both* batch blocks instead
             of two columns each firing in one. Merged columns are labelled
             ``"L0_7+L0_14"`` so the corrected split stays visible. Layer 0 only.
@@ -594,10 +594,10 @@ def obs_cell_factor_heatmap(
         # Merged columns have no counterpart in model.factor_names, so the
         # normal layer-column resolution is bypassed and the corrected labels
         # are used directly. The representation is READ, never built here: run
-        # scdef.tl.corrected_factor_representation to (re)build it.
+        # scdef.tl.factor_batch_correction to (re)build it.
         from ..tools.factor import _batch_technical_l0_slots
 
-        corrected_key = "X_L0_corrected"
+        corrected_key = "X_L0_batch_corrected"
         cached_labels = model.adata.uns.get(f"{corrected_key}_factors")
         cached_merged_on = model.adata.uns.get(f"{corrected_key}_batch_technical")
         if (
@@ -608,7 +608,7 @@ def obs_cell_factor_heatmap(
         ):
             raise KeyError(
                 f"No corrected factor representation in adata.obsm['{corrected_key}']. "
-                "Run scdef.tl.corrected_factor_representation(model) first."
+                "Run scdef.tl.factor_batch_correction(model) first."
             )
         # The stored matrix must reflect the *current* flags: flagging or
         # unflagging between plots would otherwise silently show the previous
@@ -624,7 +624,7 @@ def obs_cell_factor_heatmap(
                 f"adata.obsm['{corrected_key}'] is stale: it was built for a "
                 f"different set of batch-technical factors than the model "
                 "currently has. Re-run "
-                "scdef.tl.corrected_factor_representation(model)."
+                "scdef.tl.factor_batch_correction(model)."
             )
         full_matrix = np.asarray(model.adata.obsm[corrected_key], dtype=float)
         if values == "prob":
@@ -1261,8 +1261,11 @@ def umap(
         layers: which layers to plot, in panel order. Entries are layer indices;
             a string entry is used as an embedding name directly, so
             ``layers=['L0_corrected']`` plots
-            ``adata.obsm['X_umap_L0_corrected']`` from
-            ``scdef.tl.umap(model, merge_batch_technical=True)``.
+            ``adata.obsm['X_umap_L0_corrected']``. ``scdef.tl.umap`` writes that
+            embedding whenever a corrected representation is already present in
+            ``adata.obsm['X_L0_batch_corrected']``; it never builds the correction
+            itself, so run the correction first. Indices and names can be mixed,
+            e.g. ``layers=[0, 'L0_corrected']`` for a before/after pair.
         figsize: figure size
         fontsize: font size for labels
         legend_fontsize: legend font size
@@ -1296,13 +1299,15 @@ def umap(
         axes = axes.reshape(n_rows, 1)
 
     for col, layer in enumerate(layers):
-        # A string entry names an embedding directly (e.g. 'L0_corrected' from
-        # tl.umap(..., merge_batch_technical=True)); ints are layer indices.
+        # A string entry names an embedding directly (e.g. 'L0_corrected');
+        # ints are layer indices.
         if isinstance(layer, str):
             layer_name = layer
             panel_title = layer
             hint = (
-                "Run scdef.tl.umap(model, merge_batch_technical=True) first."
+                "Compute the corrected representation first, then run "
+                "scdef.tl.umap(model), which embeds it when it is present in "
+                "adata.obsm."
                 if layer.endswith("_corrected")
                 else "Run scdef.tl.umap(model) first."
             )

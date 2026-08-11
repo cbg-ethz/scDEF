@@ -278,7 +278,8 @@ class sscDEF(scDEF):
         annealing_scales = 1.0  # fixed
 
         # Single-sample Monte Carlo estimate of the variational lower bound.
-        batch_indices_onehot = self.batch_indices_onehot[indices]
+        # One column per `gene_scale` row (see ``scDEF._gene_scale_onehot``).
+        gene_batch_onehot = self._gene_scale_onehot()[indices]
 
         cell_budget_params = local_params[0]
         z_params = local_params[1]
@@ -539,7 +540,7 @@ class sscDEF(scDEF):
         mean_bottom = (
             jnp.einsum("nk,kg->ng", n_z_sample, n_w_sample) * cell_budget_sample
         )  # self.exposures[indices]
-        mean_bottom = mean_bottom * (batch_indices_onehot.dot(gene_budget_sample))
+        mean_bottom = mean_bottom * (gene_batch_onehot.dot(gene_budget_sample))
 
         # x = jnp.array(batch)
         # lam = mean_bottom  # same shape

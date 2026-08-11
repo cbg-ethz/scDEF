@@ -35,6 +35,11 @@ _FACTOR_DIAG_LABELS: dict[str, str] = {
     "batch_split_corr": "Batch split (sibling cell-score corr.)",
     "frac_dom_batch": "Dominant batch fraction",
 }
+# `batch_scale_corr` used to be plottable here. The batch gene-scale correlation
+# scorer that wrote it has been removed: correlating a factor's gene loadings
+# against the reference model's per-batch `gene_scale` is confounded whenever the
+# batch IS the condition — on the IFN data it scored the interferon-response
+# factors HIGHEST, i.e. it flagged the strongest biology as the most technical.
 
 from scdef.tools.hierarchy import effective_parents_from_clarity
 
@@ -140,7 +145,12 @@ def scale(
             return np.sum(model.X[b_cells], axis=0)
 
         def get_y_data_batch(b_id, _):
-            return model.pmeans["gene_scale"][b_id].ravel()
+            gs = np.asarray(model.pmeans["gene_scale"])
+            if gs.ndim == 1:
+                return gs.ravel()
+            # `gene_scale` is a single shared row when `batch_gene_scale=False`,
+            # even though the cell side still has several batches.
+            return gs[min(int(b_id), gs.shape[0] - 1)].ravel()
 
     if len(model.batches) > 1:
         for b_id, b in enumerate(model.batches):
@@ -727,13 +737,20 @@ def factor_diagnostics(
     ``batch_split_corr`` and ``frac_dom_batch`` are dense — every kept factor has
     a value — so nothing is silently dropped from either panel. A high
     ``batch_split_corr`` at a *balanced* ``frac_dom_batch`` (top-left of that
-    panel) is the batch-corrected cell-type factor, not a split half; the two
-    are separated by the ``is_split`` rule in
-    :func:`scdef.tools.suggest_technical_factors`, not by this plot.
+    panel) is the batch-corrected cell-type factor, not a split half.
 
-    For the thresholded "which factors look technical" *decision*, use
-    :func:`scdef.tools.suggest_technical_factors`, which returns the candidate
-    table this plot draws from.
+    This plot renders diagnostics; it issues no verdict, and neither does any
+    tool it draws from. To describe the *shape* of the batch structure — which
+    factors are batch-skewed, which have an opposite-batch sibling under the
+    same parent, and how separable the batches are inside each branch — use
+    :func:`scdef.tools.batch_structure_report`::
+
+        rep = scdef.tl.batch_structure_report(model, batch_key="Experiment")
+        splits = rep.index[rep["shape"] == "branch_split"]
+
+    ``shape`` is geometry, never cause: only the experimental design can say
+    whether a per-batch split is a technical duplication or a genuine
+    condition-specific program.
 
     Args:
         model: scDEF model instance
