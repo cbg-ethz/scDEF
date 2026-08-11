@@ -68,12 +68,15 @@ jobs:
       - name: Validate metadata
         run: twine check dist/*
 
-  # The job id MUST stay `test`: branch protection on main requires a status
-  # check named `test` (inherited from the workflow this replaced). Renaming it
-  # leaves every PR stuck on "Expected — waiting for status to be reported".
-  # Add the other jobs as required contexts separately, after a green run:
+  # Branch protection on main requires all four jobs in this file. It matches on
+  # the job's `name:`, NOT its id -- so renaming any `name:` below silently
+  # blocks every PR on "Expected — waiting for status to be reported" until the
+  # protection rule is updated to match:
+  #
   #   gh api -X PATCH repos/cbg-ethz/scDEF/branches/main/protection/required_status_checks \
-  #     -f 'contexts[]=test' -f 'contexts[]=lint' -f 'contexts[]=docs' -f 'contexts[]=package'
+  #     -F strict=false \
+  #     -f 'contexts[]=Lint' -f 'contexts[]=Docs build (strict)' \
+  #     -f 'contexts[]=Package build' -f 'contexts[]=Integration tests'
   test:
     name: Integration tests
     runs-on: ubuntu-latest
