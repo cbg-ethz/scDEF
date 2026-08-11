@@ -586,7 +586,7 @@ def path_trajectory_heatmap(
         Prefer ``scd.tl.score_paths`` matrices ``{score_key}_positions`` and
         ``{score_key}_affinities`` (same column order as ``paths``). Cells must
         meet ``min_sort_affinity`` and have finite positions. If no such cells
-        remain, falls back to the same logic as :func:`trajectory_heatmap`:
+        remain, falls back to the same logic as [`trajectory_heatmap`][scdef.pl.trajectory_heatmap]:
         anchor cells on the L0 terminus (differentiation) or transition
         source/target on L0, then sort by probability-weighted index along
         ``nodes`` using ``X_<layer>_probs``.
@@ -610,7 +610,7 @@ def path_trajectory_heatmap(
         genes: optional list of ``adata.var_names`` entries to plot as rows only.
         normalize: min–max scale each gene expression row after smoothing (default
             True); factor score rows are always scaled. Same as
-            :func:`trajectory_heatmap`.
+            [`trajectory_heatmap`][scdef.pl.trajectory_heatmap].
     """
     if paths_key not in model.adata.uns:
         raise KeyError(f"'{paths_key}' not found in model.adata.uns.")

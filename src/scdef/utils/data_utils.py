@@ -71,8 +71,8 @@ def get_weight_scores(model, obs_key, obs_vals, top_layer=None):
 def get_prob_scores(model, obs_key, obs_vals):
     """Mean per-cell factor probability per observation category.
 
-    Uses ``adata.obsm['X_<layer_name>_probs']`` (from :meth:`annotate_adata` /
-    :meth:`normalize_cellscores`). Rows of each matrix are cells, columns align
+    Uses ``adata.obsm['X_<layer_name>_probs']`` (from [`annotate_adata`][scdef.scDEF.annotate_adata] /
+    [`normalize_cellscores`][scdef.scDEF.normalize_cellscores]). Rows of each matrix are cells, columns align
     with ``model.factor_names[layer]``.
     """
     n_obs = len(obs_vals)
@@ -110,7 +110,7 @@ def get_score_means(model, obs_key, obs_vals):
     """Mean raw cell-factor score per observation category.
 
     Uses ``adata.obsm['X_<layer>']`` (unnormalised cell-factor scores from
-    :meth:`annotate_adata`).  This is the obs-averaged analogue of
+    [`annotate_adata`][scdef.scDEF.annotate_adata]).  This is the obs-averaged analogue of
     ``obs_cell_factor_heatmap(values="score")``.
 
     Values are *not* bounded to [0, 1].

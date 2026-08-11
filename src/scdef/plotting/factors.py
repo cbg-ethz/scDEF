@@ -353,11 +353,11 @@ def _resolve_corrected_factor_columns(
     """Column indices and labels for the batch-corrected L0 matrix.
 
     Labels are the merged names produced by
-    :func:`scdef.tools.factor_batch_correction` (e.g. ``"L0_7+L0_14"``),
+    [`factor_batch_correction`][scdef.tl.factor_batch_correction] (e.g. ``"L0_7+L0_14"``),
     which do not exist in ``model.factor_names``; ``factors`` is matched against
     them directly. With ``sort_layer_factors`` and no explicit ``factors``,
     columns follow the hierarchy ordering via
-    :func:`_corrected_hierarchy_order`.
+    `_corrected_hierarchy_order`.
     """
     labels = [str(label) for label in corrected_labels]
     if factors is None:
@@ -505,7 +505,7 @@ def obs_cell_factor_heatmap(
             merged column simply takes their place.
         merge_batch_technical: If True, replace each group of batch-technical
             splits with one merged column via
-            :func:`scdef.tools.factor_batch_correction`, so the program
+            [`factor_batch_correction`][scdef.tl.factor_batch_correction], so the program
             reads as a single column firing across *both* batch blocks instead
             of two columns each firing in one. Merged columns are labelled
             ``"L0_7+L0_14"`` so the corrected split stays visible. Layer 0 only.

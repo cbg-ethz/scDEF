@@ -52,7 +52,7 @@ class iscDEF(scDEF):
             higher = top layer). If > 0, total layers determined by this value.
         add_root: when ``markers_layer > 0`` (default ``True``), append a width-1 root above the
             marker layer. Fitting runs in two phases (main fit with frozen root, then
-            ``root_epochs`` on the root only); see :meth:`fit`. Ignored when ``markers_layer=0``.
+            ``root_epochs`` on the root only); see [`fit`][scdef.scDEF.fit]. Ignored when ``markers_layer=0``.
         cn_small_mean: mean prior connectivity for "small" (weakly-connected) genes between factors and gene sets.
         cn_big_mean: mean prior connectivity for "big" (strongly-connected) genes between factors and gene sets.
         cn_small_strength: concentration parameter for low connectivity (see scDEF prior specification).
@@ -85,7 +85,7 @@ class iscDEF(scDEF):
         nonmarker_strength: Optional[float] = 0.1,
         other_strength: Optional[float] = 0.1,
         penalize_other: Optional[bool] = True,
-        **kwargs,
+        **kwargs: Any,
     ):
         self.markers_dict = markers_dict
         self.penalize_other = penalize_other
@@ -870,7 +870,7 @@ class iscDEF(scDEF):
         with low ``score_genes`` on the union of typed marker genes; use
         ``other_mode='uniform'`` for constant per-cell ``other`` init.
         When ``markers_layer > 0``, the same block structure as
-        :meth:`_build_z_init_hierarchical_layer` at layer 0 is used.
+        `_build_z_init_hierarchical_layer` at layer 0 is used.
         """
         n_cells = self.adata.n_obs
         n_typed = len(self.markers_dict)

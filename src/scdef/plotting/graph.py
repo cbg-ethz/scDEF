@@ -986,7 +986,7 @@ def make_graph(
             thickness). Ignored when ``path`` is not set. Default ``2.5``; use ``1.0``
             for the usual thin border (no emphasis).
         confident_assignments: if True, attach cells using ``adata.obs[f"{confident_key}_factor"]``
-            (cross-layer assignment from :func:`~scdef.tools.factor.assign_confident`) instead of
+            (cross-layer assignment from [`assign_confident`][scdef.tl.assign_confident]) instead of
             per-layer ``adata.obs[layer_name]``. Requires that column to exist.
         confident_key: ``key_added`` prefix used with ``assign_confident`` (default ``"confident"``).
         shell: whether to use shell layout. If the model has a final width-1 root
@@ -1438,8 +1438,8 @@ def make_technical_hierarchy_graph(
         show_label: whether to show labels on nodes
         gene_score: color the nodes by the score they attribute to a gene, normalized by layer. Overrides filled and wedged
         gene_cmap: colormap to use for gene_score
-        confident_assignments: same as :func:`make_graph`.
-        confident_key: same as :func:`make_graph`.
+        confident_assignments: same as [`make_graph`][scdef.pl.make_graph].
+        confident_key: same as [`make_graph`][scdef.pl.make_graph].
         shell: whether to use shell layout
         r: radius parameter for shell layout
         r_decay: radius decay parameter for shell layout
@@ -1767,7 +1767,7 @@ def global_hierarchy(
     Args:
         model: scDEF model instance
         show_signatures: whether to show gene signatures
-        **kwargs: keyword arguments passed to :func:`make_technical_hierarchy_graph`
+        **kwargs: keyword arguments passed to `make_technical_hierarchy_graph`
 
     Returns:
         Graphviz Graph object

@@ -2,11 +2,23 @@
 
 from __future__ import annotations
 
-from typing import Optional, Union, Sequence, Mapping, Dict, List, Any
+from typing import (
+    TYPE_CHECKING,
+    Optional,
+    Union,
+    Sequence,
+    Mapping,
+    Dict,
+    List,
+    Any,
+)
 
 import numpy as np
 import jax.numpy as jnp
 from anndata import AnnData
+
+if TYPE_CHECKING:  # circular at runtime; imported lazily in the bodies below
+    from scdef.models._scdef import scDEF
 
 # Bounds applied to any warm-started ``gene_scale`` mean. The pooled-marginal MLE
 # reaches ~1e7 for the most abundant genes in real data, so the historical 1e6
@@ -31,9 +43,9 @@ def _resolve_init_gene_scale_array(
 
     With ``init_gene_scale='reference'`` the reference's per-batch rows are pooled
     with a geometric mean (a straight copy when there is only one row). This is the
-    warm start used by :func:`from_reference`, and the fallback used by
-    :func:`decompose_batch_effects` when the pooled-marginal MLE is unavailable; see
-    :func:`_pooled_marginal_gene_scale` for the difference between the two.
+    warm start used by [`from_reference`][scdef.from_reference], and the fallback used by
+    [`decompose_batch_effects`][scdef.decompose_batch_effects] when the pooled-marginal MLE is unavailable; see
+    `_pooled_marginal_gene_scale` for the difference between the two.
 
     Returns:
         Per-batch gene-scale means to pass to ``init_var_params``.
@@ -212,7 +224,7 @@ def _reference_model_kwargs(
 
 
 def from_reference(
-    reference_model,
+    reference_model: "scDEF",
     adata: AnnData,
     counts_layer: Optional[str] = None,
     batch_key: Optional[str] = None,
@@ -221,7 +233,7 @@ def from_reference(
     copy_cell_z: bool = True,
     init_gene_scale: Union[str, np.ndarray] = "batch",
     **kwargs: Any,
-):
+) -> "scDEF":
     """Create a new model initialized from a fitted reference hierarchy.
 
     The new model uses ``adata`` as its data matrix and initializes global
@@ -353,7 +365,7 @@ def from_reference(
 
 
 def add_batch_correction(
-    reference_model,
+    reference_model: "scDEF",
     batch_key: str,
     *,
     adata: Optional[AnnData] = None,
@@ -366,7 +378,7 @@ def add_batch_correction(
     tolerance: float = 1e-4,
     from_reference_kwargs: Optional[Mapping[str, Any]] = None,
     **fit_kwargs: Any,
-):
+) -> "scDEF":
     """Warm-start a batch-corrected model from a fitted hierarchy.
 
     Designed for the workflow:
@@ -389,7 +401,7 @@ def add_batch_correction(
         n_epoch: epochs for the second-pass fit.
         lr: learning rate for the second-pass fit.
         tolerance: early-stopping tolerance for the second-pass fit.
-        from_reference_kwargs: extra kwargs forwarded to :func:`from_reference`.
+        from_reference_kwargs: extra kwargs forwarded to [`from_reference`][scdef.from_reference].
         **fit_kwargs: additional kwargs forwarded to ``model.fit()``.
 
     Returns:
@@ -568,7 +580,7 @@ def _resolve_decompose_gene_scale(
 
 
 def decompose_batch_effects(
-    reference_model,
+    reference_model: "scDEF",
     *,
     adata: Optional[AnnData] = None,
     counts_layer: Optional[str] = None,
@@ -580,7 +592,7 @@ def decompose_batch_effects(
     nmf_init: bool = False,
     init_gene_scale: Union[str, np.ndarray] = "reference",
     **fit_kwargs: Any,
-):
+) -> "scDEF":
     """Re-learn lower layers under a frozen upper hierarchy to discover batch programs.
 
     Two-stage workflow:
@@ -863,14 +875,14 @@ def decompose_batch_effects(
 
 def from_hierarchy(
     adata: AnnData,
-    hierarchy,
+    hierarchy: Union["scDEF", Sequence[np.ndarray]],
     counts_layer: Optional[str] = None,
     batch_key: Optional[str] = None,
     init_brd: Optional[np.ndarray] = None,
     init_ard: Optional[np.ndarray] = None,
     init_z: Optional[Sequence[np.ndarray]] = None,
     **kwargs: Any,
-):
+) -> "scDEF":
     """Create a model for new data initialized from a learned hierarchy.
 
     ``hierarchy`` can be either a fitted scDEF model (preferred) or an

@@ -743,7 +743,7 @@ def factor_diagnostics(
     tool it draws from. To describe the *shape* of the batch structure — which
     factors are batch-skewed, which have an opposite-batch sibling under the
     same parent, and how separable the batches are inside each branch — use
-    :func:`scdef.tools.batch_structure_report`::
+    [`batch_structure_report`][scdef.tl.batch_structure_report]::
 
         rep = scdef.tl.batch_structure_report(model, batch_key="Experiment")
         splits = rep.index[rep["shape"] == "branch_split"]

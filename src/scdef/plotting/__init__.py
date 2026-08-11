@@ -29,7 +29,7 @@ from .trajectory import (
     path_trajectory_heatmap,
     path_embedding,
 )
-from .qc import (
+from ._qc import (
     qc,
     scales,
     scale,

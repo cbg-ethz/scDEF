@@ -249,18 +249,18 @@ def get_technical_factors(model: "scDEF") -> List[str]:
 def get_batch_technical_factors(model: "scDEF") -> List[str]:
     """Current model names of the factors marked ``batch_technical``.
 
-    The counterpart of :func:`set_batch_technical_factors`, and the batch-side
-    analogue of :func:`get_technical_factors`. Names are translated to the
+    The counterpart of [`set_batch_technical_factors`][scdef.tl.set_batch_technical_factors], and the batch-side
+    analogue of [`get_technical_factors`][scdef.tl.get_technical_factors]. Names are translated to the
     *current* ``model.factor_names`` entries the same way, so they can be
     compared directly against the live model, and flagged factors the model no
     longer keeps are omitted.
 
     The two flags mean different things and are not interchangeable. A
-    ``technical`` factor is a candidate for deletion by :func:`drop_technical`,
+    ``technical`` factor is a candidate for deletion by [`drop_technical`][scdef.tl.drop_technical],
     and the flag propagates up the tree. A ``batch_technical`` factor is a
     layer-0 per-batch view of a program the corrected parent layer already
     represents: nothing is deleted and nothing propagates —
-    :func:`factor_batch_correction` merges or drops it in the corrected
+    [`factor_batch_correction`][scdef.tl.factor_batch_correction] merges or drops it in the corrected
     representation and leaves the model itself untouched.
 
     Returns:
@@ -795,7 +795,7 @@ def _soft_factor_membership(
 def hard_assignment_name_indices(model: "scDEF", layer_idx: int) -> np.ndarray:
     """Per-cell winner index into ``factor_names[layer_idx]`` (kept factors only).
 
-    Uses the same posterior-mean ``z`` argmax as :meth:`scDEF.annotate_adata` and
+    Uses the same posterior-mean ``z`` argmax as [`annotate_adata`][scdef.scDEF.annotate_adata] and
     ``make_graph(..., assignments=True)``.
     """
     layer_name = model.layer_names[layer_idx]
@@ -898,7 +898,7 @@ def _compute_l0_batch_split(
         band across many factor pairs, including pairs that share no genes, and
         it ranks the genuine Cytotoxic-T per-batch split *below* unrelated
         pairs. The verdict layer that used to be built on it has been removed
-        for exactly this reason; use :func:`batch_structure_report`, which
+        for exactly this reason; use [`batch_structure_report`][scdef.tl.batch_structure_report], which
         describes the same geometry without a verdict.
 
     Writes three layer-0 columns into ``factor_obs``: ``batch_split_corr``,
@@ -1049,6 +1049,33 @@ def _compute_l0_batch_split(
             )
 
 
+def _resolve_diagnostics_batch_key(
+    model: "scDEF", batch_key: Optional[str]
+) -> Optional[str]:
+    """The key the batch metrics are computed against.
+
+    An explicit ``batch_key`` always wins. ``None`` falls back to the model's own
+    ``batch_key`` — set when the model was constructed with one, and carried into
+    the model [`decompose_batch_effects`][scdef.scDEF.decompose_batch_effects] builds — so a batch-aware
+    model produces its batch diagnostics without being told twice.
+
+    The fallback is skipped when that key is not a usable grouping of the cells
+    being described: absent from ``adata.obs``, or with fewer than two observed
+    values. Every batch metric is a contrast between batches, so there is nothing
+    to compute in either case, and falling back would turn a model attribute into
+    a spurious error.
+    """
+    if batch_key is not None:
+        return batch_key
+    own = getattr(model, "batch_key", None)
+    if own is None or own not in model.adata.obs.columns:
+        return None
+    values = pd.Series(model.adata.obs[own].to_numpy()).dropna()
+    if values.nunique() < 2:
+        return None
+    return str(own)
+
+
 def factor_diagnostics(
     model: "scDEF",
     recompute: bool = False,
@@ -1073,7 +1100,7 @@ def factor_diagnostics(
     as ``annotate_adata`` / ``make_graph(..., assignments=True)``), and optional
     batch metrics when ``batch_key`` is set.
 
-    Also runs :func:`set_confident_signatures` so plotting helpers
+    Also runs [`set_confident_signatures`][scdef.tl.set_confident_signatures] so plotting helpers
     (``make_graph``, ``pl.factor_diagnostics(color='signature_confidence')``,
     etc.) can use cached signatures without a separate call.
 
@@ -1082,15 +1109,21 @@ def factor_diagnostics(
         recompute: if True, force recomputation of the cached fixed upper-layer
             factor subset used for clarity scores, even if the fit revision
             did not change.
-        batch_key: optional key in ``model.adata.obs`` used to compute
-            per-factor batch metrics. ``batch_purity`` uses hard winner cells
+        batch_key: key in ``model.adata.obs`` used to compute per-factor batch
+            metrics. Defaults to the model's own ``batch_key`` when it has one —
+            from being constructed with it, or from
+            [`decompose_batch_effects`][scdef.scDEF.decompose_batch_effects], which carries it — so a
+            batch-aware model gets its batch metrics without being told twice. A
+            model with no batch key, or one whose key has fewer than two observed
+            values, gets no batch columns.
+            ``batch_purity`` uses hard winner cells
             (argmax variational ``z``). ``batch_purity_soft`` uses the batch
             distribution of per-cell memberships from ``X_<layer>_probs``
             (or row-normalized ``X_<layer>`` / posterior ``z`` if probs are
             missing). Both are ``1 - entropy / log(n_batches)``. Also writes
             ``dom_batch`` / ``frac_dom_batch`` (the factor's dominant batch and
             its share of the factor's cells) and, for layer 0, the
-            ``batch_split_*`` columns from :func:`_compute_l0_batch_split`.
+            ``batch_split_*`` columns from `_compute_l0_batch_split`.
             All are plottable via ``scdef.pl.factor_diagnostics``.
         sensible_top_n_eff_parents_max: threshold used to classify
             sensible-top factors on the hierarchy walk.
@@ -1104,19 +1137,19 @@ def factor_diagnostics(
             when classifying sensible-top factors.
         sensible_top_use_filtered: whether to use ``model.factor_lists`` /
             ``model.factor_names`` for hierarchy transitions.
-        confidence_threshold: passed to :func:`set_confident_signatures`.
-        tau_quantile: passed to :func:`set_confident_signatures`.
-        min_effect: passed to :func:`set_confident_signatures`.
-        mc_samples: passed to :func:`set_confident_signatures`.
-        random_seed: passed to :func:`set_confident_signatures`.
+        confidence_threshold: passed to [`set_confident_signatures`][scdef.tl.set_confident_signatures].
+        tau_quantile: passed to [`set_confident_signatures`][scdef.tl.set_confident_signatures].
+        min_effect: passed to [`set_confident_signatures`][scdef.tl.set_confident_signatures].
+        mc_samples: passed to [`set_confident_signatures`][scdef.tl.set_confident_signatures].
+        random_seed: passed to [`set_confident_signatures`][scdef.tl.set_confident_signatures].
         batch_split_min_batch_frac: center of the batch-skew ramp that weights
-            candidate partners in :func:`_compute_l0_batch_split` (default
+            candidate partners in `_compute_l0_batch_split` (default
             ``0.7``: a candidate at ``0.6`` contributes nothing, one at ``0.8``
             contributes fully). Only used when ``batch_key`` is set.
         gene_scale_reference: optional gene-side batch diagnostic, off by
             default. Pass the REFERENCE fit (the model made with ``batch_key``
             and per-batch ``gene_scale``) — or anything else
-            :func:`~scdef.tools.batch.get_factor_batch_gene_scale_affinity`
+            [`get_factor_batch_gene_scale_affinity`][scdef.tl.get_factor_batch_gene_scale_affinity]
             accepts — to add two layer-0 columns: ``gene_scale_affinity``, the
             Spearman correlation between the factor's gene loadings and the
             per-batch ``gene_scale`` log-ratio of the batch it matches best,
@@ -1126,6 +1159,8 @@ def factor_diagnostics(
             condition-like batch key that programme is the biology of the
             experiment). See that function's docstring.
     """
+    batch_key = _resolve_diagnostics_batch_key(model, batch_key)
+
     # Keep layer 0 unfiltered, but use a fixed filtered subset on upper layers.
     # Cache and reuse upper-layer factor lists so diagnostics remain stable across
     # later calls to filter/annotate routines.
@@ -1476,6 +1511,30 @@ def set_factor_signatures(
     signatures: Optional[Dict[str, List[str]]] = None,
     top_genes: int = 10,
 ) -> Dict[str, List[str]]:
+    """Store a signature per factor in ``adata.uns['factor_signatures']``.
+
+    With ``signatures=None`` the confident signatures of every layer are pooled
+    into one ``{factor_name: genes}`` mapping and stored, truncated to
+    ``top_genes``; pass a mapping instead to store curated lists.
+
+    Note that [`set_confident_signatures`][scdef.tl.set_confident_signatures]
+    already writes this key, so the ``signatures=None`` path only re-writes it
+    at a different length. Nothing inside ``scdef`` reads
+    ``uns['factor_signatures']`` — the plots take their gene lists from
+    ``uns['confident_signatures']`` instead — so this is for downstream use and
+    for overriding the stored lists by hand.
+
+    Args:
+        model: scDEF model instance. With ``signatures=None``, requires
+            [`set_confident_signatures`][scdef.tl.set_confident_signatures] to
+            have been run.
+        signatures: mapping of factor name to gene list. ``None`` builds it from
+            the cached confident signatures.
+        top_genes: genes per factor when building from the cache.
+
+    Returns:
+        The stored mapping.
+    """
     if signatures is None:
         signatures = {}
         for layer_idx in range(model.n_layers):
@@ -1696,7 +1755,7 @@ def assign_confident(
     tau: float = 0.3,
     credible_level: float = 0.9,
     key_added: str = "confident",
-    rng_key=None,
+    rng_key: Optional[Any] = None,
     exclude_technical: bool = False,
     exclude_batch_technical: bool = False,
     batch_technical_top_layer: Optional[int] = None,
@@ -1820,19 +1879,19 @@ def assign_confident(
         rng_key: optional ``jax.random`` key; if ``None``, derived from
             ``model.seed``.
         exclude_technical: if True, factors marked ``technical`` in
-            ``factor_obs`` (see :func:`set_technical_factors`) are removed from
+            ``factor_obs`` (see [`set_technical_factors`][scdef.tl.set_technical_factors]) are removed from
             the candidate set at **every** layer, so no cell is ever assigned to
             an ambient/stress program. Confidence is then computed among the
             remaining factors only.
         exclude_batch_technical: if True, factors marked ``batch_technical``
-            (see :func:`set_batch_technical_factors`) are removed from the
+            (see [`set_batch_technical_factors`][scdef.tl.set_batch_technical_factors]) are removed from the
             candidate set at every layer **below** ``batch_technical_top_layer``,
             and any cell whose layer-0 winner is one of them is rolled up to
             that layer. Per-batch splits only exist below the roll-up layer, so
             the flag is deliberately not applied at or above it.
         batch_technical_top_layer: layer index the batch-technical roll-up
             targets. Defaults to ``adata.uns['batch_technical_top_layer']``,
-            recorded by :meth:`scDEF.decompose_batch_effects`, else ``1``.
+            recorded by [`decompose_batch_effects`][scdef.scDEF.decompose_batch_effects], else ``1``.
 
     Example:
         >>> # After flagging per-batch splits, their cells attach to the
@@ -2502,7 +2561,7 @@ def annotate_factors(
     """Attach descriptive annotations to factors in ``adata.uns['factor_obs']``.
 
     Annotations are stored in the ``annotation`` column of ``factor_obs``, keyed
-    by the resolved factor rows (see :func:`_resolve_factor_obs_names`). Factor
+    by the resolved factor rows (see `_resolve_factor_obs_names`). Factor
     names may be current model names (e.g. ``L0_4``) even after filtering.
 
     Args:
@@ -2723,23 +2782,23 @@ def set_batch_technical_factors(
 ) -> None:
     """Mark layer-0 factors as *batch*-technical (per-batch splits of one type).
 
-    Unlike :func:`set_technical_factors`, this flag does **not** propagate up the
+    Unlike [`set_technical_factors`][scdef.tl.set_technical_factors], this flag does **not** propagate up the
     tree and no factor is deleted. Batch-technical factors are layer-0 per-batch
     views of a program that the parent layer already represents once, so that
     parent is the roll-up target and propagating the flag into it would throw
     away the very signal the roll-up depends on.
 
     This works on any fitted model with a batch column in ``adata.obs``, not only
-    on one from :meth:`scDEF.decompose_batch_effects` — a plain fit made without
+    on one from [`decompose_batch_effects`][scdef.scDEF.decompose_batch_effects] — a plain fit made without
     a ``batch_key`` leaves batch structure in the factors directly, and can be
-    flagged and corrected the same way. See :func:`batch_structure_report` for
+    flagged and corrected the same way. See [`batch_structure_report`][scdef.tl.batch_structure_report] for
     how the reading differs between the two.
 
     This records *which* factors are batch-technical and nothing else. The
     roll-up target comes from ``adata.uns['batch_technical_top_layer']``, written
-    by :meth:`scDEF.decompose_batch_effects` as the layer whose ``z`` it froze —
+    by [`decompose_batch_effects`][scdef.scDEF.decompose_batch_effects] as the layer whose ``z`` it froze —
     the only place that knows it. Consumers
-    (:func:`factor_batch_correction`, :func:`assign_confident`) read it by
+    ([`factor_batch_correction`][scdef.tl.factor_batch_correction], [`assign_confident`][scdef.tl.assign_confident]) read it by
     default and take an override argument, so there is no second copy here to
     fall out of step with the decomposition.
 
@@ -2748,7 +2807,7 @@ def set_batch_technical_factors(
     Args:
         model: scDEF model instance.
         factors: factor names to flag. Names are resolved against the current
-            ``model.factor_names`` (see :func:`_resolve_factor_obs_names`), so
+            ``model.factor_names`` (see `_resolve_factor_obs_names`), so
             names taken from a filtered model are safe.
 
     Raises:
@@ -2803,7 +2862,7 @@ def _resolve_batch_technical_top_layer(
     """The batch-corrected parent layer flagged L0 factors group and roll up to.
 
     ``None`` reads ``adata.uns['batch_technical_top_layer']``, which
-    :meth:`scDEF.decompose_batch_effects` records as the layer whose ``z`` it
+    [`decompose_batch_effects`][scdef.scDEF.decompose_batch_effects] records as the layer whose ``z`` it
     froze, falling back to ``1``. That record is the single source of truth: no
     other function writes it, so the roll-up target cannot drift from what the
     decomposition actually froze.
@@ -2828,8 +2887,8 @@ def _l0_parent_slots(model: "scDEF", top_layer: int) -> np.ndarray:
 
     Indexes ``model.factor_lists[top_layer]`` / ``factor_names[top_layer]``, and
     the ``argmax`` runs over the **kept** parents only, so a filtered-out factor
-    can never win. Shared by :func:`factor_batch_correction` and
-    :func:`_rollup_batch_factors` so the two cannot disagree about which flagged
+    can never win. Shared by [`factor_batch_correction`][scdef.tl.factor_batch_correction] and
+    `_rollup_batch_factors` so the two cannot disagree about which flagged
     factors are siblings.
     """
     weights = _l0_to_top_layer_weights(model, top_layer)
@@ -2850,10 +2909,10 @@ def factor_batch_correction(
     key_added: str = "X_L0_batch_corrected",
     labels_key_added: str = "batch_corrected",
     top_layer: Optional[int] = None,
-) -> Tuple[np.ndarray, List[str]]:
+) -> None:
     """Apply the batch-technical correction to the scores and to the labels.
 
-    Factors flagged by :func:`set_batch_technical_factors` are per-batch views of
+    Factors flagged by [`set_batch_technical_factors`][scdef.tl.set_batch_technical_factors] are per-batch views of
     a program that the batch-corrected ``top_layer`` already represents once.
     This removes them from the layer-0 representation and writes the same
     correction as cell-level labels, so an embedding, a heatmap and a UMAP
@@ -2891,7 +2950,7 @@ def factor_batch_correction(
     Args:
         model: scDEF model instance with cell scores annotated (``X_L0`` in
             ``adata.obsm``) and factors flagged by
-            :func:`set_batch_technical_factors`.
+            [`set_batch_technical_factors`][scdef.tl.set_batch_technical_factors].
         reduce: how to merge a group of two or more flagged siblings. ``"sum"``
             (default) adds them, which is exact when the halves are disjoint --
             the usual case, since each cell is dominated by the half from its own
@@ -2907,14 +2966,16 @@ def factor_batch_correction(
         labels_key_added: base name for the two ``adata.obs`` columns.
         top_layer: the batch-corrected parent layer flagged factors group and
             roll up to. Defaults to ``adata.uns['batch_technical_top_layer']``,
-            recorded by :meth:`scDEF.decompose_batch_effects` as the layer whose
+            recorded by [`decompose_batch_effects`][scdef.scDEF.decompose_batch_effects] as the layer whose
             ``z`` it froze, else ``1``. Override only to inspect a different
             grouping.
 
     Returns:
-        ``(matrix, labels)`` -- the corrected ``(n_cells, n_corrected_factors)``
-        matrix and its column labels. The matrix has **fewer columns** than
-        ``X_L0`` whenever anything was flagged.
+        ``None``. Everything is written to ``model.adata``: the corrected
+        ``(n_cells, n_corrected_factors)`` score matrix to
+        ``obsm[key_added]`` — with **fewer columns** than ``X_L0`` whenever
+        anything was flagged — its column labels to
+        ``uns[key_added + '_factors']``, and the two label columns to ``obs``.
 
     Raises:
         KeyError: ``X_L0`` is missing, the model has no parent layer to group by,
@@ -2924,10 +2985,10 @@ def factor_batch_correction(
 
     Example:
         >>> model = scdef.scDEF.decompose_batch_effects(ref, top_layer=1)
-        >>> rep = scdef.tl.batch_structure_report(model, batch_key="Experiment")
+        >>> rep = scdef.tl.batch_structure_report(model)
         >>> flagged = rep.index[rep["shape"].isin(["branch_split", "branch_skewed"])]
         >>> scdef.tl.set_batch_technical_factors(model, flagged)
-        >>> matrix, labels = scdef.tl.factor_batch_correction(model)
+        >>> scdef.tl.factor_batch_correction(model)
         >>> scdef.pl.umap(model, color=["L0_batch_corrected", "batch_corrected"])
     """
     if reduce not in ("sum", "max"):
@@ -2959,7 +3020,7 @@ def factor_batch_correction(
         matrix: np.ndarray,
         labels: List[str],
         members: List[List[str]],
-    ) -> Tuple[np.ndarray, List[str]]:
+    ) -> None:
         model.adata.obsm[key_added] = matrix
         model.adata.uns[f"{key_added}_factors"] = list(labels)
         # Per-column member names. Consumers that need to map a column back to
@@ -2971,12 +3032,12 @@ def factor_batch_correction(
         # a cached matrix can be checked against the current flags.
         model.adata.uns[f"{key_added}_batch_technical"] = list(flagged_on)
         model.adata.uns[f"{key_added}_dropped"] = list(dropped)
-        return matrix, list(labels)
 
     if len(flagged_slots) == 0:
         # Nothing flagged: the corrected representation *is* the original one,
         # and there are no labels to write.
-        return _store(scores.copy(), current_names, [[n] for n in current_names])
+        _store(scores.copy(), current_names, [[n] for n in current_names])
+        return
 
     top_layer = _resolve_batch_technical_top_layer(model, top_layer)
     parent_slot_of = _l0_parent_slots(model, top_layer)
@@ -3021,11 +3082,10 @@ def factor_batch_correction(
             "check the `shape` column of batch_structure_report."
         )
 
-    result = _store(np.column_stack(columns).astype(float), labels, column_members)
+    _store(np.column_stack(columns).astype(float), labels, column_members)
     # The labels are part of the correction, not an optional extra: they express
     # the same grouping over cells that the columns express over factors.
     _rollup_batch_factors(model, key_added=labels_key_added, top_layer=top_layer)
-    return result
 
 
 def _factor_name_sort_key(name: str) -> Tuple[int, int, str]:
@@ -3041,7 +3101,7 @@ def _l0_to_top_layer_weights(model: "scDEF", top_layer: int) -> np.ndarray:
 
     Returns an ``(n_kept_top, n_L0)`` matrix. For ``top_layer == 1`` this is just
     ``pmeans['L1W']`` restricted to the kept L1 rows; above that the per-layer
-    ``W`` slices are chained the same way :func:`_get_layer_term_means`
+    ``W`` slices are chained the same way `_get_layer_term_means`
     propagates loadings, always restricted to the currently kept factors.
     """
     weights = np.asarray(
@@ -3065,7 +3125,7 @@ def _rollup_batch_factors(
 ) -> Dict[str, str]:
     """Write batch-technical roll-up assignments to ``adata.obs``.
 
-    Internal: :func:`factor_batch_correction` calls this so the labels always
+    Internal: [`factor_batch_correction`][scdef.tl.factor_batch_correction] calls this so the labels always
     express the same grouping as the corrected columns. It is not part of the
     public API, because writing the labels without the matching score correction
     produces two views of the data that disagree.
@@ -3076,7 +3136,7 @@ def _rollup_batch_factors(
     - ``f"{base_obs}_{key_added}"`` (default ``"L0_batch_corrected"``): flagged
       L0 siblings sharing a parent are merged into one ``"L0_a+L0_b"`` label. A
       *lone* flagged factor has no sibling to merge with, so it takes its
-      parent's name -- matching :func:`factor_batch_correction`, which drops that
+      parent's name -- matching [`factor_batch_correction`][scdef.tl.factor_batch_correction], which drops that
       factor's column outright. Every other cell keeps its ``base_obs`` label.
     - ``key_added`` (default ``"batch_corrected"``): every flagged cell is
       labelled by its parent factor at ``top_layer`` instead; every other cell
@@ -3310,7 +3370,7 @@ def _branch_batch_auc(
 
 def batch_structure_report(
     model: "scDEF",
-    batch_key: str,
+    batch_key: Optional[str] = None,
     group_layer: int = 1,
     min_group_cells: int = 80,
     random_seed: int = 0,
@@ -3322,11 +3382,11 @@ def batch_structure_report(
     is, whether it has an opposite-batch sibling under the same parent, whether
     it is confined to one branch or overlaid across several, and how separable
     the batches are inside each branch — so that the analyst can decide what to
-    filter, correct (:func:`factor_batch_correction`) or keep.
+    filter, correct ([`factor_batch_correction`][scdef.tl.factor_batch_correction]) or keep.
 
     **Any fitted model with two layers works**, provided ``batch_key`` is a
     column of ``adata.obs``. The model need not have been fitted with that key,
-    and need not have come from :meth:`scDEF.decompose_batch_effects`. What the
+    and need not have come from [`decompose_batch_effects`][scdef.scDEF.decompose_batch_effects]. What the
     report *means* does depend on which it is:
 
     - a **plain fit with no** ``batch_key`` — the batch was never corrected, so
@@ -3443,7 +3503,7 @@ def batch_structure_report(
       that batch's ``gene_scale`` against the other batches. ``_max`` is the
       largest of them and ``_batch`` names which batch attains it — the
       ``top_score`` and ``top_batch`` of
-      :func:`get_factor_batch_gene_scale_affinity`. With exactly two batches the
+      [`get_factor_batch_gene_scale_affinity`][scdef.tl.get_factor_batch_gene_scale_affinity]. With exactly two batches the
       two contrasts are mirror images, so the per-batch columns are exact
       negatives of each other, ``_max`` is non-negative and ``_batch`` only says
       which side; the magnitude is the information. With many batches the frame
@@ -3465,13 +3525,16 @@ def batch_structure_report(
     Args:
         model: any fitted scDEF model with at least two layers; see above for
             how the reading changes with how it was fitted.
-        batch_key: key in ``adata.obs`` holding the batch labels. Needs at least
-            two observed values; the model itself need not have been fitted with
-            this key.
+        batch_key: key in ``adata.obs`` holding the batch labels, needing at
+            least two observed values. Defaults to the model's own ``batch_key``
+            when it has one — from being constructed with it, or from
+            [`decompose_batch_effects`][scdef.scDEF.decompose_batch_effects], which carries it — and raises
+            if there is neither. The model itself need not have been fitted with
+            the key you pass: any ``obs`` column works.
         group_layer: layer whose factors define the branches (default ``1``,
             the layer usually frozen by the decomposition). Above ``1`` the
             per-layer ``W`` slices are chained, as in
-            :func:`factor_batch_correction`.
+            [`factor_batch_correction`][scdef.tl.factor_batch_correction].
         min_group_cells: minimum labelled cells in a branch before its
             ``batch_auc`` is estimated; smaller branches report ``NaN``.
         random_seed: seed for the cross-validation splits.
@@ -3479,8 +3542,8 @@ def batch_structure_report(
             gene-side columns comes from — a fitted reference scDEF model, a
             genes-by-batches DataFrame of log-ratios, or a
             ``(n_batches, n_genes)`` array, as accepted by
-            :func:`get_factor_batch_gene_scale_affinity`. ``None`` (default) uses
-            the profile :meth:`scDEF.decompose_batch_effects` stored on this
+            [`get_factor_batch_gene_scale_affinity`][scdef.tl.get_factor_batch_gene_scale_affinity]. ``None`` (default) uses
+            the profile [`decompose_batch_effects`][scdef.scDEF.decompose_batch_effects] stored on this
             model. If neither is available the two columns are simply **omitted**
             and the rest of the report is unaffected — a model decomposed before
             that record existed needs the reference passed explicitly.
@@ -3493,8 +3556,9 @@ def batch_structure_report(
 
     Raises:
         KeyError: ``batch_key`` is not in ``adata.obs``.
-        ValueError: ``batch_key`` has fewer than two observed values, or
-            ``group_layer`` is out of range.
+        ValueError: no ``batch_key`` was given and the model carries none;
+            ``batch_key`` has fewer than two observed values; or ``group_layer``
+            is out of range.
 
     Note:
         Three caveats worth carrying into any reading of the frame.
@@ -3526,6 +3590,18 @@ def batch_structure_report(
         >>> report.loc[report["shape"] == "branch_split", ["parent", "dom_batch"]]
         >>> report.attrs["branch_summary"].head()
     """
+    if batch_key is None:
+        # Fall back to the model's own key, but hand it to the validator below
+        # rather than pre-screening it, so a key that is present but unusable
+        # still produces the specific message about what is wrong with it.
+        batch_key = getattr(model, "batch_key", None)
+        if batch_key is None:
+            raise ValueError(
+                "batch_structure_report needs a batch_key: this model does not "
+                "carry one, so pass the `adata.obs` column holding the batch "
+                "labels. Any column works — the model need not have been fitted "
+                "with it."
+            )
     batch_codes, batch_labels = _batch_codes_for_report(model, batch_key)
 
     group_layer = int(group_layer)
@@ -3773,7 +3849,7 @@ def filter_factors(
 
     ``model.filter_factors`` renames factors, which invalidates everything keyed
     by those names — the stored signatures, the hierarchies, and the frozen
-    upper-layer subset used by :func:`factor_diagnostics`. Calling the two
+    upper-layer subset used by [`factor_diagnostics`][scdef.tl.factor_diagnostics]. Calling the two
     separately leaves the model in that in-between state, where
     ``scd.pl.make_graph(show_signatures=True)`` raises until diagnostics are
     re-run. This wrapper does both, so the model is immediately usable::
@@ -3787,11 +3863,14 @@ def filter_factors(
 
     Args:
         model: scDEF model instance.
-        batch_key: passed to :func:`factor_diagnostics`; needed for the batch
+        batch_key: passed to [`factor_diagnostics`][scdef.tl.factor_diagnostics], which computes the batch
             metrics (``batch_purity``, ``frac_dom_batch``, ``batch_split_corr``).
+            Defaults to the model's own ``batch_key`` when it has one, so a
+            batch-aware model does not need it restated here. It plays no part in
+            the filtering itself.
         diagnostics_kwargs: optional extra keyword arguments for
-            :func:`factor_diagnostics` (e.g. ``{"mc_samples": 200}``).
-        **filter_kwargs: forwarded to :meth:`scDEF.filter_factors`
+            [`factor_diagnostics`][scdef.tl.factor_diagnostics] (e.g. ``{"mc_samples": 200}``).
+        **filter_kwargs: forwarded to [`filter_factors`][scdef.scDEF.filter_factors]
             (``brd_min``, ``ard_min``, ``n_eff_parents_max``, ``keep``, ...).
 
     Example:
@@ -3853,14 +3932,14 @@ def set_global_factors(
     """Mark global (shared-across-lineages) factors in ``factor_obs``.
 
     Global factors are identified from hierarchy diagnostics (high effective
-    parents). They are excluded from :func:`make_biological_hierarchy`. Use
-    :func:`drop_technical` to remove technical factors from the active model.
+    parents). They are excluded from [`make_biological_hierarchy`][scdef.tl.make_biological_hierarchy]. Use
+    [`drop_technical`][scdef.tl.drop_technical] to remove technical factors from the active model.
 
     Args:
         model: scDEF model instance
         factors: explicit factor names to mark as global (resolved like
-            :func:`set_technical_factors`). When ``None``, uses
-            :func:`scdef.tools.lineage.get_global_factors`.
+            [`set_technical_factors`][scdef.tl.set_technical_factors]). When ``None``, uses
+            [`get_global_factors`][scdef.tl.get_global_factors].
         layer_idx: child layer for automatic selection (default 0).
         n_eff_parents_min: minimum effective-parent score when ``factors`` is None.
         exclude_technical: do not mark technical factors as global.
@@ -3933,6 +4012,24 @@ def __build_consensus_signature(var_names, gene_scores_array, sizes_array):
 def get_technical_signature(
     model: "scDEF", top_genes: int = 10, return_scores: bool = False
 ) -> Union[List[str], Tuple[List[str], np.ndarray]]:
+    """Consensus gene signature over the factors flagged as technical.
+
+    Pools the layer-0 gene rankings of the factors in the technical hierarchy
+    into one ranked list, so the variation
+    [`drop_technical`][scdef.tl.drop_technical] would remove can be inspected
+    before removing it.
+
+    Args:
+        model: scDEF model instance. Requires
+            [`make_technical_hierarchy`][scdef.tl.make_technical_hierarchy] (or
+            [`make_hierarchies`][scdef.tl.make_hierarchies]) to have run, so
+            ``adata.uns['technical_hierarchy']`` exists.
+        top_genes: maximum number of genes to return.
+        return_scores: also return the consensus score of each returned gene.
+
+    Returns:
+        The top gene names, or ``(genes, scores)`` when ``return_scores`` is True.
+    """
     hierarchy = model.adata.uns["technical_hierarchy"]
     gene_rankings, gene_scores = model.get_rankings(
         layer_idx=0,
@@ -3990,7 +4087,7 @@ def get_global_signature(
 ) -> Union[List[str], Tuple[List[str], np.ndarray]]:
     """Consensus gene signature over global layer-0 factors.
 
-    Requires :func:`make_global_hierarchy` (or :func:`make_hierarchies`) to have
+    Requires [`make_global_hierarchy`][scdef.tl.make_global_hierarchy] (or [`make_hierarchies`][scdef.tl.make_hierarchies]) to have
     been run so ``model.adata.uns['global_hierarchy']`` exists.
 
     Args:
@@ -4044,6 +4141,32 @@ def get_global_signature(
 
 
 def get_biological_signature(model: "scDEF", top_genes: int = 10) -> List[str]:
+    """Gene signature of the top-layer factor — the programme every cell shares.
+
+    Looks up the cached confident signature of ``f"{top_layer_name}_0"``. Unlike
+    [`get_technical_signature`][scdef.tl.get_technical_signature] and
+    [`get_global_signature`][scdef.tl.get_global_signature], which pool several
+    factors into a relevance-weighted consensus, this reads a single factor's
+    list.
+
+    Factors flagged ``technical`` are dropped before the lookup, which in
+    practice only matters if the top-layer factor is *itself* flagged — in that
+    case the result is empty.
+
+    With the default ``top_factors=1`` the top layer has exactly one factor. If
+    the model was built with a wider top layer, only its first factor is read.
+
+    Args:
+        model: scDEF model instance. Requires
+            [`factor_diagnostics`][scdef.tl.factor_diagnostics] (for the
+            ``technical`` column) and
+            [`set_confident_signatures`][scdef.tl.set_confident_signatures].
+        top_genes: maximum number of genes to return.
+
+    Returns:
+        The top gene names for the top-layer factor, or ``[]`` if it has no
+        cached signature or is itself flagged technical.
+    """
     # Get the top signature
     technical_factors = model.adata.uns["factor_obs"][
         model.adata.uns["factor_obs"]["technical"]
@@ -4264,7 +4387,7 @@ def umap(
 
     When a corrected layer-0 representation is already present in
     ``adata.obsm['X_L0_batch_corrected']`` (written by
-    :func:`factor_batch_correction`), it is embedded as well and stored
+    [`factor_batch_correction`][scdef.tl.factor_batch_correction]), it is embedded as well and stored
     as ``adata.obsm['X_umap_L0_corrected']``, in addition to the per-layer
     embeddings. This function never *builds* that representation.
     """

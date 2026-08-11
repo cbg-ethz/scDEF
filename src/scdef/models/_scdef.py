@@ -290,7 +290,7 @@ class scDEF(object):
     def from_reference(cls, reference_model, adata, **kwargs):
         """Create a new model initialized from a fitted reference hierarchy.
 
-        See :func:`scdef.from_reference` for full documentation.
+        See [scdef.from_reference][] for the full parameter documentation.
         """
         from scdef.models.extend import from_reference
 
@@ -300,7 +300,7 @@ class scDEF(object):
     def add_batch_correction(cls, reference_model, batch_key, **kwargs):
         """Warm-start a batch-corrected model from a fitted hierarchy.
 
-        See :func:`scdef.add_batch_correction` for full documentation.
+        See [scdef.add_batch_correction][] for the full parameter documentation.
         """
         from scdef.models.extend import add_batch_correction
 
@@ -310,7 +310,7 @@ class scDEF(object):
     def decompose_batch_effects(cls, reference_model, **kwargs):
         """Re-learn lower layers under a frozen upper hierarchy to discover batch programs.
 
-        See :func:`scdef.decompose_batch_effects` for full documentation.
+        See [scdef.decompose_batch_effects][] for the full parameter documentation.
         """
         from scdef.models.extend import decompose_batch_effects
 
@@ -320,7 +320,7 @@ class scDEF(object):
     def from_hierarchy(cls, adata, hierarchy, **kwargs):
         """Create a model for new data initialized from a learned hierarchy.
 
-        See :func:`scdef.from_hierarchy` for full documentation.
+        See [scdef.from_hierarchy][] for the full parameter documentation.
         """
         from scdef.models.extend import from_hierarchy
 
@@ -414,7 +414,7 @@ class scDEF(object):
         """Load model from disk.
 
         Args:
-            dir_path: directory created by :meth:`save`
+            dir_path: directory created by [`save`][scdef.scDEF.save]
             adata: optional AnnData to attach when ``adata.h5ad`` was not saved.
 
         Returns:
@@ -493,6 +493,12 @@ class scDEF(object):
         layer_cpal: Optional[str] = "tab10",
         lightness_mult: Optional[float] = 0.15,
     ):
+        """Assign a colour palette to each layer's factors.
+
+        Populates the per-layer colours the graph and UMAP plots use.
+        ``layer_cpal`` is a matplotlib colormap name (or one per layer) and
+        ``lightness_mult`` spreads factors within a layer by lightness.
+        """
         if isinstance(layer_cpal, str):
             layer_cpal = [layer_cpal] * self.n_layers
         elif isinstance(layer_cpal, list):
@@ -527,6 +533,12 @@ class scDEF(object):
                     )
 
     def load_adata(self, adata, layer=None, batch_key=None):
+        """Attach a new AnnData to the model.
+
+        The object is **copied**, as at construction, so the caller's AnnData is
+        never modified. ``layer`` names the counts layer and ``batch_key`` the
+        batch column, with the same meaning as the constructor arguments.
+        """
         if not isinstance(adata, AnnData):
             raise TypeError("adata must be an instance of AnnData.")
         self.adata = adata.copy()
@@ -1249,9 +1261,9 @@ class scDEF(object):
 
     def update_model_size(
         self,
-        max_n_factors=None,
-        n_layers=None,
-        layer_sizes=None,
+        max_n_factors: Optional[int] = None,
+        n_layers: Optional[int] = None,
+        layer_sizes: Optional[List[int]] = None,
         use_decay_factor_schedule: bool = False,
     ):
         """Update latent hierarchy dimensions.
@@ -1319,6 +1331,13 @@ class scDEF(object):
         self.set_factor_names()
 
     def update_model_priors(self, update_alpha_from_cov: bool = True):
+        """Recompute the prior hyperparameters from the data and layer sizes.
+
+        Called after construction and whenever the layer sizes change, so the
+        relevance and hierarchy priors stay matched to the current architecture.
+        With ``update_alpha_from_cov`` the layer concentration is additionally
+        rescaled from the observed gene coverage.
+        """
         if self.use_brd:
             self.factor_shapes = [1.0] + [
                 self.factor_shape  # * self.layer_sizes[layer_idx] / self.layer_sizes[0]
@@ -1442,7 +1461,19 @@ class scDEF(object):
         min_cells: Optional[float] = 0.001,
         batch_purity_max: Optional[float] = None,
         batch_purity_soft_max: Optional[float] = None,
-    ):
+    ) -> np.ndarray:
+        """Indices of the layer-0 factors that pass the relevance and hierarchy criteria.
+
+        The selection :meth:`filter_factors` applies, exposed separately so the
+        consequences of a threshold can be inspected before committing to it.
+        Factors must clear ``brd_min`` and ``ard_min``, and either
+        ``clarity_min`` or ``n_eff_parents_max`` depending on which hierarchy
+        diagnostics are available; ``brd_exceptional`` keeps a high-relevance
+        factor regardless.
+
+        Returns:
+            Integer indices into layer 0.
+        """
         layer_name = self.layer_names[0]
         if min_cells != 0:
             min_cells = (
@@ -1555,6 +1586,14 @@ class scDEF(object):
         z_init_concentration=0.5,
         **kwargs,
     ):
+        """Initialize the variational parameters.
+
+        Called by :meth:`fit` on the first pass. Each ``init_*`` argument
+        supplies a warm start for the corresponding quantity instead of drawing
+        from the prior — this is how :func:`scdef.from_reference` and
+        :func:`scdef.decompose_batch_effects` carry a fitted hierarchy into a
+        new model.
+        """
         rngs = random.split(random.PRNGKey(self.seed), self.n_layers)
         init_z_provided = init_z is not None
 
@@ -1829,6 +1868,12 @@ class scDEF(object):
         )
 
     def get_nmf_init(self, max_cells=None):
+        """NMF warm start for the layer-0 factors.
+
+        Runs scikit-learn's NMF on library-normalized counts and returns cell
+        and gene loadings to initialize ``z`` and ``W``. Used by
+        ``fit(nmf_init=True)``; ``max_cells`` subsamples for speed.
+        """
         from sklearn.decomposition import NMF
 
         X_full = self.X
@@ -1948,7 +1993,7 @@ class scDEF(object):
             z_off: inactive cluster soft floor (default ``0.1``).
 
         Returns:
-            ``(init_z, init_w)`` lists compatible with :meth:`init_var_params`.
+            ``(init_z, init_w)`` lists compatible with `init_var_params`.
             ``init_w[0]`` is ``None``; layer ``l >= 1`` has shape
             ``(layer_sizes[l], layer_sizes[l - 1])``.
 
@@ -2093,6 +2138,12 @@ class scDEF(object):
     def reinit_factors(
         self, mixture_factors=None, init_budgets=False, exponent=1.1, **kwargs
     ):
+        """Re-initialize the layer-0 factors, splitting mixture factors.
+
+        Factors that mix several programmes are identified (or supplied via
+        ``mixture_factors``) and re-seeded, so a further fit can resolve them
+        into separate factors instead of leaving them blended.
+        """
         kept_factors = self.factor_lists[0]
         if mixture_factors is None:
             mixture_factors = self.identify_mixture_factors(**kwargs)
@@ -2127,6 +2178,11 @@ class scDEF(object):
         min_rate=jnp.log(1e-10),
         max_rate=jnp.log(1e10),
     ):
+        """Single-sample estimate of the ELBO for one minibatch.
+
+        Inference internals; :meth:`batch_elbo` averages this over several
+        draws. Not needed for analysis.
+        """
         # Only anneal the entropy of factor-related variables
         annealing_z = annealing_parameter  # for z
         annealing_w = annealing_parameter  # for W
@@ -2451,6 +2507,11 @@ class scDEF(object):
         stop_gene_budgets,
         alpha,
     ):
+        """Monte Carlo estimate of the ELBO for one minibatch.
+
+        Inference internals: averaged over ``num_samples`` reparameterized draws
+        and differentiated by JAX during training. Not needed for analysis.
+        """
         # Average over a batch of random samples.
         rngs = random.split(rng, num_samples)
         vectorized_elbo = vmap(
@@ -2664,7 +2725,7 @@ class scDEF(object):
             nmf_init: whether to initialize the model with NMF.
             hierarchical_init: on the first ``fit()`` call, initialize ``z`` from
                 KMeans/Ward labels and upper-layer ``W`` containment matrices via
-                :meth:`get_hierarchical_init` (L0 ``W`` uses the default prior init).
+                [`get_hierarchical_init`][scdef.scDEF.get_hierarchical_init] (L0 ``W`` uses the default prior init).
                 Requires an existing PCA embedding in ``adata.obsm[pca_key]``.
                 Mutually exclusive with ``nmf_init``.
             pca_key: ``adata.obsm`` key for PCA coordinates used for KMeans L0
@@ -2730,10 +2791,43 @@ class scDEF(object):
                 exactly where they are, while ``z``, cell budgets, gene budgets,
                 ``BRD``, ``ARD``, and ``alpha`` continue to learn freely. Useful
                 for warm-starting from a fitted hierarchy (e.g. the second pass
-                of :meth:`add_batch_correction`) when you want batch-specific
+                of [`add_batch_correction`][scdef.scDEF.add_batch_correction]) when you want batch-specific
                 gene scales to absorb new variance without letting the hierarchy
                 drift. Default ``False``. Not applied during pretraining.
-            **kwargs: additional keyword arguments.
+            **kwargs: training settings, forwarded to the inference loop. The
+                ones normally worth setting:
+
+                * ``n_epoch`` (default ``1000``): **maximum** epochs *per round*.
+                  Training stops earlier once the relative improvement over the
+                  best loss so far, ``(best - current) / |best|``, stays below
+                  ``tolerance`` for ``patience`` consecutive epochs, and never
+                  before ``min_epochs``. With ``n_rounds > 1`` the overall
+                  ceiling is ``n_rounds * n_epoch``, plus any ``root_epochs``
+                  and pretraining epochs.
+                * ``lr`` (default ``0.1``): learning rate for the global
+                  variational parameters; ``local_lr`` (default ``0.01``) for
+                  the per-cell ones.
+                * ``batch_size`` (default ``256``): cells per minibatch.
+                * ``num_samples`` (default ``100``): Monte Carlo samples used
+                  for the gradient estimate. Lower is faster and noisier.
+                * ``min_epochs`` (default ``50``), ``tolerance`` (default
+                  ``1e-5``), ``patience`` (default ``50``): the early-stopping
+                  rule described above. ``tolerance`` is on the *relative*
+                  improvement, so it is comparable across data sets whatever the
+                  scale of the loss.
+                * ``filter`` (default ``True``): prune the **upper** layers at
+                  the end of the fit, via ``filter_factors(upper_only=True)``.
+                  Layer 0 is deliberately left intact — filtering it is a
+                  separate, explicit step
+                  ([`filter_factors`][scdef.tl.filter_factors]), so that the thresholds
+                  can be chosen from the diagnostics. Has no effect when
+                  ``use_brd=False``.
+                * ``annotate`` (default ``True``): write the cell scores and
+                  signatures to ``adata``, which is what puts ``X_<layer>`` in
+                  ``adata.obsm``. Note that under the default ``filter=True``
+                  this flag is not consulted: ``filter_factors`` annotates on its
+                  own. Passing ``annotate=False`` only suppresses annotation if
+                  ``filter=False`` is passed as well.
 
             On the first call, parameters are initialized from priors (or NMF if enabled).
             On subsequent calls, the model is re-initialized from the current posterior
@@ -3727,6 +3821,12 @@ class scDEF(object):
             self.annotate_adata()
 
     def set_posterior_means(self):
+        """Compute ``self.pmeans`` from the variational parameters.
+
+        The posterior means every downstream tool reads: ``L0z``/``L0W`` and the
+        upper-layer equivalents, ``cell_scale``, ``gene_scale``, ``brd``.
+        Refreshed at the end of a fit.
+        """
         cell_budget_params = self.local_params[0]
         gene_budget_params = self.global_params[0]
         fscale_params = self.global_params[1]
@@ -3772,6 +3872,13 @@ class scDEF(object):
         )
 
     def set_posterior_variances(self):
+        """Compute ``self.pvars``, the posterior variances.
+
+        Needed by anything that reports uncertainty rather than a point estimate
+        — the confident signatures, their per-gene confidences, and
+        :func:`scdef.plotting.factor_gene_uncertainty_boxplot`. Call it after
+        loading a saved model if those quantities were not stored.
+        """
         cell_budget_params = self.local_params[0]
         gene_budget_params = self.global_params[0]
         fscale_params = self.global_params[1]
@@ -3985,12 +4092,12 @@ class scDEF(object):
         ``filter_factors`` renames factors in place (``set_factor_names``), so any
         cache keyed by those names silently re-attaches the previous factor set's
         results to the new nodes. Anything display-facing is therefore cleared
-        here, and the next :func:`scdef.tools.factor_diagnostics` is forced to
+        here, and the next [`factor_diagnostics`][scdef.tl.factor_diagnostics] is forced to
         rebuild rather than reuse its frozen upper-layer subset.
 
         ``factor_obs`` is deliberately *not* dropped: ``filter_factors`` itself
         reads BRD/ARD (and optionally batch purity) from it to decide what to
-        keep, and :meth:`_sync_factor_obs_with_filter` has already re-keyed it to
+        keep, and `_sync_factor_obs_with_filter` has already re-keyed it to
         the new names.
         """
         uns = self.adata.uns
@@ -4088,6 +4195,12 @@ class scDEF(object):
         self.adata.uns["factor_obs"] = new_factor_obs
 
     def set_factor_names(self):
+        """Rebuild ``factor_names`` from the current ``factor_lists``.
+
+        Names are ``<layer>_<i>`` numbered contiguously within each layer, so
+        they change whenever factors are filtered — which is why anything keyed
+        by factor name must be recomputed after filtering.
+        """
         self.factor_names = [
             [
                 f"{self.layer_names[idx]}_{str(i)}"
@@ -4097,6 +4210,18 @@ class scDEF(object):
         ]
 
     def annotate_adata(self):
+        """Write the fitted quantities onto ``self.adata``.
+
+        Called automatically at the end of :meth:`fit`, so it normally does not
+        need calling by hand — do so after changing ``factor_lists`` or the
+        posterior means outside a fit.
+
+        Writes ``obs['cell_scale']`` and ``var['gene_scale']``; per layer, the
+        hard assignment ``obs['<layer>']`` with its score, the per-factor weights
+        ``obs['<factor>_prob']``, the representation ``obsm['X_<layer>']`` with
+        its row-normalized ``_probs``, and the signatures
+        ``uns['<layer>_signatures']`` in scanpy's ``rank_genes_groups`` format.
+        """
         self.adata.obs["cell_scale"] = self.pmeans["cell_scale"]
         # Number of rows actually present in gene_scale, which is 1 whenever the gene
         # side is shared (`batch_gene_scale=False`) regardless of `n_batches`.
@@ -4224,6 +4349,12 @@ class scDEF(object):
         self.normalize_cellscores()
 
     def normalize_cellscores(self):
+        """Turn the per-layer cell scores into probabilities.
+
+        Row-normalizes each ``obsm['X_<layer>']`` and writes
+        ``obsm['X_<layer>_probs']`` plus one ``obs['<factor>_prob']`` column per
+        factor. Run by :meth:`annotate_adata`.
+        """
         for idx in range(self.n_layers):
             layer_name = self.layer_names[idx]
             scores = np.asarray(self.adata.obsm[f"X_{layer_name}"], dtype=float)

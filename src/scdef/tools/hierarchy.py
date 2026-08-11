@@ -15,11 +15,11 @@ def add_l0_lineage_aggregate_scores(
 
     For each L0 factor, follows ``best_parent`` upward through layers L1 … L{n-2},
     collecting ``clarity_score_01`` and ``n_eff_parents`` from each factor along the
-    path (same definitions as :func:`compute_hierarchy_scores`). Stores the mean
+    path (same definitions as [`compute_hierarchy_scores`][scdef.tl.compute_hierarchy_scores]). Stores the mean
     over those positions in ``avg_clarity`` and ``avg_n_eff_parents`` on the L0 row
     only; other rows get NaN.
 
-    This is called automatically from :func:`compute_hierarchy_scores`; it remains
+    This is called automatically from [`compute_hierarchy_scores`][scdef.tl.compute_hierarchy_scores]; it remains
     public for advanced use on a pre-built ``per_factor`` frame.
 
     This captures cases where an L0 factor maps cleanly to one L1 parent (low local
@@ -27,7 +27,7 @@ def add_l0_lineage_aggregate_scores(
     lineage averages reflect uncertainty higher in the hierarchy.
 
     Args:
-        per_factor: per-factor scores from :func:`compute_hierarchy_scores`. Factor
+        per_factor: per-factor scores from [`compute_hierarchy_scores`][scdef.tl.compute_hierarchy_scores]. Factor
             identity for lookups uses **row index labels** (not the ``child_factor``
             column when present).
         layer_names: ordered model layer names (``model.layer_names``). The walk

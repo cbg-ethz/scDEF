@@ -23,9 +23,9 @@ def _gene_scale_log_ratios(
 ) -> pd.DataFrame:
     """Core per-gene log-ratio computation shared by the public entry points.
 
-    Kept private so :func:`get_batch_specific_genes_from_gene_scale` (which
+    Kept private so [`get_batch_specific_genes_from_gene_scale`][scdef.tl.get_batch_specific_genes_from_gene_scale] (which
     reads the array off a model) and
-    :func:`get_factor_batch_gene_scale_affinity` (which may be handed the array
+    [`get_factor_batch_gene_scale_affinity`][scdef.tl.get_factor_batch_gene_scale_affinity] (which may be handed the array
     directly) cannot drift apart.
     """
     G = np.asarray(gene_scale, dtype=float)
@@ -325,7 +325,7 @@ def get_factor_batch_gene_scale_affinity(
 ) -> pd.DataFrame:
     r"""Score each layer-0 factor by its affinity for the reference fit's per-batch ``gene_scale`` contrast.
 
-    Named to match :func:`get_batch_specific_genes_from_gene_scale`, which
+    Named to match [`get_batch_specific_genes_from_gene_scale`][scdef.tl.get_batch_specific_genes_from_gene_scale], which
     produces the contrast this reads: that function answers *which genes* the
     reference fit's per-batch ``gene_scale`` term singled out, this one answers
     *which factors of the decomposed fit look like those genes* — hence
@@ -335,13 +335,13 @@ def get_factor_batch_gene_scale_affinity(
     ``batch_gene_scale=True``) carries a per-batch, per-gene multiplier,
     ``pmeans['gene_scale']`` of shape ``(n_batches, n_genes)``, which soaks up
     the gene-level differences between batches so the hierarchy does not have
-    to. :meth:`scDEF.decompose_batch_effects` then freezes the batch-corrected
+    to. [`decompose_batch_effects`][scdef.scDEF.decompose_batch_effects] then freezes the batch-corrected
     upper hierarchy and re-learns layer 0 *without* per-batch gene scales, so
     whatever that term was holding has to reappear in the layer-0 factors. This
     function measures how much of it landed in each factor: for every batch
     ``b`` it takes the per-gene log-ratio
     ``log(gene_scale[b, g] / ref[g])`` from
-    :func:`get_batch_specific_genes_from_gene_scale`, and for every kept layer-0
+    [`get_batch_specific_genes_from_gene_scale`][scdef.tl.get_batch_specific_genes_from_gene_scale], and for every kept layer-0
     factor ``k`` computes the **Spearman rank correlation** between that vector
     and the factor's gene loadings ``pmeans['L0W'][k, :]``, over **all** genes.
 
@@ -356,7 +356,7 @@ def get_factor_batch_gene_scale_affinity(
 
     **This is gene-side evidence.** Every other batch diagnostic in ``scdef``
     is cell-side — ``batch_purity`` / ``batch_purity_soft`` and the
-    ``batch_split_*`` columns of :func:`factor_diagnostics`. Those ask *which
+    ``batch_split_*`` columns of [`factor_diagnostics`][scdef.tl.factor_diagnostics]. Those ask *which
     cells* score on a factor and how they are distributed over batches. This one
     never looks
     at a cell: it asks whether the factor's *gene programme* is the one the
@@ -387,13 +387,13 @@ def get_factor_batch_gene_scale_affinity(
        this factor matches the gene programme the reference fit's per-batch
        scale absorbed" — a pointer to the batch-associated programme. Inspect
        the flagged factor's genes (``model.adata.uns['L0_signatures']``,
-       :func:`get_confident_signatures`) and decide from the experimental
+       [`get_confident_signatures`][scdef.tl.get_confident_signatures]) and decide from the experimental
        design. A high score on a condition-like batch key is expected and is
        not grounds for dropping the factor.
 
     Args:
         model: the **decomposed** scDEF model (after
-            :meth:`scDEF.decompose_batch_effects`) whose layer-0 factors are
+            [`decompose_batch_effects`][scdef.scDEF.decompose_batch_effects]) whose layer-0 factors are
             scored. Its ``pmeans['L0W']`` is full width; only the factors in
             ``model.factor_lists[0]`` are scored, and they are labelled with
             ``model.factor_names[0]``.
@@ -402,7 +402,7 @@ def get_factor_batch_gene_scale_affinity(
 
             * a fitted **reference scDEF model** (``batch_key`` set, ``gene_scale``
               of shape ``(n_batches, n_genes)``) — the log-ratios are computed
-              from it with :func:`get_batch_specific_genes_from_gene_scale`;
+              from it with [`get_batch_specific_genes_from_gene_scale`][scdef.tl.get_batch_specific_genes_from_gene_scale];
             * a **DataFrame** of precomputed log-ratios, genes-by-batches,
               indexed by ``var_names`` — exactly what that function returns;
             * a raw **array** of ``gene_scale``, shape ``(n_batches, n_genes)``,
@@ -410,7 +410,7 @@ def get_factor_batch_gene_scale_affinity(
 
             ``None`` (default) looks for ``adata.uns['reference_gene_scale_log_ratios']``
             or ``adata.uns['reference_gene_scale']`` on the decomposed model,
-            which :meth:`scDEF.decompose_batch_effects` records from the fit it
+            which [`decompose_batch_effects`][scdef.scDEF.decompose_batch_effects] records from the fit it
             decomposed, and raises if neither is present. Supplying it explicitly
             is only needed for a model decomposed before that record existed, or
             to score against a different reference.
@@ -423,7 +423,7 @@ def get_factor_batch_gene_scale_affinity(
         log_base: log base for the log-ratios. Irrelevant to the result — a rank
             correlation is invariant to any monotone rescaling — and kept only
             so the underlying table matches what you would get from
-            :func:`get_batch_specific_genes_from_gene_scale`.
+            [`get_batch_specific_genes_from_gene_scale`][scdef.tl.get_batch_specific_genes_from_gene_scale].
         reference_mode: ``mean_other_batches`` (default) or ``global_mean``,
             passed straight through. With exactly two batches the two columns
             are mirror images either way, so the two scores of a factor are
@@ -436,8 +436,8 @@ def get_factor_batch_gene_scale_affinity(
         log-ratio, plus
 
         * ``top_batch`` — the batch whose column is largest for that factor;
-        * ``top_score`` — that correlation (negative only if the factor is
-          anti-correlated with *every* batch's contrast);
+        * ``top_score`` — that correlation, negative only when the factor is
+            anti-correlated with *every* batch's contrast;
         * ``abs_top_score`` — its magnitude, for ranking regardless of sign.
 
         ``attrs['n_genes_used']``, ``attrs['reference_mode']`` and
@@ -453,12 +453,16 @@ def get_factor_batch_gene_scale_affinity(
         TypeError: ``reference`` is not a model, DataFrame or array.
 
     Example:
-        >>> decomposed = scdef.scDEF.load("ifn_batch_model")
-        >>> ref = scdef.scDEF.load("ifn_model")          # fitted with batch_key='stim'
-        >>> aff = scdef.tl.get_factor_batch_gene_scale_affinity(decomposed, ref)
-        >>> aff.sort_values("abs_top_score", ascending=False).head()
-        >>> # then LOOK at the genes before concluding anything:
-        >>> decomposed.adata.uns["L0_signatures"][aff["abs_top_score"].idxmax()][:10]
+        ```python
+        decomposed = scdef.scDEF.load("ifn_batch_model")
+        ref = scdef.scDEF.load("ifn_model")          # fitted with batch_key='stim'
+        aff = scdef.tl.get_factor_batch_gene_scale_affinity(decomposed, ref)
+        aff.sort_values("abs_top_score", ascending=False).head()
+
+        # then LOOK at the genes before concluding anything:
+        top = aff["abs_top_score"].idxmax()
+        decomposed.adata.uns["L0_signatures"][top][:10]
+        ```
     """
     if "L0W" not in model.pmeans:
         raise ValueError(

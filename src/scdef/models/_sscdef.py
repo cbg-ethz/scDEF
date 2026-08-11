@@ -45,7 +45,7 @@ class sscDEF(scDEF):
     def _geometric_layer_sizes_no_root(
         n_factors: int, top_factors: int, n_layers: int
     ) -> List[int]:
-        """Same geometric ladder as :meth:`scDEF._geometric_layer_sizes` without a root."""
+        """Same geometric ladder as `_geometric_layer_sizes` without a root."""
         n_layers = max(2, int(n_layers))
         min_k = float(n_factors)
         top_k = float(top_factors)
@@ -252,7 +252,7 @@ class sscDEF(scDEF):
             layers = [i for i in layers if i != top]
         return layers
 
-    # Copied from :meth:`scDEF.elbo` with a fixed (non-sampled) supervised top ``z``.
+    # Copied from [`elbo`][scdef.scDEF.elbo] with a fixed (non-sampled) supervised top ``z``.
     def elbo(
         self,
         rng,
@@ -585,7 +585,7 @@ class sscDEF(scDEF):
             + global_en
         )
 
-    # Copied from :meth:`scDEF._learn` with supervised ``optimize_layers`` and top-``z`` pinning.
+    # Copied from `_learn` with supervised ``optimize_layers`` and top-``z`` pinning.
     def _learn(
         self,
         n_rounds=1,
@@ -1033,7 +1033,7 @@ class sscDEF(scDEF):
     def fit(self, root_epochs: int = 0, **kwargs: Any) -> None:
         """Fit sscDEF; the supervised top layer ``z`` is held fixed.
 
-        When ``add_root=True``, delegates to :meth:`scDEF.fit` two-phase scheduling
+        When ``add_root=True``, delegates to [`fit`][scdef.scDEF.fit] two-phase scheduling
         (frozen root during the main fit, then ``root_epochs`` on the root). Defaults
         to ``root_epochs=10`` when ``add_root`` and ``root_epochs`` is 0.
         """
