@@ -46,6 +46,17 @@ mkdocs-autorefs = "^1.4.3"
 notebook = ">=6.5.7,<7"
 jupyter_contrib_nbextensions = "^0.7.0"
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --durations=10"
+markers = [
+    # Reserved for tests that reach a third-party service. No test carries it
+    # today -- the GSEA test is deliberately offline (it passes `libs=[]` and
+    # mock gene sets) -- but the merge checks run with `-m "not network"` so the
+    # convention works the moment one is added.
+    "network: requires network access to a third-party service",
+]
+
 [build-system]
 requires = ["poetry-core>=1.8.0"]
 build-backend = "poetry.core.masonry.api"

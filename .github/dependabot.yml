@@ -1,0 +1,29 @@
+# Weekly grouped dependency updates.
+#
+# `target-branch: dev` matters: dev is the working branch and main only receives
+# reviewed pull requests, so a Dependabot PR opened against main would bypass the
+# flow. Note that this config file itself is read from the DEFAULT branch (main),
+# so changes to it only take effect once merged there.
+#
+# Poetry projects use the `pip` ecosystem -- Dependabot reads pyproject.toml and
+# poetry.lock through it.
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    target-branch: "dev"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      python-dependencies:
+        patterns: ["*"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    target-branch: "dev"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns: ["*"]

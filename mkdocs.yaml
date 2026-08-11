@@ -1,4 +1,5 @@
 site_name: scDEF
+site_url: https://cbg-ethz.github.io/scDEF/
 
 theme:
   name: "material"
