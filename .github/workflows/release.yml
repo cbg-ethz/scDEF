@@ -10,10 +10,17 @@ name: Release
 # release run per tag.
 #
 # Publishing uses PyPI Trusted Publishing (OIDC) -- there is no API token in the
-# repo. One-time setup on PyPI: project `scdef` -> Publishing -> add a trusted
-# publisher with owner `cbg-ethz`, repository `scDEF`, workflow `release.yml`,
-# environment `pypi`. The `pypi` environment must also exist under
-# Settings -> Environments.
+# repo. One-time setup on PyPI: project `scdef` -> Manage -> Publishing -> add a
+# trusted publisher with owner `cbg-ethz`, repository `scDEF`, workflow
+# `release.yml` (the basename, not a path), and the environment field left
+# BLANK.
+#
+# A GitHub environment is optional here and deliberately not used: it would have
+# to be created separately and its name matched exactly on both sides, and it
+# buys little when the only trigger is a v* tag that already passes the guard
+# job below. If you later want a manual approval gate before a release, create an
+# environment, add `environment: {name: pypi}` to the publish job, and set the
+# same name on the PyPI publisher -- all three must agree.
 on:
   push:
     tags:
@@ -81,9 +88,6 @@ jobs:
     name: Publish to PyPI
     needs: test
     runs-on: ubuntu-latest
-    environment:
-      name: pypi
-      url: https://pypi.org/p/scdef
     permissions:
       id-token: write     # required for Trusted Publishing
       contents: read      # a job-level block zeroes every scope not listed,
