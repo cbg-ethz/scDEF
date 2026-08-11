@@ -1,0 +1,43 @@
+name: Nightly
+
+# The full test suite (27 modules, ~20 minutes). Too slow to gate pull requests,
+# so ci.yml runs only the integration tests and this picks up the rest once a
+# day against dev, plus on demand.
+on:
+  schedule:
+    - cron: '0 3 * * *'      # 03:00 UTC daily
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch or SHA to test'
+        required: false
+        default: 'dev'
+
+permissions:
+  contents: read
+
+jobs:
+  full-suite:
+    name: Full test suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || 'dev' }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: ts-graphviz/setup-graphviz@v2
+      - uses: snok/install-poetry@v1
+      - name: Cache scanpy datasets
+        uses: actions/cache@v4
+        with:
+          path: data
+          key: scanpy-datasets-pbmc3k
+      - run: poetry install --with dev,extras
+      # No `-m` filter, unlike the merge check in ci.yml: this runs everything,
+      # including anything marked `network` if such a test is ever added. A
+      # nightly can absorb a third-party outage in a way a merge gate cannot.
+      - name: Run all tests
+        run: poetry run pytest tests/ -v

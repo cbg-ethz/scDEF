@@ -16,3 +16,20 @@ dist/
 *.pkl
 .numba_cache/
 .cursor-preview/
+
+# Built documentation. `site/` above covers `mkdocs build`; the docs workflow
+# builds into `_site/` for the Pages artifact.
+_site/
+
+# mkdocs-material's local build cache.
+.cache/
+
+# Local archives and git bundles sitting in the repo root. None of these belong
+# in history -- together they are ~2.7 GB, and a single `git add -A` would push
+# them.
+*.bundle
+*.tar.gz
+scdef_notebooks_revision/
+
+# Exceptions to the blanket ignores above: these are real, tracked project files.
+!docs/requirements.txt

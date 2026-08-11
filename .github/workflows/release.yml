@@ -1,0 +1,109 @@
+name: Release
+
+# Publishes to PyPI when a version tag is pushed on main.
+#
+#   bump2version patch        # 0.6.1 -> 0.6.2, commits and tags
+#   git push --follow-tags    # pushes the commit and ONLY the new tag
+#
+# Use --follow-tags, never `git push --tags`: this repo has stale local tags
+# from versions already on PyPI, and pushing them all would fire one failing
+# release run per tag.
+#
+# Publishing uses PyPI Trusted Publishing (OIDC) -- there is no API token in the
+# repo. One-time setup on PyPI: project `scdef` -> Manage -> Publishing -> add a
+# trusted publisher with owner `cbg-ethz`, repository `scDEF`, workflow
+# `release.yml` (the basename, not a path), and the environment field left
+# BLANK.
+#
+# A GitHub environment is optional here and deliberately not used: it would have
+# to be created separately and its name matched exactly on both sides, and it
+# buys little when the only trigger is a v* tag that already passes the guard
+# job below. If you later want a manual approval gate before a release, create an
+# environment, add `environment: {name: pypi}` to the publish job, and set the
+# same name on the PyPI publisher -- all three must agree.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  # Refuse to publish a tag that predates CI-driven releases, or one that is not
+  # on main. 14 tags for versions up to v0.6.1 exist only locally in some
+  # clones; v0.5.0 in particular was never published, so an accidental push
+  # would upload it irreversibly.
+  guard:
+    name: Check the tag is releasable
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Refuse versions at or below the last manual release
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          python3 - "$v" <<'PY'
+          import sys
+          from packaging.version import Version
+          v = Version(sys.argv[1])
+          if v <= Version("0.6.1"):
+              sys.exit(f"::error::Refusing to publish {v}: at or below 0.6.1, "
+                       "the last release made by hand before CI publishing.")
+          PY
+      - name: Refuse a tag that is not on main
+        run: |
+          git fetch origin main --depth=0 --quiet
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main \
+            || { echo "::error::Tag $GITHUB_REF_NAME is not an ancestor of main"; exit 1; }
+
+  test:
+    name: Test (py${{ matrix.python-version }})
+    needs: guard
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The full range the package supports (pyproject: >=3.10,<3.12).
+        # Pull requests test one version for speed; a release tests both.
+        python-version: ['3.10', '3.11']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: ts-graphviz/setup-graphviz@v2
+      - uses: snok/install-poetry@v1
+      - name: Cache scanpy datasets
+        uses: actions/cache@v4
+        with:
+          path: data
+          key: scanpy-datasets-pbmc3k
+      - run: poetry install --with dev,extras
+      - name: Run integration tests
+        run: poetry run pytest tests/test_integration.py -v -m "not network"
+
+  publish:
+    name: Publish to PyPI
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write     # required for Trusted Publishing
+      contents: read      # a job-level block zeroes every scope not listed,
+                          # so checkout would 403 without this
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      # Same as ci.yml: build through the poetry-core backend without needing
+      # Poetry itself. pypa/gh-action-pypi-publish uploads whatever is in dist/.
+      - name: Build sdist and wheel
+        run: |
+          pip install build twine
+          python -m build
+      - name: Check metadata
+        run: twine check dist/*
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1

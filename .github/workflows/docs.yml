@@ -1,0 +1,57 @@
+name: Docs
+
+# Publishes the documentation site to GitHub Pages from main only. Pushes to dev
+# and pull requests get a strict build via ci.yml but are not deployed, so the
+# public site always matches main.
+#
+# One-time repo setup: Settings -> Pages -> Source = "GitHub Actions".
+# This replaces the previous `mkdocs gh-deploy` flow; the gh-pages branch is no
+# longer written to and can be deleted once this has run successfully.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'src/**'          # docstrings are rendered by mkdocstrings
+      - 'mkdocs.yaml'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Serialize deploys and let an in-flight one finish rather than cancelling it.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: docs/requirements.txt
+      - run: pip install -r docs/requirements.txt
+      - name: Build site (strict)
+        run: mkdocs build --strict --site-dir _site
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    name: Deploy
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

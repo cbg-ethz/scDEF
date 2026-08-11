@@ -1,0 +1,116 @@
+name: CI
+
+# Runs on every push to dev/main and on pull requests into main. These are the
+# checks that gate a merge; the full 27-module test suite takes ~20 minutes and
+# is deliberately NOT run here (see the `tests` job comment).
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install black==23.12.1
+      # Scoped to the package and tests on purpose: `black .` would also pick up
+      # the notebooks under docs/examples (when black[jupyter] is available) and
+      # the scripts in reproducibility/, which are not maintained to this style.
+      - name: Check formatting
+        run: black --check --diff src/ tests/
+
+  docs:
+    name: Docs build (strict)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: docs/requirements.txt
+      - run: pip install -r docs/requirements.txt
+      # --strict turns unresolved cross-references and pages missing from the nav
+      # into errors, which is what catches an undocumented public symbol or a
+      # renamed function that a docstring still links to.
+      - name: Build site
+        run: mkdocs build --strict
+
+  package:
+    name: Package build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      # `python -m build` rather than `poetry build`: it drives the same
+      # poetry-core backend declared in pyproject.toml but needs no Poetry
+      # install, so this job stays a plain pip environment.
+      - name: Build sdist and wheel
+        run: |
+          pip install build twine
+          python -m build
+      - name: Validate metadata
+        run: twine check dist/*
+
+  # Branch protection on main requires all four jobs in this file. It matches on
+  # the job's `name:`, NOT its id -- so renaming any `name:` below silently
+  # blocks every PR on "Expected — waiting for status to be reported" until the
+  # protection rule is updated to match:
+  #
+  #   gh api -X PATCH repos/cbg-ethz/scDEF/branches/main/protection/required_status_checks \
+  #     -F strict=false \
+  #     -f 'contexts[]=Lint' -f 'contexts[]=Docs build (strict)' \
+  #     -f 'contexts[]=Package build' -f 'contexts[]=Integration tests'
+  test:
+    name: Integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      # scdef imports graphviz, and pygraphviz-style builds need the system lib.
+      - uses: ts-graphviz/setup-graphviz@v2
+      - uses: snok/install-poetry@v1
+      - name: Configure Poetry
+        run: poetry config virtualenvs.in-project true
+      - name: Cache the virtualenv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-py3.11-${{ hashFiles('poetry.lock') }}
+      # Every integration test calls sc.datasets.pbmc3k(), which downloads into
+      # ./data on a cold runner. Cache it so the suite is not re-downloading the
+      # same matrix on every run.
+      - name: Cache scanpy datasets
+        uses: actions/cache@v4
+        with:
+          path: data
+          key: scanpy-datasets-pbmc3k
+      # Fails loudly if pyproject.toml changed without re-running `poetry lock`,
+      # rather than letting it surface as a confusing install error.
+      - name: Check the lockfile is current
+        run: poetry check --lock
+      - run: poetry install --with dev,extras
+      # Only the integration tests gate a merge. `-m "not network"` drops the
+      # GSEA test, which calls Enrichr over the internet and is too flaky to
+      # block merges on. The full suite runs in nightly.yml.
+      - name: Run integration tests
+        run: poetry run pytest tests/test_integration.py -v -m "not network"
