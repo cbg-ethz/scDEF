@@ -2732,8 +2732,8 @@ class scDEF(object):
                 Defaults to ``None``, meaning **use it when it applies**: it is
                 enabled unless ``nmf_init`` is set or ``pca_key`` is absent from
                 ``adata.obsm``, in which case the default initialization is used
-                and the reason is logged. Pass ``True`` to require it -- that
-                raises if the PCA embedding is missing rather than falling back --
+                and the reason is logged. Pass ``True`` to require it — that
+                raises if the PCA embedding is missing rather than falling back —
                 or ``False`` to switch it off. Ignored on a refit either way,
                 which warm-starts from the previous posterior.
             pca_key: ``adata.obsm`` key for PCA coordinates used for KMeans L0
@@ -3310,6 +3310,161 @@ class scDEF(object):
         }
         return local_loss_grad, global_loss_grad
 
+    def _get_or_build_learn_step_fns(
+        self,
+        num_samples: int,
+        lr: float,
+        local_lr: float,
+        freeze_w: bool,
+    ):
+        """Cached JIT-compiled *fused* update steps for `_learn`.
+
+        Previously only the gradient was jitted, so `optimizer.update`,
+        `optax.apply_updates` and the parameter clipping were dispatched from
+        Python one operation at a time and the device sat idle between them.
+        Fusing the whole step -- gradient, optimizer, apply, clip -- into a single
+        `jit` lets XLA schedule it as one program. The arithmetic, the update
+        order and the RNG stream are untouched, so results are unchanged up to
+        the reassociation XLA is already free to do inside the gradient.
+
+        Cached on the instance because these closures capture values that `jit`
+        cannot see change between calls: both learning rates (baked into the
+        optax transforms), `freeze_w`, and the `W` slot range (via `n_layers`).
+        A stale entry would keep training with a previous learning rate, so all
+        of them are part of the key. Without the cache the functions would be
+        rebuilt and recompiled on every `_learn`, which the fit -> filter ->
+        re-fit loop does repeatedly.
+
+        Returns:
+            ``(local_optimizer, global_optimizer, local_update, global_update)``.
+            The optimizers are returned alongside so the caller initializes the
+            optimizer state from the same transforms the steps close over.
+        """
+        marginalize_alpha = bool(self.marginalize_alpha)
+        key = (
+            int(num_samples),
+            marginalize_alpha,
+            float(lr),
+            float(local_lr),
+            bool(freeze_w),
+            int(self.n_layers),
+        )
+        cache = getattr(self, "_learn_step_cache", None)
+        if isinstance(cache, dict) and cache.get("key") == key:
+            return (
+                cache["local_optimizer"],
+                cache["global_optimizer"],
+                cache["local_update"],
+                cache["global_update"],
+            )
+
+        local_loss_grad, global_loss_grad = self._get_or_build_learn_grad_fns(
+            num_samples=num_samples
+        )
+        local_optimizer = optax.adam(local_lr)
+        global_optimizer = optax.adam(lr)
+
+        def clip_params(
+            params, min_mu=-1e10, max_mu=1e4, min_logstd=-1e10, max_logstd=1e1
+        ):
+            for i in range(len(params))[:-2]:
+                params[i] = params[i].at[0].set(jnp.clip(params[i][0], min_mu, max_mu))
+                params[i] = (
+                    params[i].at[1].set(jnp.clip(params[i][1], min_logstd, max_logstd))
+                )
+            return params
+
+        # Indices in `global_params` corresponding to the per-layer W matrices.
+        # Layout: [gene_scale, BRD, W_layer_0, ..., W_layer_{n-1}, ARD/wm, alpha].
+        w_param_start = 2
+        w_param_end = 2 + self.n_layers
+
+        def local_update(
+            X,
+            indices,
+            key,
+            local_params,
+            global_params,
+            local_opt_state,
+            annealing_parameter,
+            stop_gradients,
+            stop_cell_budgets,
+            stop_gene_budgets,
+            alpha,
+        ):
+            value, gradient = local_loss_grad(
+                X,
+                indices,
+                local_params,
+                global_params,
+                key,
+                annealing_parameter,
+                stop_gradients,
+                stop_cell_budgets,
+                stop_gene_budgets,
+                alpha,
+            )
+            updates, local_opt_state_new = local_optimizer.update(
+                gradient, local_opt_state, local_params
+            )
+            local_params_new = optax.apply_updates(local_params, updates)
+            local_params_new = clip_params(local_params_new)
+            return value, local_params_new, local_opt_state_new
+
+        def global_update(
+            X,
+            indices,
+            key,
+            local_params,
+            global_params,
+            global_opt_state,
+            annealing_parameter,
+            stop_gradients,
+            stop_cell_budgets,
+            stop_gene_budgets,
+            alpha,
+        ):
+            value, gradient = global_loss_grad(
+                X,
+                indices,
+                local_params,
+                global_params,
+                key,
+                annealing_parameter,
+                stop_gradients,
+                stop_cell_budgets,
+                stop_gene_budgets,
+                alpha,
+            )
+            updates, global_opt_state_new = global_optimizer.update(
+                gradient, global_opt_state, global_params
+            )
+            global_params_new = optax.apply_updates(global_params, updates)
+            if freeze_w:
+                # Restore per-layer W variational params to their pre-update
+                # values. The Adam moments still accumulate from the non-zero
+                # W gradients, but they never affect the parameters because we
+                # snap each W slot back every step. Optimizer state is reset
+                # at the start of each `_learn` call, so this is contained.
+                # `freeze_w` is a Python bool, so this branch is resolved when
+                # the step is traced -- which is why it is part of the cache key.
+                global_params_new = list(global_params_new)
+                for i in range(w_param_start, w_param_end):
+                    global_params_new[i] = global_params[i]
+            global_params_new = clip_params(global_params_new)
+            return value, global_params_new, global_opt_state_new
+
+        local_update_jit = jit(local_update)
+        global_update_jit = jit(global_update)
+        self._learn_step_cache = {
+            "key": key,
+            "local_optimizer": local_optimizer,
+            "global_optimizer": global_optimizer,
+            "local_update": local_update_jit,
+            "global_update": global_update_jit,
+        }
+        return local_optimizer, global_optimizer, local_update_jit, global_update_jit
+
     def _compute_median_parents(
         self,
         local_params=None,
@@ -3486,20 +3641,6 @@ class scDEF(object):
             f"{int(min(batch_size, self.n_cells))}"
         )
 
-        def clip_params(
-            params, min_mu=-1e10, max_mu=1e4, min_logstd=-1e10, max_logstd=1e1
-        ):
-            for i in range(len(params))[:-2]:
-                params[i] = params[i].at[0].set(jnp.clip(params[i][0], min_mu, max_mu))
-                params[i] = (
-                    params[i].at[1].set(jnp.clip(params[i][1], min_logstd, max_logstd))
-                )
-            return params
-
-        local_loss_grad, global_loss_grad = self._get_or_build_learn_grad_fns(
-            num_samples=num_samples
-        )
-
         # --- Set up layer-wise stop gradients ---
 
         if optimize_layers is None:
@@ -3529,93 +3670,28 @@ class scDEF(object):
             end = start + int(self.layer_sizes[lidx])
             _freeze_z_slices.append((start, end))
 
-        # --- Initialize optimizers ---
+        # --- Initialize optimizers and the fused update steps ---
 
-        local_optimizer = optax.adam(local_lr)
-        global_optimizer = optax.adam(lr)
+        # The whole per-minibatch step (gradient -> optimizer -> apply -> clip) is
+        # compiled as one jit'd function and cached on the instance. Previously
+        # only the gradient was jitted and the rest dispatched op-by-op from
+        # Python, which left the device idle between operations.
+        (
+            local_optimizer,
+            global_optimizer,
+            local_update,
+            global_update,
+        ) = self._get_or_build_learn_step_fns(
+            num_samples=num_samples,
+            lr=lr,
+            local_lr=local_lr,
+            freeze_w=freeze_w,
+        )
         local_opt_state = local_optimizer.init(self.local_params)
         global_opt_state = global_optimizer.init(self.global_params)
 
         local_params = self.local_params
         global_params = self.global_params
-
-        def local_update(
-            X,
-            indices,
-            key,
-            local_params,
-            global_params,
-            local_opt_state,
-            annealing_parameter,
-            stop_gradients,
-            stop_cell_budgets,
-            stop_gene_budgets,
-            alpha,
-        ):
-            value, gradient = local_loss_grad(
-                X,
-                indices,
-                local_params,
-                global_params,
-                key,
-                annealing_parameter,
-                stop_gradients,
-                stop_cell_budgets,
-                stop_gene_budgets,
-                alpha,
-            )
-            updates, local_opt_state_new = local_optimizer.update(
-                gradient, local_opt_state, local_params
-            )
-            local_params_new = optax.apply_updates(local_params, updates)
-            local_params_new = clip_params(local_params_new)
-            return value, local_params_new, local_opt_state_new
-
-        # Indices in `global_params` corresponding to the per-layer W matrices.
-        # Layout: [gene_scale, BRD, W_layer_0, ..., W_layer_{n-1}, ARD/wm, alpha].
-        w_param_start = 2
-        w_param_end = 2 + self.n_layers
-
-        def global_update(
-            X,
-            indices,
-            key,
-            local_params,
-            global_params,
-            global_opt_state,
-            annealing_parameter,
-            stop_gradients,
-            stop_cell_budgets,
-            stop_gene_budgets,
-            alpha,
-        ):
-            value, gradient = global_loss_grad(
-                X,
-                indices,
-                local_params,
-                global_params,
-                key,
-                annealing_parameter,
-                stop_gradients,
-                stop_cell_budgets,
-                stop_gene_budgets,
-                alpha,
-            )
-            updates, global_opt_state_new = global_optimizer.update(
-                gradient, global_opt_state, global_params
-            )
-            global_params_new = optax.apply_updates(global_params, updates)
-            if freeze_w:
-                # Restore per-layer W variational params to their pre-update
-                # values. The Adam moments still accumulate from the non-zero
-                # W gradients, but they never affect the parameters because we
-                # snap each W slot back every step. Optimizer state is reset
-                # at the start of each `_learn` call, so this is contained.
-                global_params_new = list(global_params_new)
-                for i in range(w_param_start, w_param_end):
-                    global_params_new[i] = global_params[i]
-            global_params_new = clip_params(global_params_new)
-            return value, global_params_new, global_opt_state_new
 
         # --- Data stream ---
 
