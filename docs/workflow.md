@@ -4,7 +4,7 @@ The reference workflow for applying scDEF to a data set. Every step states what
 it needs and what it writes, so the steps can be reordered or skipped as long as
 the prerequisites hold. For a short introduction see
 [Basic usage](examples/basicusage.md); for the objects themselves see the
-[API reference](api.md).
+[API reference](reference/index.md).
 
 ## Input requirements
 
@@ -74,7 +74,7 @@ model.fit()                                          # re-fit the reduced hierar
 scd.pl.qc(model)
 ```
 
-Use [`scd.tl.filter`][scdef.tl.filter_factors] rather than
+Use [`scd.tl.filter`][scdef.tl.filter] rather than
 `model.filter_factors` directly. Filtering renames factors, which invalidates
 everything keyed by those names — stored signatures, the hierarchies, and the
 frozen upper-layer subset the diagnostics use. `scd.tl.filter` filters *and*

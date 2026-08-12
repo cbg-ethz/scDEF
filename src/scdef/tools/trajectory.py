@@ -82,6 +82,21 @@ def build_differentiation_paths(
     adaptive filtering:
 
     ``w >= max(abs_parent_weight, rel_parent_weight * max_parent_weight_for_child)``.
+
+    Args:
+        model: fitted scDEF model with at least two layers. A single-layer model
+            stores an empty path set and returns ``[]``.
+        rel_parent_weight: keep a parent link whose weight is at least this fraction
+            of the child's strongest link. This adapts per child, so a child with one
+            dominant parent yields one path while an ambiguous child branches.
+        abs_parent_weight: absolute floor on a parent link's weight, applied on top of
+            the relative rule. The default of 0.0 leaves the relative rule in charge.
+        max_paths_per_leaf: cap on the paths generated from each layer-0 factor,
+            bounding the branching when many parents survive filtering.
+        key_added: key in ``adata.uns`` the paths and their parameters are stored under.
+
+    Returns:
+        One list of factor names per path, ordered from the top layer down to the leaf.
     """
     if model.n_layers < 2:
         model.adata.uns[key_added] = {
@@ -187,8 +202,32 @@ def build_transition_paths(
 ) -> List[List[str]]:
     """Build transition paths on a soft inter-layer factor graph.
 
+    Unlike [`build_differentiation_paths`][scdef.tl.build_differentiation_paths], which only
+    walks upward, this treats the inter-layer graph as undirected, so a path may rise
+    through a shared parent and descend again — the shape a transition between two
+    states takes.
+
     De novo mode: ``sources=None`` and ``targets=None`` -> all terminal pairs.
     Targeted mode: provide both ``sources`` and ``targets`` factor-name lists.
+
+    Args:
+        model: fitted scDEF model.
+        rel_parent_weight: keep an edge whose weight is at least this fraction of the
+            child's strongest link.
+        abs_parent_weight: absolute floor on an edge weight, applied on top of the
+            relative rule.
+        max_path_len: maximum number of nodes in a path, at least 2. Longer limits
+            allow routes through more intermediate layers.
+        max_paths_per_pair: cap on paths kept per source/target pair.
+        terminal_layer_idx: layer whose factors act as the path endpoints, layer 0
+            (the finest) by default.
+        sources: factor names to start from. Must be given together with ``targets``;
+            leave both unset to use every pair of terminal factors.
+        targets: factor names to end at, paired with ``sources``.
+        key_added: key in ``adata.uns`` the paths and their parameters are stored under.
+
+    Returns:
+        One list of factor names per path, ordered from source to target.
     """
     if terminal_layer_idx < 0 or terminal_layer_idx >= model.n_layers:
         raise ValueError("terminal_layer_idx out of bounds.")
@@ -342,6 +381,23 @@ def score_paths(
       - ``adata.obsm[f"{prefix}_positions"]`` (n_cells, n_paths)
       - ``adata.obsm[f"{prefix}_affinities"]`` (n_cells, n_paths)
       - per-path summary table in ``adata.uns[paths_key]["path_stats"]``.
+
+    *Position* is how far along a path a cell sits; *affinity* is how well the path
+    describes that cell at all. Read them together — a position is only meaningful
+    for a cell whose affinity is high.
+
+    Args:
+        model: fitted scDEF model.
+        paths_key: ``adata.uns`` key holding paths built by
+            [`build_transition_paths`][scdef.tl.build_transition_paths] or
+            [`build_differentiation_paths`][scdef.tl.build_differentiation_paths].
+        key_added: prefix for the two ``obsm`` matrices written. Defaults to
+            ``paths_key``.
+        normalize_per_layer: scale factor scores within each layer before scoring, so
+            that layers with larger raw scores do not dominate a path's position.
+        min_affinity: floor in ``[0, 1]`` below which a cell is treated as off the
+            path rather than assigned a position on it.
+        eps: small constant guarding the normalizations against division by zero.
     """
     if key_added is None:
         key_added = str(paths_key)
@@ -442,9 +498,28 @@ def multilevel_paga(
     reuse_pos: bool = True,
     layout: str = "fa",
     random_seed: int = 0,
-    **paga_kwargs,
+    **paga_kwargs: Any,
 ) -> None:
-    """Compute and cache multilevel PAGA results for plotting."""
+    """Compute and cache multilevel PAGA results for plotting.
+
+    Runs PAGA once per layer over a single shared neighbourhood graph, so the
+    coarse and fine graphs describe the same cells at different resolutions. Plot
+    the cached result with [`scdef.pl.multilevel_paga`][scdef.pl.multilevel_paga].
+
+    Args:
+        model: fitted scDEF model, annotated so that ``adata.obs`` carries the layer
+            assignment columns.
+        neighbors_rep: ``adata.obsm`` representation the neighbourhood graph is built
+            from. The layer-0 scores by default.
+        layers: layer indices to run, coarsest first. Defaults to every layer with
+            more than one factor — a single-factor layer has no graph to draw.
+        reuse_pos: initialize each layer's layout from the previous, coarser one, so
+            a group stays in roughly the same place as resolution increases and the
+            layers can be read side by side.
+        layout: graph layout passed to scanpy, ``"fa"`` (ForceAtlas2) by default.
+        random_seed: seed for the layout, so repeated runs place nodes identically.
+        **paga_kwargs: forwarded to ``scanpy.tl.paga``.
+    """
     if layers is None:
         layers = [
             i

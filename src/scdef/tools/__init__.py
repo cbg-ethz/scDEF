@@ -53,9 +53,11 @@ from .batch import (
 )
 from .lineage import get_lineage_factors, get_global_factors
 
-# `filter` is the ergonomic alias; the function is defined as
-# `filter_factors` so it does not shadow the builtin inside factor.py.
-filter = filter_factors
+# `filter` is the ergonomic alias; the function is defined as `filter_factors` so it
+# does not shadow the builtin inside factor.py. Bound by an aliased import rather than
+# an assignment (`filter = filter_factors`): griffe reads an assignment as a module
+# attribute, so the API page for it renders with no signature and no parameters table.
+from .factor import filter_factors as filter  # noqa: E402,A004
 
 __all__ = [
     "assign_confident",

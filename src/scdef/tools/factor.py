@@ -238,6 +238,13 @@ def get_technical_factors(model: "scDEF") -> List[str]:
     returned names are always the *current* ``model.factor_names`` entries, so
     they can be compared directly against the live model. Technical factors that
     are no longer kept by the model are omitted.
+
+    Args:
+        model: fitted scDEF model whose ``factor_obs`` carries the flags.
+
+    Returns:
+        Current factor names flagged technical, or ``[]`` if none are flagged or
+        diagnostics have not been computed.
     """
     factor_obs = model.adata.uns.get("factor_obs")
     if factor_obs is None or "technical" not in factor_obs.columns:
@@ -262,6 +269,9 @@ def get_batch_technical_factors(model: "scDEF") -> List[str]:
     represents: nothing is deleted and nothing propagates —
     [`factor_batch_correction`][scdef.tl.factor_batch_correction] merges or drops it in the corrected
     representation and leaves the model itself untouched.
+
+    Args:
+        model: fitted scDEF model whose ``factor_obs`` carries the flags.
 
     Returns:
         Current layer-0 factor names flagged batch-technical, or ``[]`` if none
@@ -533,7 +543,29 @@ def get_stored_confident_signatures(
         Dict[str, float],
     ],
 ]:
-    """Load precomputed confident signatures (and optional scores) from cache."""
+    """Load precomputed confident signatures (and optional scores) from cache.
+
+    Reads the cache written by [`set_confident_signatures`][scdef.tl.set_confident_signatures],
+    which must have been run first. Stored keys are stable original-index labels and
+    are translated to the current ``model.factor_names``, so factors the model no
+    longer keeps are dropped rather than mislabelled.
+
+    Args:
+        model: fitted scDEF model with a populated
+            ``adata.uns['confident_signatures']`` cache.
+        layer_idx: layer to read signatures for.
+        max_genes: keep at most this many genes per signature, highest-scoring
+            first. Defaults to the full confident list.
+        return_confidences: also return the per-gene posterior confidences.
+        return_combined_scores: also return the per-gene combined scores used to
+            order each signature.
+        return_signature_confidences: also return the per-factor weighted Jaccard
+            confidence — how stable the gene list is across posterior samples.
+
+    Returns:
+        The signatures per factor, alone or followed by whichever of the optional
+        dictionaries were requested, in the order the flags appear above.
+    """
     if layer_idx < 0 or layer_idx >= model.n_layers:
         raise ValueError(f"layer_idx must be in [0, {model.n_layers - 1}].")
     cache = _get_confident_signatures_cache(model)
@@ -614,6 +646,23 @@ def set_confident_signatures(
     weighted signature Jaccard confidences (posterior stability of each
     confident gene list, weighted by ``combined_scores``) in
     ``model.adata.uns['confident_signatures']`` for reuse by plotting.
+
+    Args:
+        model: fitted scDEF model.
+        confidence_threshold: a gene enters a factor's signature when
+            ``P(W > tau)`` reaches this value. Raise it for shorter, more certain
+            signatures; lower it to admit weaker genes.
+        tau_quantile: quantile of the factor's loadings used as the effect
+            threshold ``tau``, so the test asks whether a gene is confidently among
+            the factor's strongest.
+        min_effect: absolute floor on ``tau``, applied when the quantile alone would
+            put it too low to be meaningful. Defaults to no floor.
+        mc_samples: number of posterior samples drawn to estimate the per-gene
+            probabilities and the signature stability.
+        random_seed: seed for those posterior draws, so the cache is reproducible.
+
+    Returns:
+        The confident signature per factor, flattened across all layers.
     """
     cache: Dict[str, object] = {
         "fit_revision": int(getattr(model, "_fit_revision", 0)),
@@ -1560,6 +1609,27 @@ def get_obs_score_rankings(
     This reads cached matrices from ``model.adata.uns['obs_scores']`` (written by
     ``scd.pl.obs_scores``). If cache is missing/stale for the requested key/model,
     it is recomputed on demand for the requested ``obs_key`` and ``mode``.
+
+    Args:
+        model: fitted scDEF model.
+        layer: layer to rank factors in, as an index or a name from
+            ``model.layer_names``.
+        obs_key: column in ``model.adata.obs`` holding the annotation to score against.
+        obs_values: one or more values of ``obs_key`` to rank factors for. A single
+            string is treated as a one-element list.
+        mode: which association score to rank by — ``"fracs"`` (fraction of the
+            annotation's cells assigned to the factor), ``"f1"`` (F1 of the
+            assignment), ``"weights"``, ``"prob"``, ``"soft_prec"``, or ``"score"``
+            (mean factor score).
+        ascending: if True, rank from lowest score to highest. Ranking is always
+            grouped by ``obs_values`` in the order given, and sorted by score within
+            each group.
+        recompute: force the score matrix to be recomputed even when a cache entry
+            for this ``obs_key`` and ``mode`` matches the current fit.
+
+    Returns:
+        One row per (``obs_value``, factor) with columns ``factor``, ``layer``,
+        ``layer_idx``, ``obs_key``, ``obs_value``, ``mode`` and ``score``.
     """
     if isinstance(layer, str):
         if layer not in model.layer_names:
@@ -1679,6 +1749,32 @@ def get_obs_value_specific_factors(
     Specificity is defined within the provided ``obs_values`` as:
     ``specificity = score(obs_value) - max(score(other_obs_values))``.
     Higher values indicate stronger specificity for that obs category.
+
+    Note that specificity is relative to the ``obs_values`` given, not to the whole
+    annotation: passing two of five cell types asks which factors separate those
+    two, not which are unique across all five.
+
+    Args:
+        model: fitted scDEF model.
+        layer: layer to search, as an index or a name from ``model.layer_names``.
+        obs_key: column in ``model.adata.obs`` holding the annotation.
+        obs_values: values of ``obs_key`` to find specific factors for. A single
+            string is treated as a one-element list; with one value there is no
+            competitor, so specificity equals the raw score.
+        mode: association score to compute specificity from — see
+            [`get_obs_score_rankings`][scdef.tl.get_obs_score_rankings] for the options.
+        min_specificity: drop factors whose margin over the best competing value
+            falls below this. The default of 0.0 keeps any factor that leads.
+        top_n: keep at most this many factors per value, most specific first.
+            Defaults to all that pass ``min_specificity``.
+        recompute: force the underlying score matrix to be recomputed rather than
+            read from cache.
+        return_scores: return the full table with the specificity margins and the
+            competing value, instead of just the factor names.
+
+    Returns:
+        Factor names per ``obs_value``, or — when ``return_scores`` is True — a
+        DataFrame with the score, the margin, and which value came second.
     """
     if isinstance(obs_values, str):
         obs_values = [obs_values]
@@ -2247,6 +2343,22 @@ def set_cell_entropies(
     Also stores an effective number of factors per cell, defined as
     ``exp(H)`` where ``H`` is the non-normalized Shannon entropy.
 
+    Args:
+        model: fitted scDEF model, with ``annotate_adata`` (or ``fit``) already run
+            so that ``adata.obsm['X_<layer>']`` exists.
+        layers: layers to compute entropy for, as indices or names. Defaults to every
+            layer.
+        key_suffix: suffix of the entropy column written to ``adata.obs``; the full
+            name is ``f"{layer_name}_{key_suffix}"``.
+        effective_suffix: suffix of the effective-number-of-factors column, written as
+            ``f"{layer_name}_{effective_suffix}"``.
+        normalize: divide the entropy by ``log(n_factors)`` in that layer, putting it
+            on a roughly ``[0, 1]`` scale so layers of different widths are
+            comparable. The effective-factor column is always computed from the
+            non-normalized entropy.
+        eps: floor applied before normalizing and before taking logs, to keep zero
+            memberships from producing infinities.
+
     Returns:
         List of created/updated entropy column names.
     """
@@ -2313,6 +2425,23 @@ def compute_within_group_pairwise_dissimilarity(
     within each category of ``obs_key`` and summarized per group.
 
     Results are cached in ``model.adata.uns['within_group_pairwise_dissimilarity']``.
+
+    Args:
+        model: fitted scDEF model, with ``annotate_adata`` (or ``fit``) already run
+            so that ``adata.obsm['X_<layer>']`` exists.
+        layer: layer whose factor memberships represent each cell, as an index or a
+            name from ``model.layer_names``.
+        obs_key: column in ``model.adata.obs`` defining the groups; distances are
+            computed only between cells sharing a value.
+        metric: distance between two cells' membership vectors — ``"jsd"``
+            (Jensen-Shannon, the default, appropriate for the normalized memberships),
+            ``"euclidean"``, or ``"cosine"``.
+        eps: floor applied when normalizing memberships, so that a cell with no
+            assigned factor does not divide by zero.
+
+    Returns:
+        One row per group, summarizing the within-group pairwise distances. Groups
+        with fewer than two cells yield empty distance sets.
     """
     if obs_key not in model.adata.obs.columns:
         raise KeyError(f"obs_key '{obs_key}' not found in model.adata.obs.")
@@ -4199,6 +4328,29 @@ def gsea(
     ``custom_gene_sets`` so each factor is tested against one combined
     gene-set universe using a single ``gp.enrich`` call. By default, runs
     for all layers and stores per-layer results in ``adata.uns['factor_enrichments']``.
+
+    Args:
+        model: fitted scDEF model with cached confident signatures — run
+            [`set_confident_signatures`][scdef.tl.set_confident_signatures] first.
+        libs: Enrichr library names to fetch and test against. Fetching these
+            requires network access; pass an empty sequence to run fully offline
+            against ``custom_gene_sets`` alone.
+        custom_gene_sets: your own gene sets, merged into the same universe as
+            ``libs``. At least one of the two must be non-empty.
+        organism: organism passed to Enrichr when resolving ``libs``.
+        background_genes: background universe for the enrichment test. Defaults to
+            the genes in the model.
+        layers: layer indices to run. Defaults to every layer.
+        top_genes: use only this many genes per signature, highest-scoring first.
+            Defaults to the whole signature.
+        cutoff: adjusted p-value below which a term is reported as enriched.
+        outdir: directory for gseapy's own output files. Defaults to not writing
+            them.
+
+    Returns:
+        One row per enriched term per factor, concatenated across the requested
+        layers. The same table is stored per layer in
+        ``adata.uns['factor_enrichments']``.
     """
     import gseapy as gp
 

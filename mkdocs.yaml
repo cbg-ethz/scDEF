@@ -5,8 +5,15 @@ theme:
   name: "material"
   features:
     - navigation.tabs
-    - navigation.sections
-    - toc.integrate
+    - navigation.indexes    # a section can have its own landing page (reference/index.md)
+    # NOT navigation.sections: it renders every group as a flat, always-open header, which
+    # is what made the API tree an unnavigable wall. Without it the groups COLLAPSE and only
+    # the one holding the current page is expanded.
+    - navigation.tracking
+    - navigation.top
+    - navigation.footer
+    - toc.follow
+    - toc.integrate         # fold the page TOC into the left sidebar -> a single left nav
     - search.suggest
     - search.highlight
     - content.tabs.link
@@ -26,7 +33,7 @@ theme:
       primary: indigo
   favicon: assets/images/icon.svg
   logo: assets/images/icon.svg
-  custom_dir: docs/overrides/
+  custom_dir: overrides/
 
 
 # Without pymdownx.highlight the fenced blocks in the .md pages render as plain
@@ -57,22 +64,133 @@ plugins:
       default_handler: python
       handlers:
         python:
-          paths: [src]
+          paths: [src]          # griffe reads docstrings statically from src/ (no import needed)
           options:
-            show_source: false
+            docstring_style: google    # the codebase documents params Google-style (Args:)
             show_root_heading: true
+            show_root_full_path: true  # heading shows the public call path, e.g. scdef.tl.filter
+            show_bases: true
+            show_source: false
+            # NOT inherited_members: iscDEF and sscDEF subclass scDEF, which has 43 public
+            # methods -- inheriting them would bury each subclass's own API. The subclass
+            # docstrings link to the scDEF page for the shared parameters instead.
+            inherited_members: false
+            merge_init_into_class: true
+            docstring_section_style: table
+            separate_signature: true
+            show_signature_annotations: true
+            signature_crossrefs: true
+            summary: true
+            members_order: source
+            filters: ["!^_"]
+            heading_level: 1
 
 nav:
-  - Getting started: index.md
+  - Overview: index.md
   - Examples:
-    - Basic usage: examples/basicusage.md
-    - Getting started with 3k PBMCs: examples/scdef-pbmcs3k.ipynb
-    - Cell type hierarchies in a whole adult animal: examples/scdef-planaria.ipynb
-    - Integrating two batches of PBMCs: examples/scdef-pbmcs-2batches.ipynb
-    - Identifying interferon-response between two batches of PBMCs: examples/scdef-ifn.ipynb
+      - Basic usage: examples/basicusage.md
+      - Getting started with 3k PBMCs: examples/scdef-pbmcs3k.ipynb
+      - Cell type hierarchies in a whole adult animal: examples/scdef-planaria.ipynb
+      - Integrating two batches of PBMCs: examples/scdef-pbmcs-2batches.ipynb
+      - Identifying interferon-response between two batches of PBMCs: examples/scdef-ifn.ipynb
   - API Reference:
-    - Analysis workflow: workflow.md
-    - Reference: api.md
+      # The section index (navigation.indexes): clicking 'API Reference' lands here.
+      - reference/index.md
+      - Analysis workflow: workflow.md
+      - Models:
+          - scDEF: reference/scDEF.md
+          - iscDEF: reference/iscDEF.md
+          - sscDEF: reference/sscDEF.md
+      - Model construction:
+          - from_reference: reference/from_reference.md
+          - add_batch_correction: reference/add_batch_correction.md
+          - decompose_batch_effects: reference/decompose_batch_effects.md
+          - from_hierarchy: reference/from_hierarchy.md
+      - Tools:
+          - Factors and filtering:
+              - filter: reference/tl.filter.md
+              - factor_diagnostics: reference/tl.factor_diagnostics.md
+              - annotate_factors: reference/tl.annotate_factors.md
+              - get_factor_annotations: reference/tl.get_factor_annotations.md
+              - drop_technical: reference/tl.drop_technical.md
+              - assign_confident: reference/tl.assign_confident.md
+              - set_cell_entropies: reference/tl.set_cell_entropies.md
+              - compute_within_group_pairwise_dissimilarity: reference/tl.compute_within_group_pairwise_dissimilarity.md
+              - get_obs_score_rankings: reference/tl.get_obs_score_rankings.md
+              - get_obs_value_specific_factors: reference/tl.get_obs_value_specific_factors.md
+          - Gene signatures:
+              - set_factor_signatures: reference/tl.set_factor_signatures.md
+              - set_confident_signatures: reference/tl.set_confident_signatures.md
+              - get_confident_signatures: reference/tl.get_confident_signatures.md
+              - get_stored_confident_signatures: reference/tl.get_stored_confident_signatures.md
+              - get_biological_signature: reference/tl.get_biological_signature.md
+              - get_technical_signature: reference/tl.get_technical_signature.md
+              - get_global_signature: reference/tl.get_global_signature.md
+              - gsea: reference/tl.gsea.md
+          - Batch and technical structure:
+              - batch_structure_report: reference/tl.batch_structure_report.md
+              - set_technical_factors: reference/tl.set_technical_factors.md
+              - get_technical_factors: reference/tl.get_technical_factors.md
+              - set_batch_technical_factors: reference/tl.set_batch_technical_factors.md
+              - get_batch_technical_factors: reference/tl.get_batch_technical_factors.md
+              - factor_batch_correction: reference/tl.factor_batch_correction.md
+              - set_global_factors: reference/tl.set_global_factors.md
+              - get_batch_specific_genes_from_gene_scale: reference/tl.get_batch_specific_genes_from_gene_scale.md
+              - get_factor_batch_gene_scale_affinity: reference/tl.get_factor_batch_gene_scale_affinity.md
+          - Hierarchy:
+              - get_hierarchy: reference/tl.get_hierarchy.md
+              - make_hierarchies: reference/tl.make_hierarchies.md
+              - make_biological_hierarchy: reference/tl.make_biological_hierarchy.md
+              - make_technical_hierarchy: reference/tl.make_technical_hierarchy.md
+              - make_global_hierarchy: reference/tl.make_global_hierarchy.md
+              - compute_hierarchy_scores: reference/tl.compute_hierarchy_scores.md
+              - add_l0_lineage_aggregate_scores: reference/tl.add_l0_lineage_aggregate_scores.md
+              - find_sensible_top_layer: reference/tl.find_sensible_top_layer.md
+              - find_sensible_top_factors: reference/tl.find_sensible_top_factors.md
+              - get_lineage_factors: reference/tl.get_lineage_factors.md
+              - get_global_factors: reference/tl.get_global_factors.md
+          - Trajectories:
+              - multilevel_paga: reference/tl.multilevel_paga.md
+              - build_differentiation_paths: reference/tl.build_differentiation_paths.md
+              - build_transition_paths: reference/tl.build_transition_paths.md
+              - score_paths: reference/tl.score_paths.md
+          - Embeddings:
+              - umap: reference/tl.umap.md
+              - multilayer_umap: reference/tl.multilayer_umap.md
+      - Plotting:
+          - Hierarchy graphs:
+              - make_graph: reference/pl.make_graph.md
+              - biological_hierarchy: reference/pl.biological_hierarchy.md
+              - technical_hierarchy: reference/pl.technical_hierarchy.md
+              - global_hierarchy: reference/pl.global_hierarchy.md
+          - Factors and signatures:
+              - obs_cell_factor_heatmap: reference/pl.obs_cell_factor_heatmap.md
+              - obs_factor_dotplot: reference/pl.obs_factor_dotplot.md
+              - factor_genes: reference/pl.factor_genes.md
+              - factor_gene_uncertainty_boxplot: reference/pl.factor_gene_uncertainty_boxplot.md
+              - factors_bars: reference/pl.factors_bars.md
+              - signatures_scores: reference/pl.signatures_scores.md
+              - pathway_scores: reference/pl.pathway_scores.md
+              - obs_scores: reference/pl.obs_scores.md
+              - continuous_obs_scores: reference/pl.continuous_obs_scores.md
+              - layers_obs: reference/pl.layers_obs.md
+              - umap: reference/pl.umap.md
+              - cell_entropies: reference/pl.cell_entropies.md
+              - within_group_pairwise_dissimilarity: reference/pl.within_group_pairwise_dissimilarity.md
+              - factor_gini: reference/pl.factor_gini.md
+          - Trajectories:
+              - multilevel_paga: reference/pl.multilevel_paga.md
+              - trajectory_heatmap: reference/pl.trajectory_heatmap.md
+              - path_trajectory_heatmap: reference/pl.path_trajectory_heatmap.md
+              - path_embedding: reference/pl.path_embedding.md
+          - Model diagnostics:
+              - qc: reference/pl.qc.md
+              - loss: reference/pl.loss.md
+              - scales: reference/pl.scales.md
+              - scale: reference/pl.scale.md
+              - relevance: reference/pl.relevance.md
+              - gini_brd: reference/pl.gini_brd.md
+              - factor_diagnostics: reference/pl.factor_diagnostics.md
 
 repo_name: scDEF
 repo_url: https://github.com/cbg-ethz/scDEF

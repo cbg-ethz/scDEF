@@ -73,7 +73,26 @@ def multilevel_paga(
     show: Optional[bool] = True,
     **paga_kwargs: Any,
 ) -> None:
-    """Plot cached multilevel PAGA graphs across scDEF layers."""
+    """Plot cached multilevel PAGA graphs across scDEF layers.
+
+    Draws the result cached by [`scdef.tl.multilevel_paga`][scdef.tl.multilevel_paga], one panel
+    per layer. If the cache is missing or was built with different settings, it is
+    recomputed automatically.
+
+    Args:
+        model: fitted scDEF model.
+        neighbors_rep: ``adata.obsm`` representation the neighbourhood graph is built
+            from. Must match the cache, or it triggers a recompute.
+        layers: layer indices to draw, coarsest first. Defaults to every layer with
+            more than one factor.
+        figsize: size of the whole figure, spanning all panels.
+        reuse_pos: carry each layer's layout into the next finer one, so groups stay
+            in comparable positions across panels.
+        recompute: force PAGA to be recomputed even when the cache matches.
+        fontsize: node label size.
+        show: call ``plt.show()``. Set False to keep drawing on the current figure.
+        **paga_kwargs: forwarded to ``scanpy.tl.paga`` when recomputing.
+    """
     if layers is None:
         layers = [
             i
@@ -183,6 +202,35 @@ def trajectory_heatmap(
     ``normalize`` (default True): min–max scale each **gene** row to ``[0, 1]``
     after smoothing; if False, use smoothed raw expression. Factor score rows
     are always min–max scaled.
+
+    Args:
+        model: fitted scDEF model with confident signatures cached.
+        factor_path: factors defining the trajectory, in order, as names or indices
+            within ``layer_idx``.
+        layer_idx: layer the path's factors belong to.
+        l0_path: matching layer-0 path used to order the cells when
+            ``layer_idx > 0``. Sorting falls back to the ``layer_idx`` path if this
+            yields almost no weight on the selected cells.
+        genes_per_factor: top genes taken from each factor's confident signature to
+            form the heatmap rows.
+        smoothing: window, in cells, of the rolling average applied along the
+            trajectory. Larger values give smoother bands and hide finer structure.
+        figwidth: figure width in inches; the height follows from the row count.
+        gene_height: vertical inches per gene row.
+        block_spacing: blank rows inserted between one factor's block and the next.
+        annotation_obs_key: ``adata.obs`` column(s) drawn as annotation strips above
+            the heatmap.
+        subset_obs_key: ``adata.obs`` column used to restrict which cells are shown.
+        subset_obs: value(s) of ``subset_obs_key`` to keep.
+        heatmap_cmap: colormap for the gene expression rows.
+        factor_heatmap_cmap: colormap for the factor score rows.
+        colorbar_gap: horizontal gap between the plot and its colorbars, in figure
+            fractions.
+        xlabel: label for the cell axis.
+        normalize: min–max scale each gene row after smoothing, so genes of different
+            magnitudes are comparable. False keeps smoothed raw expression.
+        save: path to write the figure to. Defaults to not saving.
+        show: call ``plt.show()``. Set False to keep drawing on the current figure.
     """
     layer_name = model.layer_names[layer_idx]
     kept_names = list(model.factor_names[layer_idx])
@@ -946,6 +994,34 @@ def path_embedding(
     Color encodes path position (0->1), and point alpha scales with
     path affinity. If ``obs_key`` is provided, draws one facet per
     category value.
+
+    Args:
+        model: fitted scDEF model scored by [`scdef.tl.score_paths`][scdef.tl.score_paths].
+        path_id: which path to draw, as an index or a stored path name. ``"auto"``
+            picks the path with the most cells above ``min_affinity``.
+        paths_key: ``adata.uns`` key holding the built paths.
+        score_key: prefix of the ``obsm`` matrices written by ``score_paths``.
+            Defaults to ``paths_key``.
+        basis: ``adata.obsm`` embedding to plot on, without the ``X_`` prefix.
+        min_affinity: hide cells whose affinity for the path falls below this, so the
+            plot shows only cells the path actually describes.
+        affinity_alpha_range: opacity range mapped from affinity, as
+            ``(min, max)`` — the low end keeps weakly-associated cells faintly
+            visible rather than invisible.
+        cmap: colormap for path position.
+        point_size: marker size for the plotted cells.
+        show_background: draw the cells that are not on the path underneath, for
+            context.
+        background_color: color of those background cells.
+        background_alpha: opacity of those background cells.
+        obs_key: ``adata.obs`` column to facet by, one panel per category.
+        obs_order: order of the facets. Defaults to the category order.
+        ncols: number of facet columns.
+        ax: existing axes to draw into. Only valid when not faceting.
+        show: call ``plt.show()``. Set False to get the figure back instead.
+
+    Returns:
+        The figure when ``show`` is False, otherwise None.
     """
     if score_key is None:
         score_key = paths_key

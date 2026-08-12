@@ -1059,7 +1059,11 @@ def pathway_scores(
     top_genes: Optional[int] = 20,
     **kwargs: Any,
 ) -> None:
-    """Plot the association between a set of cell annotations and a set of gene signatures.
+    """Plot the association between the factors and a set of pathways.
+
+    The pathway counterpart of [`signatures_scores`][scdef.pl.signatures_scores]: it
+    scores each factor's signature against PROGENy pathway gene weights rather than
+    against per-annotation marker lists.
 
     Args:
         model: scDEF model instance
@@ -1553,7 +1557,25 @@ def within_group_pairwise_dissimilarity(
     Uses cached results from
     ``model.adata.uns['within_group_pairwise_dissimilarity']`` when available,
     otherwise computes them with
-    ``scd.tl.compute_within_group_pairwise_dissimilarity``.
+    [`scdef.tl.compute_within_group_pairwise_dissimilarity`][scdef.tl.compute_within_group_pairwise_dissimilarity].
+
+    A group whose cells sit far apart in factor space is heterogeneous at that
+    resolution, which is a reason to look for structure inside it at a finer layer.
+
+    Args:
+        model: fitted scDEF model.
+        layer: layer whose factor memberships represent each cell, as an index or a
+            name from ``model.layer_names``.
+        obs_key: ``adata.obs`` column defining the groups.
+        metric: distance between two cells' membership vectors — ``"jsd"``
+            (Jensen-Shannon, the default), ``"euclidean"``, or ``"cosine"``.
+        kind: draw each group's distribution as a box or a violin.
+        showfliers: draw outlier points beyond the whiskers. Only affects ``"box"``.
+        figsize: figure size in inches.
+        show: call ``plt.show()``. Set False to get the figure back instead.
+
+    Returns:
+        The figure when ``show`` is False, otherwise None.
     """
     from ..tools.factor import compute_within_group_pairwise_dissimilarity
 

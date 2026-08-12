@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional, Sequence
 class sscDEF(scDEF):
     """Supervised scDEF (sscDEF): cell-type labels fix the top hierarchy.
 
-    Layer sizes and :math:`W` priors match :class:`scDEF` (geometric schedule from
+    Layer sizes and ``W`` priors match [`scDEF`][scdef.scDEF] (geometric schedule from
     ``n_factors`` / ``n_layers``, or explicit ``layer_sizes``).     By default a width-1 root is appended above the supervised top layer (fitted in a
     second phase via ``root_epochs``, default 10). Pass ``add_root=False`` to use only
     the supervised layer as the coarsest level.
@@ -31,11 +31,12 @@ class sscDEF(scDEF):
     Args:
         adata: AnnData with counts in ``adata.X`` or ``counts_layer``.
         top_key: ``adata.obs`` column with cell population / cell-type labels.
-        n_factors, n_layers, layer_sizes, layer_names: same meaning as :class:`scDEF`
-            (``n_layers`` counts layers from L0 through the supervised top; ``add_root``
-            appends a width-1 root not counted in ``n_layers``).
         add_root: if True (default), append a width-1 root above the supervised top layer.
-        **kwargs: passed to :class:`scDEF` (including ``root_epochs`` for the root-only phase).
+        **kwargs: forwarded to [`scDEF`][scdef.scDEF]; see that page for the shared
+            construction parameters. ``n_factors``, ``n_layers``, ``layer_sizes`` and
+            ``layer_names`` keep their meaning there, except that ``n_layers`` counts
+            layers from L0 through the supervised top and the ``add_root`` layer is not
+            counted in it. ``root_epochs`` sets the length of the root-only phase.
     """
 
     _Z_OFF_TYPE = 1e-3

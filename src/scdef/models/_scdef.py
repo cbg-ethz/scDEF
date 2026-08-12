@@ -1464,7 +1464,7 @@ class scDEF(object):
     ) -> np.ndarray:
         """Indices of the layer-0 factors that pass the relevance and hierarchy criteria.
 
-        The selection :meth:`filter_factors` applies, exposed separately so the
+        The selection [`scdef.tl.filter`][scdef.tl.filter] applies, exposed separately so the
         consequences of a threshold can be inspected before committing to it.
         Factors must clear ``brd_min`` and ``ard_min``, and either
         ``clarity_min`` or ``n_eff_parents_max`` depending on which hierarchy
@@ -1588,10 +1588,10 @@ class scDEF(object):
     ):
         """Initialize the variational parameters.
 
-        Called by :meth:`fit` on the first pass. Each ``init_*`` argument
+        Called by [`fit`][scdef.scDEF.fit] on the first pass. Each ``init_*`` argument
         supplies a warm start for the corresponding quantity instead of drawing
-        from the prior — this is how :func:`scdef.from_reference` and
-        :func:`scdef.decompose_batch_effects` carry a fitted hierarchy into a
+        from the prior — this is how [`scdef.from_reference`][scdef.from_reference] and
+        [`scdef.decompose_batch_effects`][scdef.decompose_batch_effects] carry a fitted hierarchy into a
         new model.
         """
         rngs = random.split(random.PRNGKey(self.seed), self.n_layers)
@@ -2180,7 +2180,7 @@ class scDEF(object):
     ):
         """Single-sample estimate of the ELBO for one minibatch.
 
-        Inference internals; :meth:`batch_elbo` averages this over several
+        Inference internals; [`batch_elbo`][scdef.scDEF.batch_elbo] averages this over several
         draws. Not needed for analysis.
         """
         # Only anneal the entropy of factor-related variables
@@ -3876,7 +3876,7 @@ class scDEF(object):
 
         Needed by anything that reports uncertainty rather than a point estimate
         — the confident signatures, their per-gene confidences, and
-        :func:`scdef.plotting.factor_gene_uncertainty_boxplot`. Call it after
+        [`scdef.pl.factor_gene_uncertainty_boxplot`][scdef.pl.factor_gene_uncertainty_boxplot]. Call it after
         loading a saved model if those quantities were not stored.
         """
         cell_budget_params = self.local_params[0]
@@ -4212,7 +4212,7 @@ class scDEF(object):
     def annotate_adata(self):
         """Write the fitted quantities onto ``self.adata``.
 
-        Called automatically at the end of :meth:`fit`, so it normally does not
+        Called automatically at the end of [`fit`][scdef.scDEF.fit], so it normally does not
         need calling by hand — do so after changing ``factor_lists`` or the
         posterior means outside a fit.
 
@@ -4353,7 +4353,7 @@ class scDEF(object):
 
         Row-normalizes each ``obsm['X_<layer>']`` and writes
         ``obsm['X_<layer>_probs']`` plus one ``obs['<factor>_prob']`` column per
-        factor. Run by :meth:`annotate_adata`.
+        factor. Run by [`annotate_adata`][scdef.scDEF.annotate_adata].
         """
         for idx in range(self.n_layers):
             layer_name = self.layer_names[idx]
