@@ -2699,7 +2699,7 @@ class scDEF(object):
     def fit(
         self,
         nmf_init: bool = False,
-        hierarchical_init: bool = False,
+        hierarchical_init: Optional[bool] = None,
         pca_key: str = "X_pca",
         z_off: float = 0.1,
         max_cells_init: int = 5000,
@@ -2728,6 +2728,14 @@ class scDEF(object):
                 [`get_hierarchical_init`][scdef.scDEF.get_hierarchical_init] (L0 ``W`` uses the default prior init).
                 Requires an existing PCA embedding in ``adata.obsm[pca_key]``.
                 Mutually exclusive with ``nmf_init``.
+
+                Defaults to ``None``, meaning **use it when it applies**: it is
+                enabled unless ``nmf_init`` is set or ``pca_key`` is absent from
+                ``adata.obsm``, in which case the default initialization is used
+                and the reason is logged. Pass ``True`` to require it -- that
+                raises if the PCA embedding is missing rather than falling back --
+                or ``False`` to switch it off. Ignored on a refit either way,
+                which warm-starts from the previous posterior.
             pca_key: ``adata.obsm`` key for PCA coordinates used for KMeans L0
                 clustering and the centroid dendrogram (default ``"X_pca"``).
             z_off: inactive-cluster value in hierarchical ``init_z`` (default
@@ -2835,6 +2843,24 @@ class scDEF(object):
             workflow. During refit, upper-layer sizes are clipped to the geometric
             template when ``force_decay_factor`` is True before rebuilding the hierarchy.
         """
+        # `hierarchical_init=None` (the default) means "use it where it applies".
+        # It is the better initialization and should not have to be asked for, but
+        # a hard default of True would break two ordinary calls: `fit()` on a model
+        # with no PCA embedding would raise KeyError from `get_hierarchical_init`,
+        # and `fit(nmf_init=True)` would trip the mutual-exclusion check below. So
+        # auto resolves to True only when neither applies, and an explicit
+        # `hierarchical_init=True` keeps raising, since the caller asked for it by
+        # name and a silent fallback would hide that they did not get it.
+        if hierarchical_init is None:
+            hierarchical_init = not nmf_init and pca_key in self.adata.obsm
+            if not hierarchical_init and not nmf_init:
+                self.logger.info(
+                    f"Using the default initialization: no {pca_key!r} in "
+                    "adata.obsm. Computing a PCA before constructing the model "
+                    "(e.g. sc.pp.pca on normalized counts) enables the "
+                    "hierarchical initialization, which usually fits better."
+                )
+
         if nmf_init and hierarchical_init:
             raise ValueError(
                 "Pass only one of nmf_init=True or hierarchical_init=True."

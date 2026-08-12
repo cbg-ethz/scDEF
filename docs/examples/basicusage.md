@@ -19,7 +19,16 @@ model.fit()
 That is the whole fit. The number of factors is chosen automatically: layer 0
 starts from `n_factors=100`, and the Automatic and Biological Relevance
 Determination priors switch off the ones that are unused or not sparse enough to
-be a plausible gene program. When `fit()` returns, the results are written onto
+be a plausible gene program.
+
+If `adata.obsm['X_pca']` exists, `fit()` uses it to initialize the hierarchy,
+which usually converges better. It costs nothing to provide and is worth doing:
+
+```python
+tmp = adata.copy()
+sc.pp.normalize_total(tmp); sc.pp.log1p(tmp); sc.pp.pca(tmp)
+adata.obsm['X_pca'] = tmp.obsm['X_pca']   # scDEF still fits the raw counts
+``` When `fit()` returns, the results are written onto
 `model.adata` — the model copies the AnnData you pass it, so your own object is
 left untouched. See the workflow page for the full list of keys.
 

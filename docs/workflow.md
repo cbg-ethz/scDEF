@@ -49,6 +49,23 @@ training stops early once the *relative* improvement over the best loss so far
 stays below `tolerance=1e-5` for `patience=50` consecutive epochs, and never
 before `min_epochs=50`.
 
+**Compute a PCA before constructing the model.** If `adata.obsm['X_pca']` is
+present, `fit()` initializes layer 0 from KMeans labels on it and the upper layers
+from a Ward dendrogram of the resulting centroids, which usually converges to a
+better hierarchy than the prior init. This is the default and needs no argument —
+without a PCA the fit still works, falls back to the prior init, and logs that it
+did. Compute it on normalized counts, not the raw ones scDEF is fitted to:
+
+```python
+tmp = adata.copy()
+sc.pp.normalize_total(tmp); sc.pp.log1p(tmp); sc.pp.pca(tmp)
+adata.obsm['X_pca'] = tmp.obsm['X_pca']       # scDEF still fits the raw counts
+```
+
+Pass `hierarchical_init=True` to *require* it — that raises if the embedding is
+missing instead of falling back — or `hierarchical_init=False` to switch it off.
+It does not apply to a re-fit, which warm-starts from the previous posterior.
+
 `fit()` annotates the model when it finishes, so the cell scores are in
 `model.adata.obsm['X_L0']`, `['X_L1']`, … with no separate annotate step.
 
