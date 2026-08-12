@@ -6,6 +6,10 @@ the prerequisites hold. For a short introduction see
 [Basic usage](examples/basicusage.md); for the objects themselves see the
 [API reference](reference/index.md).
 
+If you would rather start from working code, the
+[reference workflow](#reference-workflow) at the end of this page is an
+end-to-end skeleton you can copy and adapt.
+
 ## Input requirements
 
 scDEF models raw UMI counts directly, so the input must be counts and **must not
@@ -134,77 +138,6 @@ What to look for, and what to assert on when running unattended:
 
 If you are generating a notebook unattended and cannot inspect the figures, use
 the defaults throughout and do not tune — they are sensible for typical data.
-
-## Reference workflow
-
-An end-to-end skeleton. Later blocks assume the earlier ones have run.
-
-`CELLTYPE_KEY` stands for your own annotation column; drop those arguments
-entirely if the data is unannotated.
-
-```python
-import scanpy as sc
-import scdef as scd
-
-CELLTYPE_KEY = 'celltypes'      # your annotation column, or None
-
-# 1. input: QC'd, raw counts kept in a layer, HVG-filtered
-adata.layers['counts'] = adata.X.copy()
-sc.pp.highly_variable_genes(adata, flavor='seurat_v3', layer='counts', n_top_genes=4000)
-adata = adata[:, adata.var.highly_variable].copy()
-
-# a scanpy embedding, if you want to plot scDEF's obs columns with sc.pl.umap
-sc.pp.neighbors(adata)
-sc.tl.umap(adata)
-sc.pl.umap(adata, color=CELLTYPE_KEY)   # also writes uns[f'{CELLTYPE_KEY}_colors'],
-                                        # which `wedged=` below requires
-
-# 2. fit. Annotations and their colors must already be on `adata`: the model copies it.
-#    See "Multiple batches" for batch_key and "Known markers" for iscDEF.
-model = scd.scDEF(adata, counts_layer='counts')
-print(model)                                   # layer sizes sanity check
-model.fit()
-scd.pl.qc(model)
-
-# 3. diagnose, filter, re-fit
-scd.tl.factor_diagnostics(model)               # must precede the diagnostics plot
-scd.pl.factor_diagnostics(model, annotate_factors=True)
-scd.tl.filter(model)                           # filters AND refreshes diagnostics
-model.fit()
-scd.pl.qc(model)
-print([len(fl) for fl in model.factor_lists])  # factors surviving per layer
-
-# 4. statistically called gene signatures, cached for all layers
-scd.tl.factor_diagnostics(model)               # fitting invalidated them again
-scd.tl.set_confident_signatures(model)
-
-# 5. flag technical factors: names read off the diagnostics plot, or by criteria
-scd.tl.set_technical_factors(model)            # NB: clears the signature cache
-scd.tl.set_confident_signatures(model)         # so rebuild it
-
-# 6. split the hierarchy into its biological / technical / global views
-scd.tl.make_hierarchies(model)
-scd.tl.get_technical_signature(model, top_genes=10)   # needs the technical hierarchy
-scd.pl.biological_hierarchy(model, show_signatures=True, wedged=CELLTYPE_KEY)
-
-# 7. assign each cell at the finest layer it is confident at
-scd.tl.assign_confident(model, exclude_technical=True)
-
-# 8. inspect
-scd.pl.make_graph(model, show_signatures=True, wedged=CELLTYPE_KEY)
-scd.pl.obs_scores(model, obs_keys=[CELLTYPE_KEY], mode='weights')
-scd.tl.umap(model)
-scd.pl.umap(model, color=CELLTYPE_KEY)
-
-# 9. if marker sets are known, check the signatures recovered them
-scd.pl.signatures_scores(model, CELLTYPE_KEY, markers, top_genes=20)
-```
-
-The ordering above is load-bearing: the diagnostics plot needs
-`factor_diagnostics` to have run, `show_signatures=True` needs
-`set_confident_signatures`, `get_technical_signature` needs `make_hierarchies`,
-and `set_technical_factors` clears the signature cache so it has to be rebuilt
-after it.
 
 ## What the fit writes to `model.adata`
 
@@ -498,3 +431,74 @@ sets at a coarse layer and resolves finer states within each. Raise
 `gs_big_scale` and `marker_strength` to stay close to the lists, lower them to
 let the data add genes, and set `add_other` when the sets are not expected to
 cover every cell.
+
+## Reference workflow
+
+An end-to-end skeleton. Later blocks assume the earlier ones have run.
+
+`CELLTYPE_KEY` stands for your own annotation column; drop those arguments
+entirely if the data is unannotated.
+
+```python
+import scanpy as sc
+import scdef as scd
+
+CELLTYPE_KEY = 'celltypes'      # your annotation column, or None
+
+# 1. input: QC'd, raw counts kept in a layer, HVG-filtered
+adata.layers['counts'] = adata.X.copy()
+sc.pp.highly_variable_genes(adata, flavor='seurat_v3', layer='counts', n_top_genes=4000)
+adata = adata[:, adata.var.highly_variable].copy()
+
+# a scanpy embedding, if you want to plot scDEF's obs columns with sc.pl.umap
+sc.pp.neighbors(adata)
+sc.tl.umap(adata)
+sc.pl.umap(adata, color=CELLTYPE_KEY)   # also writes uns[f'{CELLTYPE_KEY}_colors'],
+                                        # which `wedged=` below requires
+
+# 2. fit. Annotations and their colors must already be on `adata`: the model copies it.
+#    See "Multiple batches" for batch_key and "Known markers" for iscDEF.
+model = scd.scDEF(adata, counts_layer='counts')
+print(model)                                   # layer sizes sanity check
+model.fit()
+scd.pl.qc(model)
+
+# 3. diagnose, filter, re-fit
+scd.tl.factor_diagnostics(model)               # must precede the diagnostics plot
+scd.pl.factor_diagnostics(model, annotate_factors=True)
+scd.tl.filter(model)                           # filters AND refreshes diagnostics
+model.fit()
+scd.pl.qc(model)
+print([len(fl) for fl in model.factor_lists])  # factors surviving per layer
+
+# 4. statistically called gene signatures, cached for all layers
+scd.tl.factor_diagnostics(model)               # fitting invalidated them again
+scd.tl.set_confident_signatures(model)
+
+# 5. flag technical factors: names read off the diagnostics plot, or by criteria
+scd.tl.set_technical_factors(model)            # NB: clears the signature cache
+scd.tl.set_confident_signatures(model)         # so rebuild it
+
+# 6. split the hierarchy into its biological / technical / global views
+scd.tl.make_hierarchies(model)
+scd.tl.get_technical_signature(model, top_genes=10)   # needs the technical hierarchy
+scd.pl.biological_hierarchy(model, show_signatures=True, wedged=CELLTYPE_KEY)
+
+# 7. assign each cell at the finest layer it is confident at
+scd.tl.assign_confident(model, exclude_technical=True)
+
+# 8. inspect
+scd.pl.make_graph(model, show_signatures=True, wedged=CELLTYPE_KEY)
+scd.pl.obs_scores(model, obs_keys=[CELLTYPE_KEY], mode='weights')
+scd.tl.umap(model)
+scd.pl.umap(model, color=CELLTYPE_KEY)
+
+# 9. if marker sets are known, check the signatures recovered them
+scd.pl.signatures_scores(model, CELLTYPE_KEY, markers, top_genes=20)
+```
+
+The ordering above is load-bearing: the diagnostics plot needs
+`factor_diagnostics` to have run, `show_signatures=True` needs
+`set_confident_signatures`, `get_technical_signature` needs `make_hierarchies`,
+and `set_technical_factors` clears the signature cache so it has to be rebuilt
+after it.

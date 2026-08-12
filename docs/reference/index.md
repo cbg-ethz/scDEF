@@ -21,7 +21,7 @@ information about cell identity.
 |---|---|
 | [`scdef.scDEF`](scDEF.md) | Single-cell Deep Exponential Families (scDEF) model. |
 | [`scdef.iscDEF`](iscDEF.md) | Informed Single-cell Deep Exponential Families (iscDEF) model. |
-| [`scdef.sscDEF`](sscDEF.md) | Supervised scDEF (sscDEF): cell-type labels fix the top hierarchy. |
+| [`scdef.sscDEF`](sscDEF.md) | **Experimental.** Supervised scDEF: cell-type labels fix the top hierarchy. Not validated on real data. |
 
 ## Model construction
 

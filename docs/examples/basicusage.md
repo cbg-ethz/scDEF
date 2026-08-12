@@ -7,7 +7,7 @@ a gene signature for each factor, and a low-dimensional representation per layer
 
 The input is an [AnnData](https://anndata.readthedocs.io/en/latest/) object with
 **raw UMI counts** — not normalized or log-transformed — and, ideally, filtered to
-highly variable genes. With scDEF [installed](../index.md#installation):
+highly variable genes. With scDEF [installed](../installation.md):
 
 ```python
 import scdef as scd

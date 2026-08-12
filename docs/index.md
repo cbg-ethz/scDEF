@@ -9,26 +9,23 @@
 
 Deep exponential families for single-cell data. scDEF learns hierarchies of cell states and their gene signatures from scRNA-seq data. The method enables model-based exploration of biological and technical effects in the data and can be used for dimensionality reduction, visualization, gene signature identification, clustering at multiple levels of resolution, and batch integration. The informed version (iscDEF) can additionally take known gene lists to jointly assign cells to types and find clusters within each type.
 
-## Installation
-scDEF is available through [PyPI](https://pypi.org/project/scdef):
+## Getting started
 
-```bash
-pip install scdef
-```
+[Install scDEF](installation.md), then:
 
-Please be sure to install a version of [JAX](https://jax.readthedocs.io/) that is compatible with your GPU (if applicable). scDEF is much faster on the GPU than on the CPU.
+- **[Basic usage](examples/basicusage.md)** — the shortest path from counts to a
+  fitted hierarchy and its signatures.
+- **[Analysis workflow](workflow.md)** — the full reference workflow, stating what
+  each step needs and what it writes.
+- **[API reference](reference/index.md)** — every public object, grouped by task.
 
-## Example notebooks
-To get started with scDEF, please see the example notebooks:
+## Tutorials
 
-- [Introduction to scDEF on 3k PBMCs](http://cbg-ethz.github.io/scDEF/examples/scdef-pbmcs3k/)
-
-- [Identifying cell type hierarchies in a whole adult animal](http://cbg-ethz.github.io/scDEF/examples/scdef-planaria/)
-
-- [Integration of two batches of PBMCs](http://cbg-ethz.github.io/scDEF/examples/scdef-pbmcs-2batches/)
-
-- [Identifying signatures of interferon-response in PBMCs](http://cbg-ethz.github.io/scDEF/examples/scdef-ifn/)
-
+- [Introduction to scDEF on 3k PBMCs](examples/scdef-pbmcs3k.ipynb)
+- [Identifying cell type hierarchies in a whole adult animal](examples/scdef-planaria.ipynb)
+- [Integration of two batches of PBMCs](examples/scdef-pbmcs-2batches.ipynb)
+- [Identifying signatures of interferon-response in PBMCs](examples/scdef-ifn.ipynb)
 
 ## Contributors
+
 Pedro Falé Ferreira [@pedrofale](https://github.com/pedrofale)

@@ -20,20 +20,30 @@ theme:
     - content.code.annotation
     - content.code.copy
   language: en
+  # iscc's palette: a black header with indigo accents, and `media` so the site
+  # follows the reader's OS theme on first visit instead of always opening light.
+  # The toggle then overrides that choice and is remembered.
   palette:
-    - scheme: default
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: black
+      accent: indigo
       toggle:
-        icon: material/toggle-switch-off-outline
+        icon: material/weather-night
         name: Switch to dark mode
-      primary: indigo
-    - scheme: slate
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: indigo
       toggle:
-        icon: material/toggle-switch
+        icon: material/weather-sunny
         name: Switch to light mode
-      primary: indigo
   favicon: assets/images/icon.svg
   logo: assets/images/icon.svg
   custom_dir: overrides/
+
+extra_css:
+  - stylesheets/nav.css
 
 
 # Without pymdownx.highlight the fenced blocks in the .md pages render as plain
@@ -54,6 +64,16 @@ markdown_extensions:
   - pymdownx.superfences
   - toc:
       permalink: true
+
+# mkdocs logs a link to a missing *anchor* at INFO, so `--strict` does not fail on
+# it: splitting Installation out of index.md broke `index.md#installation` in
+# basicusage.md and the strict build stayed green. Raising these to warnings makes
+# --strict catch a dangling link the way it already catches an unresolved
+# mkdocstrings reference.
+validation:
+  anchors: warn
+  absolute_links: warn
+  unrecognized_links: warn
 
 plugins:
   - search
@@ -87,7 +107,10 @@ plugins:
 
 nav:
   - Overview: index.md
-  - Examples:
+  - Installation: installation.md
+  # The nav label is "Tutorials" but the directory stays docs/examples/: renaming it
+  # would change every published /examples/... URL, which external links point at.
+  - Tutorials:
       - Basic usage: examples/basicusage.md
       - Getting started with 3k PBMCs: examples/scdef-pbmcs3k.ipynb
       - Cell type hierarchies in a whole adult animal: examples/scdef-planaria.ipynb
@@ -100,7 +123,7 @@ nav:
       - Models:
           - scDEF: reference/scDEF.md
           - iscDEF: reference/iscDEF.md
-          - sscDEF: reference/sscDEF.md
+          - sscDEF (experimental): reference/sscDEF.md
       - Model construction:
           - from_reference: reference/from_reference.md
           - add_batch_correction: reference/add_batch_correction.md

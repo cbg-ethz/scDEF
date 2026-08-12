@@ -16,7 +16,15 @@ from typing import Any, Dict, List, Optional, Sequence
 
 
 class sscDEF(scDEF):
-    """Supervised scDEF (sscDEF): cell-type labels fix the top hierarchy.
+    """Supervised scDEF (sscDEF): cell-type labels fix the top hierarchy. **Experimental.**
+
+    !!! warning "Experimental"
+
+        `sscDEF` has unit tests covering its construction and layer shapes, but it
+        has not been validated on real data and is not actively developed. Prefer
+        [`scDEF`][scdef.scDEF] for unsupervised fits and [`iscDEF`][scdef.iscDEF]
+        when you have marker gene lists. Expect rough edges, and check any result
+        it produces.
 
     Layer sizes and ``W`` priors match [`scDEF`][scdef.scDEF] (geometric schedule from
     ``n_factors`` / ``n_layers``, or explicit ``layer_sizes``).     By default a width-1 root is appended above the supervised top layer (fitted in a
