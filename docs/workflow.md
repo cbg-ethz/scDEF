@@ -101,8 +101,21 @@ stale. After either, re-run in this order:
 scd.tl.factor_diagnostics(model)      # done for you by scd.tl.filter
 scd.tl.set_technical_factors(model, ...)
 scd.tl.make_hierarchies(model)
-scd.tl.set_confident_signatures(model)
 ```
+
+**The refresh invariant:** run
+[`scd.tl.factor_diagnostics`][scdef.tl.factor_diagnostics] after any fit, re-fit
+or [`decompose_batch_effects`][scdef.decompose_batch_effects] — it recomputes the
+diagnostics *and* the confident gene signatures, so there is no separate
+[`set_confident_signatures`][scdef.tl.set_confident_signatures] step.
+[`scd.tl.filter`][scdef.tl.filter] already bundles it.
+
+The one case that needs a rebuild is
+[`drop_technical`][scdef.tl.drop_technical], which actually removes factors and so
+changes the hierarchy the upper-layer signatures were computed from. Merely
+*flagging* factors with
+[`set_technical_factors`][scdef.tl.set_technical_factors] does not: the cache is
+per factor and the flags are applied when a consensus signature is read.
 
 Fitting is the expensive step. Save the result rather than refitting:
 
@@ -175,15 +188,15 @@ so generic scanpy calls keep using your own embedding.
 | --- | --- |
 | any plotting of cell scores | `fit()` (or `model.annotate_adata()`) so `X_<layer>` is in `obsm` |
 | `scd.pl.factor_diagnostics` | `scd.tl.factor_diagnostics` |
-| `scd.pl.make_graph(show_signatures=True)`, `scd.pl.biological_hierarchy(show_signatures=True)` | `scd.tl.set_confident_signatures` |
+| `scd.pl.make_graph(show_signatures=True)`, `scd.pl.biological_hierarchy(show_signatures=True)` | `scd.tl.factor_diagnostics` (it caches the signatures) |
 | `scd.pl.biological_hierarchy`, `technical_hierarchy`, `global_hierarchy` | `scd.tl.make_hierarchies` |
 | any `wedged=<key>` | `adata.uns['<key>_colors']`, written by a scanpy plotting call **before** the model is constructed |
 | `scd.tl.drop_technical` | `set_technical_factors` |
 | `scd.tl.get_technical_signature` | `make_technical_hierarchy` or `make_hierarchies` |
 | `scd.tl.get_global_signature` | `make_global_hierarchy` or `make_hierarchies` |
-| `scd.tl.get_biological_signature` | `factor_diagnostics` and `set_confident_signatures` |
-| `scd.pl.trajectory_heatmap` | `scd.tl.set_confident_signatures` |
-| `scd.tl.gsea` | `scd.tl.set_confident_signatures` |
+| `scd.tl.get_biological_signature` | `factor_diagnostics`, plus `set_technical_factors` for the flags it applies |
+| `scd.pl.trajectory_heatmap` | `scd.tl.factor_diagnostics` (it caches the signatures) |
+| `scd.tl.gsea` | `scd.tl.factor_diagnostics` (it caches the signatures) |
 | `scd.tl.score_paths` | `build_differentiation_paths` or `build_transition_paths` |
 | `scd.pl.path_trajectory_heatmap` | `score_paths` |
 | `scd.pl.path_embedding` | `score_paths`, plus `scd.tl.multilayer_umap` for the default `basis='umap_multilayer'` |
@@ -234,7 +247,7 @@ them for every layer at once and stores the result in
 `adata.uns['factor_enrichments']`:
 
 ```python
-scd.tl.set_confident_signatures(model)          # required first
+scd.tl.factor_diagnostics(model)                # caches the signatures gsea tests
 enrichments = scd.tl.gsea(model, libs=['KEGG_2019_Human'])
 ```
 
@@ -406,6 +419,35 @@ experimental design, not a threshold. See
 [`factor_batch_correction`][scdef.tl.factor_batch_correction] for what the
 correction does to the scores and labels.
 
+### Interpreting layer 0 of the decomposed model
+
+Decomposing and then reading layer 0 is the **standard step for any multi-batch
+data set**, not a special-case diagnostic. The decomposed L0 is where the batch
+term's contents become visible as ordinary factors, so each one can be judged on
+what it is rather than removed wholesale.
+
+Every layer-0 factor of `dec` falls into one of three cases:
+
+| What you see | What it is | What to do |
+| --- | --- | --- |
+| One factor per batch splitting a single population that the corrected parent already represents | A per-batch split — technical | [`set_batch_technical_factors`][scdef.tl.set_batch_technical_factors], then [`factor_batch_correction`][scdef.tl.factor_batch_correction] |
+| A factor loading across all cell types in one batch — ambient RNA, dissociation stress, a depth artefact | Global or technical | [`set_technical_factors`][scdef.tl.set_technical_factors] or [`set_global_factors`][scdef.tl.set_global_factors] |
+| A factor confined to particular cell types and coherent with a treatment or condition | Biology that happens to align with a batch | **Keep it** — this is the finding, not an artefact |
+
+The third row is why this cannot be automated. The same procedure gives opposite
+answers on the two tutorial data sets: in
+[Integrating two batches of PBMCs](examples/scdef-pbmcs-2batches.ipynb) the
+batch-aligned factors are technical and get flagged, while in
+[Identifying signatures of interferon-response in PBMCs](examples/scdef-ifn.ipynb)
+the batch-aligned factor is the interferon response — the result the experiment
+was run to find — and flagging it would delete the answer.
+
+The geometry alone does not separate the two. Use the experimental design:
+a per-batch split of one population is technical; a coherent, cell-type-restricted
+programme that tracks a *condition* is biological. `eff_parents` from the
+diagnostics helps here — a programme shared across lineages reads differently
+from one confined to a branch.
+
 ## Trajectories
 
 ```python
@@ -471,13 +513,11 @@ model.fit()
 scd.pl.qc(model)
 print([len(fl) for fl in model.factor_lists])  # factors surviving per layer
 
-# 4. statistically called gene signatures, cached for all layers
-scd.tl.factor_diagnostics(model)               # fitting invalidated them again
-scd.tl.set_confident_signatures(model)
+# 4. diagnostics + statistically called gene signatures, cached for all layers
+scd.tl.factor_diagnostics(model)               # also refreshes the signatures
 
 # 5. flag technical factors: names read off the diagnostics plot, or by criteria
-scd.tl.set_technical_factors(model)            # NB: clears the signature cache
-scd.tl.set_confident_signatures(model)         # so rebuild it
+scd.tl.set_technical_factors(model)
 
 # 6. split the hierarchy into its biological / technical / global views
 scd.tl.make_hierarchies(model)
@@ -497,8 +537,9 @@ scd.pl.umap(model, color=CELLTYPE_KEY)
 scd.pl.signatures_scores(model, CELLTYPE_KEY, markers, top_genes=20)
 ```
 
-The ordering above is load-bearing: the diagnostics plot needs
-`factor_diagnostics` to have run, `show_signatures=True` needs
-`set_confident_signatures`, `get_technical_signature` needs `make_hierarchies`,
-and `set_technical_factors` clears the signature cache so it has to be rebuilt
-after it.
+The ordering above is load-bearing: the diagnostics plot and
+`show_signatures=True` both need `factor_diagnostics` to have run, since that is
+what caches the confident signatures, and `get_technical_signature` needs
+`make_hierarchies`. Flagging factors with `set_technical_factors` does *not*
+invalidate the signatures — only `drop_technical`, which removes factors
+outright, requires `factor_diagnostics` to be run again.

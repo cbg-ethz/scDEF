@@ -5,6 +5,7 @@ and other factor-related computations.
 """
 
 import numpy as np
+import pandas as pd
 import scipy.stats
 from .data_utils import get_weight_scores
 
@@ -225,6 +226,11 @@ def assign_obs_to_factors(model, obs_keys, factor_names=[]):
         obskey_to_factor_assignments = dict()
         obskey_to_factor_matches = dict()
         for obs in model.adata.obs[obs_key].unique():
+            # `unique()` includes NaN when some cells are unannotated. Matching a
+            # factor to "no annotation" is meaningless and puts a float NaN into
+            # the annotation dict, which later breaks label building in make_graph.
+            if pd.isna(obs):
+                continue
             scores, factors, layers = get_factor_obs_association_scores(
                 model, obs_key, obs
             )

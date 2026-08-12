@@ -203,6 +203,11 @@ def get_signature_scores(model, obs_key, obs_vals, markers, top_genes=10):
         np.zeros((n_obs, len(model.factor_names[idx]))) for idx in range(model.n_layers)
     ]
     for i, obs in enumerate(obs_vals):
+        # An annotation value with no marker list -- a NaN from unannotated cells,
+        # or simply a category the user did not supply markers for -- leaves this
+        # row at zero rather than raising KeyError.
+        if obs not in markers:
+            continue
         markers_type = markers[obs]
         nonmarkers_type = [m for m in markers if m not in markers_type]
         for layer_idx in range(model.n_layers):
@@ -265,12 +270,23 @@ def prepare_obs_factor_scores(
 
         if np.max(mats[-1]) > 1.0 and normalize:
             for i in range(len(mats)):
-                mats[i] = mats[i] / np.max(mats[i])
+                # A layer where no factor scores against any annotation is all
+                # zeros; dividing by its max would fill the matrix with NaN.
+                layer_max = np.max(mats[i])
+                if layer_max > 0:
+                    mats[i] = mats[i] / layer_max
 
         # Cluster rows across columns in all mats
         joined_mats = np.hstack(mats)
-        Z = ward(pdist(joined_mats))
-        hclust_index = leaves_list(Z)
+        # `pdist` raises on non-finite input, which unannotated cells and empty
+        # layers can produce upstream. Ward also needs at least two rows to build
+        # a linkage, so a single annotation value keeps its natural order.
+        finite_mats = np.nan_to_num(joined_mats, nan=0.0, posinf=0.0, neginf=0.0)
+        if finite_mats.shape[0] < 2:
+            hclust_index = np.arange(finite_mats.shape[0])
+        else:
+            Z = ward(pdist(finite_mats))
+            hclust_index = leaves_list(Z)
 
         obs_mats[obs_key] = mats
         obs_joined_mats[obs_key] = joined_mats

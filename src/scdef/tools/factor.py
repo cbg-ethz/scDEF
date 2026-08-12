@@ -2866,7 +2866,19 @@ def set_technical_factors(
     if len(technical_factors) > 0:
         model.adata.uns["factor_obs"].loc[technical_factors, "technical"] = True
 
-    model.adata.uns.pop("confident_signatures", None)
+    # The confident-signature cache is deliberately NOT invalidated here. It is
+    # keyed per factor and computed without reference to the technical flags, and
+    # the consumers that care about the flags apply them at read time:
+    # `get_biological_signature` drops flagged factors from the cached lookup, and
+    # `get_technical_signature` / `get_global_signature` read the hierarchies. So
+    # flipping a flag cannot make a cached signature wrong, and dropping the cache
+    # only forced users to re-run `set_confident_signatures` before, for example,
+    # `make_graph(show_signatures=True)`.
+    #
+    # `drop_technical` is a different case and still clears it: that one reassigns
+    # `model.factor_lists`, and the upper-layer signatures are drawn through the
+    # hierarchy (`_hierarchy_gene_scores_draw` reads `factor_lists`), so they go
+    # stale when the set of kept factors changes.
 
     # Propagate upwards: a parent whose children are all technical is technical.
     #
@@ -4042,6 +4054,10 @@ def drop_technical(model: "scDEF") -> None:
             model.make_layercolors(
                 layer_cpal=model.layer_cpal, lightness_mult=model.lightness_mult
             )
+            # Unlike `set_technical_factors`, which only flips flags, this
+            # reassigns `factor_lists`. The upper-layer confident signatures are
+            # drawn through the hierarchy, which reads `factor_lists`, so they
+            # describe a hierarchy that no longer exists and must be rebuilt.
             model.adata.uns.pop("confident_signatures", None)
             model.adata.uns.pop("biological_hierarchy", None)
             model.adata.uns.pop("technical_hierarchy", None)

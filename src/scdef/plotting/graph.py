@@ -422,7 +422,10 @@ def _get_base_label(factor_name, factor_annotations, n_cells_label, node_num_cel
     """Get base label for a node."""
     label = factor_name
     if factor_annotations is not None and factor_name in factor_annotations:
-        label = factor_annotations[factor_name]
+        # Coerced to str: an annotation can be a non-string (a float NaN, from an
+        # obs column with unannotated cells), and callers below build the label
+        # with `label += ...`, which raises TypeError on a float.
+        label = str(factor_annotations[factor_name])
 
     if n_cells_label:
         label = f"{label}<br/>({node_num_cells} cells)"

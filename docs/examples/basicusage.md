@@ -32,7 +32,6 @@ From there, the common things to do are:
 scd.pl.qc(model)                          # check the fit converged
 scd.tl.filter(model)                      # drop factors that fail the diagnostics
 scd.pl.make_graph(model, show_signatures=True)   # the hierarchy, with its genes
-scd.tl.set_confident_signatures(model)    # per-gene statistical signature calls
 scd.tl.assign_confident(model)            # assign cells at the resolution they support
 scd.tl.umap(model)                        # embed each layer
 scd.pl.umap(model)
