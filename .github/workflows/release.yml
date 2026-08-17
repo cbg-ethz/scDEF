@@ -38,7 +38,7 @@ jobs:
     name: Check the tag is releasable
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Refuse versions at or below the last manual release
@@ -73,14 +73,14 @@ jobs:
         # Pull requests test one version for speed; a release tests both.
         python-version: ['3.10', '3.11']
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
       - uses: ts-graphviz/setup-graphviz@v2
       - uses: snok/install-poetry@v1
       - name: Cache scanpy datasets
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: data
           key: scanpy-datasets-pbmc3k
@@ -97,8 +97,8 @@ jobs:
       contents: read      # a job-level block zeroes every scope not listed,
                           # so checkout would 403 without this
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
       # Same as ci.yml: build through the poetry-core backend without needing
