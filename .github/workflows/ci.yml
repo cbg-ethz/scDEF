@@ -22,8 +22,8 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
       - run: pip install black==23.12.1
@@ -37,8 +37,8 @@ jobs:
     name: Docs build (strict)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
           cache: pip
@@ -54,8 +54,8 @@ jobs:
     name: Package build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
       # `python -m build` rather than `poetry build`: it drives the same
@@ -82,8 +82,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
       # scdef imports graphviz, and pygraphviz-style builds need the system lib.
@@ -92,7 +92,7 @@ jobs:
       - name: Configure Poetry
         run: poetry config virtualenvs.in-project true
       - name: Cache the virtualenv
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .venv
           key: venv-${{ runner.os }}-py3.11-${{ hashFiles('poetry.lock') }}
@@ -100,7 +100,7 @@ jobs:
       # ./data on a cold runner. Cache it so the suite is not re-downloading the
       # same matrix on every run.
       - name: Cache scanpy datasets
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: data
           key: scanpy-datasets-pbmc3k
