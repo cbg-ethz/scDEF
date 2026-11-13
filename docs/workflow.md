@@ -75,25 +75,42 @@ layer 0 — the layer whose factors you actually interpret — is a separate,
 deliberate step, so that the thresholds can be chosen after looking at the
 diagnostics. That is what the loop below is for.
 
-### Fit, filter, re-fit
+### Fit, filter, re-fit: `learn`
 
-One fit is rarely the end. The usual loop is to fit, look at the diagnostics,
-filter the factors that do not hold up, and **fit again** — the model
-re-initializes from the current posterior and the surviving `factor_lists`, so
-the second fit refines a smaller, cleaner hierarchy rather than starting over:
+One fit is rarely the end. The recommended workflow, used for every data set in
+the scDEF paper, fits, filters the factors that do not hold up, **fits again**
+from the survivors, and filters a second time. The second fit re-initializes from
+the current posterior and the surviving `factor_lists`, so it refines a smaller,
+cleaner hierarchy rather than starting over. [`learn`][scdef.scDEF.learn] runs the
+four steps:
+
+```python
+model = scd.scDEF(adata, counts_layer='counts')
+model.learn()
+scd.pl.qc(model)
+```
+
+The two filters differ. The first keeps the layer-0 factors whose BRD is at least
+1 and removes only those with many effective parents (above 10.1), since the second
+fit re-learns the hierarchy. The second keeps the factors with at most 1.5
+effective parents, or a BRD of at least 4. Their arguments are
+[`LEARN_FIRST_FILTER`][scdef.scDEF.LEARN_FIRST_FILTER] and
+[`LEARN_SECOND_FILTER`][scdef.scDEF.LEARN_SECOND_FILTER]; pass `first_filter=` or
+`second_filter=` to change any of them. Written out, with the diagnostics in
+between, `learn()` is:
 
 ```python
 model.fit()
-scd.pl.qc(model)
-
 scd.tl.factor_diagnostics(model)
-scd.pl.factor_diagnostics(model, brd_min=1.0, ard_min=1e-3, clarity_min=0.5,
-                          annotate_factors=True)     # inspect before cutting
-scd.tl.filter(model, brd_min=1.0, ard_min=1e-3, clarity_min=0.5)
+scd.pl.factor_diagnostics(model, annotate_factors=True)   # inspect before cutting
+scd.tl.filter(model, **scd.scDEF.LEARN_FIRST_FILTER)
 
-model.fit()                                          # re-fit the reduced hierarchy
-scd.pl.qc(model)
+model.fit()                                               # re-fit the reduced hierarchy
+scd.tl.filter(model, **scd.scDEF.LEARN_SECOND_FILTER)
+print([len(fl) for fl in model.factor_lists])             # factors kept per layer
 ```
+
+With a `batch_key`, `learn()` passes it to both filters.
 
 Use [`scd.tl.filter`][scdef.tl.filter] rather than
 `model.filter_factors` directly. Filtering renames factors, which invalidates
@@ -101,13 +118,20 @@ everything keyed by those names — stored signatures, the hierarchies, and the
 frozen upper-layer subset the diagnostics use. `scd.tl.filter` filters *and*
 recomputes the diagnostics, so the model is immediately usable; calling
 `model.filter_factors` on its own leaves it in a state where, for example,
-`scd.pl.make_graph(model, show_signatures=True)` raises.
+`scd.pl.make_graph(model, show_signatures=True)` raises. Called without
+arguments, `scd.tl.filter(model)` applies the defaults of
+[`filter_factors`][scdef.scDEF.filter_factors], a single stricter pass (ARD at
+least 0.001, clarity at least 0.5) that `learn` does not use.
 
-Those three numbers are the defaults, so the first pass can simply call
-`scd.tl.filter(model)`. Pass explicit values on a later pass when the
-diagnostics plot shows factors you want to cut: `clarity_min` is usually the one
-to raise, since factors with many effective parents are those that fail to sit
-cleanly in the hierarchy. Repeat until the hierarchy stops changing.
+A fit depends on its random initialization. The paper fits each data set from
+five seeds and keeps the model with the lowest
+[`final_loss`][scdef.scDEF.final_loss], a choice that does not use any
+annotation:
+
+```python
+models = [scd.scDEF(adata, counts_layer='counts', seed=s).learn() for s in range(5)]
+model = min(models, key=lambda m: m.final_loss())
+```
 
 ### What a re-filter invalidates
 
@@ -257,6 +281,27 @@ scd.pl.factor_gene_uncertainty_boxplot(
 )
 ```
 
+### Marker genes
+
+The loadings describe each factor's programme. Because each cell combines several
+factors, the genes with the largest loadings are not always the ones that
+distinguish the cells of a factor from the others: a programme shared with the
+parent factor can rank high. [`marker_scores`][scdef.tl.marker_scores] ranks the
+genes by how much more they are expressed where a factor is used than where the
+other factors of its layer are. These are the gene spectra scores of cNMF
+(Kotliar et al., 2019): an ordinary least-squares regression of each gene's
+standardized expression on the proportions of the cell weights of the layer.
+[`marker_genes`][scdef.tl.marker_genes] returns them for every layer:
+
+```python
+markers, scores = scd.tl.marker_genes(model, top_genes=20)
+markers['L0_3']          # the 20 genes that best distinguish factor L0_3
+```
+
+Use the loadings to describe what a factor contains and the marker genes to name
+it or to compare it with known markers; the paper scores signatures against
+known markers with the marker genes.
+
 ## Pathway enrichment
 
 Once signatures are cached, [`gsea`][scdef.tl.gsea] runs Enrichr enrichment on
@@ -373,6 +418,10 @@ them; pass `layers=` to restrict which. [`multilayer_umap`][scdef.tl.multilayer_
 layers into a single representation, so one embedding reflects every resolution
 at once rather than one layer at a time.
 
+Plots coloured by factor scores use `scd.pl.FACTOR_CMAP` (`Spectral_r`) and plots
+coloured by gene expression `scd.pl.GENE_CMAP` (`viridis`) by default, so the two
+are never confused; pass `cmap=` to override.
+
 ## How mixed are the cells
 
 [`set_cell_entropies`][scdef.tl.set_cell_entropies] computes, per cell and per
@@ -406,19 +455,30 @@ without any labelling. Pass `exclude_technical=True` or
 
 ## Multiple batches
 
-Two steps. Fit with `batch_key`, then re-learn layer 0 without the per-gene batch
-term to expose what that term absorbed:
+Two steps. Fit with `batch_key`, then re-learn the lower layers without the
+per-gene batch term to expose what that term absorbed:
 
 ```python
 ref = scd.scDEF(adata, counts_layer='counts', batch_key='Experiment')
-ref.fit()
-dec = scd.scDEF.decompose_batch_effects(ref, top_layer=1)
+ref.learn()
+dec = scd.scDEF.decompose_batch_effects(ref, top_layer=2)
 
 rep = scd.tl.batch_structure_report(dec)
 flagged = rep.index[rep['shape'].isin(['branch_split', 'branch_skewed'])]
 scd.tl.set_batch_technical_factors(dec, flagged)
 scd.tl.factor_batch_correction(dec)
 ```
+
+The decomposition keeps the cell weights of one layer, the anchor (`top_layer`),
+and everything above it fixed, and re-learns the layers below, so whatever the
+batch term absorbed reappears as factors under the fixed groups of the anchor.
+**Choose an anchor that mixes the batches and still resolves the groups** under
+which batch-specific programmes are expected: draw `ref` with
+`scd.pl.make_graph(ref, wedged=batch_key)` and take a layer whose factors all
+contain cells of every batch but still separate the main cell types. In the paper
+this is layer 2 for the PBMC and ovarian cancer data, so that a batch effect can
+appear at layers 0 and 1; the default, layer 1, suits data whose layer 2 is too
+coarse.
 
 [`get_batch_technical_factors`][scdef.tl.get_batch_technical_factors] reads back
 what was flagged. Two gene-side views complement the report:
@@ -476,10 +536,30 @@ scd.tl.score_paths(model, paths_key='differentiation_paths')
 scd.pl.path_embedding(model, paths_key='differentiation_paths')
 ```
 
-[`build_transition_paths`][scdef.tl.build_transition_paths] is the alternative
-that also allows moves between branches, in `uns['transition_paths']`. Path ids
-are indices into the stored list, so check
-`model.adata.uns['differentiation_paths']` before selecting one.
+[`build_transition_paths`][scdef.tl.build_transition_paths] follows a change of
+state between two layer-0 factors: the path rises to their shared ancestor and
+descends again, in `uns['transition_paths']`. Paths come shortest first, through
+the lowest common ancestor.
+
+```python
+scd.tl.build_transition_paths(model, sources=['L0_3'], targets=['L0_7'])   # two states under one ancestor
+scd.tl.score_paths(model, paths_key='transition_paths')
+scd.pl.path_trajectory_heatmap(model, path_id=0, paths_key='transition_paths',
+                               min_sort_affinity=0.5)
+```
+
+On a transition path, a cell's *position* runs from the source (0) to the target
+(1) by its weights on those two factors, and its *affinity* is the share of its
+layer-0 weight below the shared ancestor in the tree, so cells in intermediate
+states under the same ancestor are kept. The hierarchy groups cells by
+expression, not by lineage: a progenitor can sit in a different branch from the
+cells it becomes, and then no path joins them below a broad ancestor. A path
+whose ancestor holds most of the cells orders them but describes little, so
+check `adata.uns['transition_paths']['path_stats']` and the affinities before
+reading the order.
+
+Path ids are indices into the stored list, so check
+`model.adata.uns[paths_key]['paths']` before selecting one.
 
 ## Known markers
 
@@ -519,16 +599,12 @@ sc.pl.umap(adata, color=CELLTYPE_KEY)   # also writes uns[f'{CELLTYPE_KEY}_color
 #    See "Multiple batches" for batch_key and "Known markers" for iscDEF.
 model = scd.scDEF(adata, counts_layer='counts')
 print(model)                                   # layer sizes sanity check
-model.fit()
-scd.pl.qc(model)
 
-# 3. diagnose, filter, re-fit
-scd.tl.factor_diagnostics(model)               # must precede the diagnostics plot
-scd.pl.factor_diagnostics(model, annotate_factors=True)
-scd.tl.filter(model)                           # filters AND refreshes diagnostics
-model.fit()
+# 3. fit, filter, re-fit, filter (see "Fit, filter, re-fit: learn" to run the steps by hand)
+model.learn()
 scd.pl.qc(model)
-print([len(fl) for fl in model.factor_lists])  # factors surviving per layer
+scd.pl.factor_diagnostics(model, annotate_factors=True)
+print([len(fl) for fl in model.factor_lists])  # factors kept per layer
 
 # 4. diagnostics + statistically called gene signatures, cached for all layers
 scd.tl.factor_diagnostics(model)               # also refreshes the signatures
@@ -550,7 +626,10 @@ scd.pl.obs_scores(model, obs_keys=[CELLTYPE_KEY], mode='weights')
 scd.tl.umap(model)
 scd.pl.umap(model, color=CELLTYPE_KEY)
 
-# 9. if marker sets are known, check the signatures recovered them
+# 9. marker genes: the genes that distinguish each factor's cells
+marker_genes, _ = scd.tl.marker_genes(model, top_genes=20)
+
+# 10. if marker sets are known, check the signatures recovered them
 scd.pl.signatures_scores(model, CELLTYPE_KEY, markers, top_genes=20)
 ```
 
