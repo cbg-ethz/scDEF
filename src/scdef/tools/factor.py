@@ -887,11 +887,17 @@ def marker_scores(
         DataFrame of factors (rows, in ``model.factor_names[layer_idx]`` order) by genes.
     """
     probs = _get_layer_cell_probs(model, layer_idx)
-    layer = counts_layer if counts_layer is not None else getattr(model, "counts_layer", None)
+    layer = (
+        counts_layer
+        if counts_layer is not None
+        else getattr(model, "counts_layer", None)
+    )
     X = model.adata.layers[layer] if layer else model.adata.X
     scores = marker_scores_from_usages(X, probs)
     return pd.DataFrame(
-        scores, index=list(model.factor_names[layer_idx]), columns=list(model.adata.var_names)
+        scores,
+        index=list(model.factor_names[layer_idx]),
+        columns=list(model.adata.var_names),
     )
 
 

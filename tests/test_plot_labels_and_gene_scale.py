@@ -33,7 +33,9 @@ class _GeneModel:
             "u0": np.array([60.0, 2.01, 1.0]),
         }
 
-    def get_signatures_dict(self, scores=False, layer_normalize=False, drop_factors=None):
+    def get_signatures_dict(
+        self, scores=False, layer_normalize=False, drop_factors=None
+    ):
         out = {}
         for n, v in self._scores.items():
             v = v.astype(float)
@@ -45,15 +47,15 @@ class _GeneModel:
 
 def test_factor_scale_is_relative_to_the_top_gene_of_each_factor():
     s = _get_gene_scores(_GeneModel(), "g1", None)
-    assert s["f1"] == pytest.approx(2.0 / 50.0)   # min-max over the genes of the factor
-    assert s["f0"] == pytest.approx(0.0)          # g1 is the smallest gene of f0
+    assert s["f1"] == pytest.approx(2.0 / 50.0)  # min-max over the genes of the factor
+    assert s["f0"] == pytest.approx(0.0)  # g1 is the smallest gene of f0
 
 
 def test_layer_scale_is_relative_to_the_gene_across_the_layer():
     s = _get_gene_scores(_GeneModel(), "g1", None, scale="layer")
     assert s["f1"] == pytest.approx(1.0)
     assert s["f0"] == pytest.approx(0.01 / 2.0)
-    assert s["u0"] == pytest.approx(1.0)          # the only factor of its layer
+    assert s["u0"] == pytest.approx(1.0)  # the only factor of its layer
 
 
 def test_unknown_scale_is_refused():
@@ -62,8 +64,13 @@ def test_unknown_scale_is_refused():
 
 
 def test_heatmap_names_each_group():
-    fig = obs_cell_factor_heatmap(_make_plot_model(), subset_obs_key="patient", subset_obs="P1",
-                                  group_obs_key="treatment", show=False)
+    fig = obs_cell_factor_heatmap(
+        _make_plot_model(),
+        subset_obs_key="patient",
+        subset_obs="P1",
+        group_obs_key="treatment",
+        show=False,
+    )
     texts = {t.get_text() for ax in fig.axes for t in ax.texts}
     assert {"A", "B"} <= texts
 
@@ -75,7 +82,11 @@ def _layers_model(sizes):
     model.factor_lists = [np.arange(n) for n in sizes]
     model.factor_names = [[f"{i}_{k}" for k in range(n)] for i, n in enumerate(sizes)]
     model.get_layer_factor_orders = lambda: [np.arange(n) for n in sizes]
-    obs_mats = {"type": {i: np.random.default_rng(i).random((2, n)) for i, n in enumerate(sizes)}}
+    obs_mats = {
+        "type": {
+            i: np.random.default_rng(i).random((2, n)) for i, n in enumerate(sizes)
+        }
+    }
     return model, obs_mats, {"type": np.arange(2)}, {"type": ["a", "b"]}
 
 
@@ -88,7 +99,11 @@ def _titles(**kwargs):
 
 
 def test_layer_titles_kept_when_they_fit():
-    assert _titles(sizes=[4, 4, 4], figsize=(10, 4)) == ["Layer 0", "Layer 1", "Layer 2"]
+    assert _titles(sizes=[4, 4, 4], figsize=(10, 4)) == [
+        "Layer 0",
+        "Layer 1",
+        "Layer 2",
+    ]
 
 
 def test_layer_titles_shortened_when_they_overlap():
@@ -97,4 +112,7 @@ def test_layer_titles_shortened_when_they_overlap():
 
 def test_layers_subset_is_plotted_by_position():
     # the columns were indexed by layer number, so a subset not starting at layer 0 raised IndexError
-    assert _titles(sizes=[6, 4, 3], layers=[1, 2], figsize=(10, 4)) == ["Layer 1", "Layer 2"]
+    assert _titles(sizes=[6, 4, 3], layers=[1, 2], figsize=(10, 4)) == [
+        "Layer 1",
+        "Layer 2",
+    ]
