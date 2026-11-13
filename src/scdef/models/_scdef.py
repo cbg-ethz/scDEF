@@ -1053,7 +1053,7 @@ class scDEF(object):
                     if layer_idx < len(self.layer_names)
                     else f"L{layer_idx}"
                 )
-                self.logger.info(
+                self.logger.debug(
                     "Refit: scaled %s W warm start by %.4g (layer size %s -> %s).",
                     layer_label,
                     factor,
@@ -4354,7 +4354,7 @@ class scDEF(object):
             if uns.pop(key, None) is not None:
                 dropped.append(key)
         if dropped and hasattr(self, "logger"):
-            self.logger.info(
+            self.logger.debug(
                 "filter_factors: cleared name-keyed caches (%s). Re-run "
                 "scdef.tools.set_confident_signatures to rebuild signatures, or "
                 "scdef.tools.factor_diagnostics for the full diagnostics.",
@@ -4472,12 +4472,12 @@ class scDEF(object):
         _n_gene_scale_rows = _gene_scale_pm.shape[0] if _gene_scale_pm.ndim > 1 else 1
         if _n_gene_scale_rows == 1:
             self.adata.var["gene_scale"] = _gene_scale_pm.reshape(-1)
-            self.logger.info("Updated adata.var: `gene_scale`")
+            self.logger.debug("Updated adata.var: `gene_scale`")
         else:
             for batch_idx in range(_n_gene_scale_rows):
                 name = f"gene_scale_{batch_idx}"
                 self.adata.var[name] = _gene_scale_pm[batch_idx]
-                self.logger.info(f"Updated adata.var: `{name}` for batch {batch_idx}.")
+                self.logger.debug(f"Updated adata.var: `{name}` for batch {batch_idx}.")
 
         if not getattr(self, "_preserve_factor_names_on_annotate", False):
             self.set_factor_names()
@@ -4532,10 +4532,10 @@ class scDEF(object):
                 )
                 self.adata.obs = pd.concat([self.adata.obs, df], axis=1)
 
-            self.logger.info(
+            self.logger.debug(
                 f"Updated adata.obs with layer {idx}: `{layer_name}` and `{layer_name}_score` for all factors in layer {idx}"
             )
-            self.logger.info(f"Updated adata.obsm with layer {idx}: `X_{layer_name}`")
+            self.logger.debug(f"Updated adata.obsm with layer {idx}: `X_{layer_name}`")
 
             factor_names = self.factor_names[idx]
             names = np.array(
@@ -4595,7 +4595,7 @@ class scDEF(object):
                 "logfoldchanges": logfoldchanges,
             }
 
-            self.logger.info(
+            self.logger.debug(
                 f"Updated adata.uns with layer {idx} signatures: `{layer_name}_signatures`."
             )
 

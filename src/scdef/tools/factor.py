@@ -1397,12 +1397,12 @@ def factor_diagnostics(
                 break
     if hasattr(model, "logger"):
         if reset_cache:
-            model.logger.info(
+            model.logger.debug(
                 "factor_diagnostics: recomputing cached diagnostics (%s).",
                 "; ".join(reset_reasons),
             )
         else:
-            model.logger.info(
+            model.logger.debug(
                 "factor_diagnostics: using cached diagnostics (fit revision %s).",
                 current_fit_rev,
             )

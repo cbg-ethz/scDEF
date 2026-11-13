@@ -4,12 +4,17 @@
   layer, so the factors that use it most are brightest. The default, ``"factor"``, keeps the score
   relative to the top gene of each factor, as in Figure 3D of the paper.
 - ``obs_cell_factor_heatmap`` names each group beside its block of the group track.
+- ``obs_scores`` (through ``layers_obs``) titles its panels with the layer names when the titles
+  "Layer i" overlap, and plots a subset of layers given by ``layers``.
 """
+import types
+
+import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 from anndata import AnnData
 
-from scdef.plotting.factors import obs_cell_factor_heatmap
+from scdef.plotting.factors import layers_obs, obs_cell_factor_heatmap
 from scdef.plotting.graph import _get_gene_scores
 
 from test_obs_cell_factor_heatmap import _make_plot_model
@@ -61,3 +66,35 @@ def test_heatmap_names_each_group():
                                   group_obs_key="treatment", show=False)
     texts = {t.get_text() for ax in fig.axes for t in ax.texts}
     assert {"A", "B"} <= texts
+
+
+def _layers_model(sizes):
+    model = types.SimpleNamespace()
+    model.n_layers = len(sizes)
+    model.layer_names = [f"L{i}" for i in range(len(sizes))]
+    model.factor_lists = [np.arange(n) for n in sizes]
+    model.factor_names = [[f"{i}_{k}" for k in range(n)] for i, n in enumerate(sizes)]
+    model.get_layer_factor_orders = lambda: [np.arange(n) for n in sizes]
+    obs_mats = {"type": {i: np.random.default_rng(i).random((2, n)) for i, n in enumerate(sizes)}}
+    return model, obs_mats, {"type": np.arange(2)}, {"type": ["a", "b"]}
+
+
+def _titles(**kwargs):
+    model, *mats = _layers_model(kwargs.pop("sizes"))
+    layers_obs(model, "type", *mats, show=False, **kwargs)
+    titles = [ax.get_title() for ax in plt.gcf().axes if ax.get_title()]
+    plt.close("all")
+    return titles
+
+
+def test_layer_titles_kept_when_they_fit():
+    assert _titles(sizes=[4, 4, 4], figsize=(10, 4)) == ["Layer 0", "Layer 1", "Layer 2"]
+
+
+def test_layer_titles_shortened_when_they_overlap():
+    assert _titles(sizes=[40, 2, 2], figsize=(4, 2)) == ["L0", "L1", "L2"]
+
+
+def test_layers_subset_is_plotted_by_position():
+    # the columns were indexed by layer number, so a subset not starting at layer 0 raised IndexError
+    assert _titles(sizes=[6, 4, 3], layers=[1, 2], figsize=(10, 4)) == ["Layer 1", "Layer 2"]

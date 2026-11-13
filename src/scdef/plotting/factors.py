@@ -945,6 +945,24 @@ def layers_continuous_obs(
         plt.show()
 
 
+def _shorten_overlapping_titles(
+    fig: Figure, title_axes: List[Axes], short_titles: List[str]
+) -> None:
+    """Replace every panel title with its short form when two neighbouring titles overlap.
+
+    Panels are as wide as their number of factors, so a layer with few factors can be
+    narrower than the title "Layer i".
+    """
+    try:
+        renderer = fig.canvas.get_renderer()
+        boxes = [ax.title.get_window_extent(renderer) for ax in title_axes]
+    except Exception:  # a backend without a renderer: leave the titles as they are
+        return
+    if any(left.x1 > right.x0 for left, right in zip(boxes, boxes[1:])):
+        for ax, title in zip(title_axes, short_titles):
+            ax.title.set_text(title)
+
+
 def layers_obs(
     model: "scDEF",
     obs_keys: Union[str, List[str]],
@@ -1020,10 +1038,10 @@ def layers_obs(
         gridspec_kw={"width_ratios": n_factors, "height_ratios": n_obs},
     )
     axs = axs.reshape((len(obs_keys), n_layers))
-    for i in layers:
-        axs[0][i].set_title(f"Layer {i}", fontsize=title_fontsize)
+    for col, i in enumerate(layers):
+        axs[0][col].set_title(f"Layer {i}", fontsize=title_fontsize)
         for j, obs_key in enumerate(obs_keys):
-            ax = axs[j][i]
+            ax = axs[j][col]
             mat = obs_mats[obs_key][i]
             mat = mat[obs_clusters[obs_key]][:, layer_factor_orders[i]]
             axplt = ax.pcolormesh(
@@ -1042,7 +1060,7 @@ def layers_obs(
             else:
                 ax.set(xticks=[])
 
-            if i == 0:
+            if col == 0:
                 ylabels = np.array(obs_vals_dict[obs_keys[j]])[
                     obs_clusters[obs_keys[j]]
                 ]
@@ -1053,7 +1071,7 @@ def layers_obs(
             else:
                 ax.set(yticks=[])
 
-            if i == n_layers - 1:
+            if col == n_layers - 1:
                 ax.yaxis.set_label_position("right")
                 ax.set_ylabel(obs_key, rotation=270, labelpad=20.0, fontsize=fontsize)
 
@@ -1062,6 +1080,12 @@ def layers_obs(
 
     cb = fig.colorbar(axplt, ax=axs.ravel().tolist(), pad=pad, shrink=shrink)
     cb.ax.set_title(cb_title, fontsize=cb_title_fontsize)
+    layer_names = getattr(model, "layer_names", None) or []
+    _shorten_overlapping_titles(
+        fig,
+        list(axs[0]),
+        [layer_names[i] if i < len(layer_names) else f"L{i}" for i in layers],
+    )
     if show:
         plt.show()
 

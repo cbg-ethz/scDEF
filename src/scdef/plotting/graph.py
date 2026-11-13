@@ -1411,7 +1411,7 @@ def make_graph(
                     )
 
     model.graph = g
-    model.logger.info("Updated scDEF graph")
+    model.logger.debug("Updated scDEF graph")
     return g
 
 
@@ -1765,7 +1765,7 @@ def make_technical_hierarchy_graph(
                 _add_technical_edges(g, model, hierarchy, color, factor_name=root_name)
 
     model.graph = g
-    model.logger.info("Updated scDEF graph")
+    model.logger.debug("Updated scDEF graph")
     return g
 
 
