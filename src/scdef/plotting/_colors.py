@@ -14,7 +14,8 @@ GENE_CMAP = "viridis"
 
 def continuous_cmap(model, key: str) -> Optional[str]:
     """The colormap for a continuous colour key of ``model.adata``: :data:`FACTOR_CMAP` for a factor name,
-    :data:`GENE_CMAP` for a gene, and None (the plotting library's default) otherwise."""
+    :data:`GENE_CMAP` for a gene, and None (the plotting library's default) otherwise.
+    """
     factors = {str(f) for names in getattr(model, "factor_names", []) for f in names}
     if key in factors:
         return FACTOR_CMAP

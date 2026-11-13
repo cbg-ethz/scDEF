@@ -1730,7 +1730,11 @@ class scDEF(object):
                 # at least 100 at the root; the per-layer values were computed but never
                 # used before 2026-11-04. Otherwise a concentration chosen by the caller
                 # is used at every layer, as before (iscDEF's marker-based inits rely on it).
-                a = max(a, z_init_concentration) if z_init_layer_floor else z_init_concentration
+                a = (
+                    max(a, z_init_concentration)
+                    if z_init_layer_floor
+                    else z_init_concentration
+                )
                 m = jnp.clip(
                     tfd.Gamma(
                         a,
@@ -3229,7 +3233,9 @@ class scDEF(object):
         self._has_fit = True
         self._fit_revision += 1
 
-    LEARN_FIRST_FILTER = dict(brd_min=1.0, ard_min=0.0, n_eff_parents_max=10.1, filter_up=True)
+    LEARN_FIRST_FILTER = dict(
+        brd_min=1.0, ard_min=0.0, n_eff_parents_max=10.1, filter_up=True
+    )
     """Arguments of the first filter of [`learn`][scdef.scDEF.learn], passed to
     [`filter_factors`][scdef.scDEF.filter_factors]: lenient on the hierarchy, since the second fit re-learns it."""
     LEARN_SECOND_FILTER = dict(
@@ -3288,12 +3294,20 @@ class scDEF(object):
 
         fit_kwargs.setdefault("hierarchical_init", True)
         self.fit(**fit_kwargs)
-        _filter(self, batch_key=self.batch_key, **{**self.LEARN_FIRST_FILTER, **(first_filter or {})})
+        _filter(
+            self,
+            batch_key=self.batch_key,
+            **{**self.LEARN_FIRST_FILTER, **(first_filter or {})},
+        )
         refit_kwargs = dict(fit_kwargs)
         if refit_kwargs.get("hierarchical_init") is True:
             refit_kwargs["hierarchical_init"] = None
         self.fit(**refit_kwargs)
-        _filter(self, batch_key=self.batch_key, **{**self.LEARN_SECOND_FILTER, **(second_filter or {})})
+        _filter(
+            self,
+            batch_key=self.batch_key,
+            **{**self.LEARN_SECOND_FILTER, **(second_filter or {})},
+        )
         return self
 
     def final_loss(self, n_iter: int = 100) -> float:

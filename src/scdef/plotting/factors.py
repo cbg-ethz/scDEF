@@ -770,10 +770,19 @@ def obs_cell_factor_heatmap(
             # shared with the heatmap, whose ticks are cleared below)
             ends = [int(e) for e in panel["boundaries"]]
             starts = [0] + ends[:-1]
-            to_track = mtransforms.blended_transform_factory(ax_grp.transAxes, ax_grp.transData)
+            to_track = mtransforms.blended_transform_factory(
+                ax_grp.transAxes, ax_grp.transData
+            )
             for grp, st, en in zip(panel["present_groups"], starts, ends):
-                ax_grp.text(-0.25, (st + en) / 2.0 - 0.5, str(grp), transform=to_track,
-                            ha="right", va="center", fontsize=label_fontsize)
+                ax_grp.text(
+                    -0.25,
+                    (st + en) / 2.0 - 0.5,
+                    str(grp),
+                    transform=to_track,
+                    ha="right",
+                    va="center",
+                    fontsize=label_fontsize,
+                )
             for spine in ax_grp.spines.values():
                 spine.set_visible(False)
 

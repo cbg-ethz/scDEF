@@ -20,11 +20,11 @@ import scdef as scd
 def _model():
     l0 = np.array(
         [
-            [1.0, 0.0, 0.0, 0.0],   # source
-            [0.0, 0.0, 1.0, 0.0],   # target
-            [0.5, 0.0, 0.5, 0.0],   # halfway
-            [0.1, 0.8, 0.1, 0.0],   # intermediate state below the same ancestor
-            [0.0, 0.0, 0.0, 1.0],   # other branch
+            [1.0, 0.0, 0.0, 0.0],  # source
+            [0.0, 0.0, 1.0, 0.0],  # target
+            [0.5, 0.0, 0.5, 0.0],  # halfway
+            [0.1, 0.8, 0.1, 0.0],  # intermediate state below the same ancestor
+            [0.0, 0.0, 0.0, 1.0],  # other branch
         ]
     )
     l1 = np.array([[0.9, 0.1], [0.9, 0.1], [0.9, 0.1], [0.9, 0.1], [0.1, 0.9]])
@@ -50,8 +50,14 @@ def test_shortest_path_comes_first():
     paths = scd.tl.build_transition_paths(
         m, sources=["L0_0"], targets=["L0_2"], max_path_len=7, rel_parent_weight=0.0
     )
-    assert ["L0_0", "L1_0", "L2_0", "L1_1", "L0_2"] in paths   # the higher-product route exists
-    assert paths[0] == ["L0_0", "L1_0", "L0_2"]                  # but the direct one comes first
+    assert [
+        "L0_0",
+        "L1_0",
+        "L2_0",
+        "L1_1",
+        "L0_2",
+    ] in paths  # the higher-product route exists
+    assert paths[0] == ["L0_0", "L1_0", "L0_2"]  # but the direct one comes first
 
 
 def test_affinity_and_position_follow_the_tree():
@@ -64,16 +70,21 @@ def test_affinity_and_position_follow_the_tree():
     np.testing.assert_allclose(aff[:4], 1.0)
     assert aff[4] == pytest.approx(0.0)
     np.testing.assert_allclose(pos[:3], [0.0, 1.0, 0.5])
-    assert pos[3] == pytest.approx(0.5)   # placed by its remaining source/target weight
+    assert pos[3] == pytest.approx(0.5)  # placed by its remaining source/target weight
     assert np.all((aff >= 0) & (aff <= 1))
 
 
 def test_differentiation_scoring_is_unchanged():
     m = _model()
     nodes = ["L2_0", "L1_0", "L0_0"]
-    m.adata.uns["dp"] = {"paths": [{"path_id": 0, "nodes": nodes, "type": "differentiation"}]}
+    m.adata.uns["dp"] = {
+        "paths": [{"path_id": 0, "nodes": nodes, "type": "differentiation"}]
+    }
     scd.tl.score_paths(m, paths_key="dp")
-    mats = [m.adata.obsm[k] / m.adata.obsm[k].sum(1, keepdims=True) for k in ("X_L0", "X_L1", "X_L2")]
+    mats = [
+        m.adata.obsm[k] / m.adata.obsm[k].sum(1, keepdims=True)
+        for k in ("X_L0", "X_L1", "X_L2")
+    ]
     s = np.vstack([mats[2][:, 0], mats[1][:, 0], mats[0][:, 0]]).T
     expected_aff = s.sum(1) / sum(x.sum(1) for x in mats)
     expected_pos = (s / s.sum(1, keepdims=True)) @ np.linspace(0, 1, 3)

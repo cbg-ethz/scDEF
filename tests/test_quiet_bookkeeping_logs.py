@@ -9,8 +9,13 @@ from anndata import AnnData
 
 import scdef as scd
 
-BOOKKEEPING = ("Updated adata", "Updated scDEF graph", "cleared name-keyed caches", "cached diagnostics",
-               "W warm start by")
+BOOKKEEPING = (
+    "Updated adata",
+    "Updated scDEF graph",
+    "cleared name-keyed caches",
+    "cached diagnostics",
+    "W warm start by",
+)
 
 
 def test_fit_and_filter_log_no_bookkeeping_at_info(caplog):

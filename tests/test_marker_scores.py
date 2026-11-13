@@ -12,7 +12,7 @@ def _toy(seed=0, n_per=120, n_genes=60, k=3, n_up=5):
     groups = np.repeat(np.arange(k), n_per)
     rate = np.full((k * n_per, n_genes), 2.0)
     for g in range(k):
-        rate[groups == g, g * n_up:(g + 1) * n_up] *= 6.0
+        rate[groups == g, g * n_up : (g + 1) * n_up] *= 6.0
     counts = rng.poisson(rate * rng.uniform(0.5, 1.5, size=(k * n_per, 1)))
     usages = np.full((k * n_per, k), 0.05)
     usages[np.arange(k * n_per), groups] = 0.9
@@ -32,8 +32,15 @@ def _explicit(counts, usages):
 def test_matches_explicit_ols_dense_and_sparse():
     counts, usages, _, _ = _toy()
     ref = _explicit(counts, usages)
-    np.testing.assert_allclose(marker_scores_from_usages(counts, usages), ref, rtol=1e-6, atol=1e-8)
-    np.testing.assert_allclose(marker_scores_from_usages(sp.csr_matrix(counts), usages), ref, rtol=1e-6, atol=1e-8)
+    np.testing.assert_allclose(
+        marker_scores_from_usages(counts, usages), ref, rtol=1e-6, atol=1e-8
+    )
+    np.testing.assert_allclose(
+        marker_scores_from_usages(sp.csr_matrix(counts), usages),
+        ref,
+        rtol=1e-6,
+        atol=1e-8,
+    )
 
 
 def test_top_genes_are_the_up_regulated_genes():
