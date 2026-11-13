@@ -10,3 +10,7 @@ mkdocs-jupyter>=0.25
 mkdocstrings>=1.0,<2
 mkdocstrings-python>=2.0,<3
 mkdocs-autorefs>=1.4
+# pymdown-extensions 12 breaks mkdocstrings 1.0's highlighter (TypeError in Highlight.__init__);
+# unpinned it is pulled in by mkdocs-material. Not yet mirrored in pyproject.toml, whose
+# poetry.lock would need regenerating.
+pymdown-extensions>=10,<12

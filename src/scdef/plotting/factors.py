@@ -5,6 +5,7 @@ This module provides factor-related plotting functions for scDEF models.
 
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.transforms as mtransforms
 import matplotlib.colors as mcolors
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
@@ -29,6 +30,7 @@ from matplotlib.figure import Figure
 from matplotlib.axes import Axes
 import pandas as pd
 from ..utils import data_utils
+from ._colors import FACTOR_CMAP, continuous_cmap
 
 if TYPE_CHECKING:
     from scdef.models._scdef import scDEF
@@ -47,7 +49,7 @@ def obs_factor_dotplot(
     labelsize: int = 12,
     legend_fontsize: int = 12,
     legend_titlesize: int = 12,
-    cmap: str = "viridis",
+    cmap: str = FACTOR_CMAP,
     logged: bool = False,
     width_ratios: List[float] = [5, 1, 1],
     show_ylabel: bool = True,
@@ -443,7 +445,7 @@ def obs_cell_factor_heatmap(
     figwidth: float = 10.0,
     row_height: float = 0.004,
     group_track_width: float = 0.05,
-    cmap: Union[str, mcolors.Colormap] = "viridis",
+    cmap: Union[str, mcolors.Colormap] = FACTOR_CMAP,
     norm: Optional[mcolors.Normalize] = None,
     vmin: Optional[float] = None,
     vmax: Optional[float] = None,
@@ -694,6 +696,9 @@ def obs_cell_factor_heatmap(
                 "group_rgb": group_rgb,
                 "boundaries": boundaries,
                 "ordered_groups": ordered_groups,
+                "present_groups": [
+                    g for g in ordered_groups if bool((group_labels == g).any())
+                ],
                 "cat_to_color": cat_to_color,
                 "n_rows": heatmap.shape[0],
             }
@@ -761,6 +766,14 @@ def obs_cell_factor_heatmap(
             )
             ax_grp.set_xticks([])
             ax_grp.set_yticks([])
+            # name each group beside its block of the track (as text: the y axis is
+            # shared with the heatmap, whose ticks are cleared below)
+            ends = [int(e) for e in panel["boundaries"]]
+            starts = [0] + ends[:-1]
+            to_track = mtransforms.blended_transform_factory(ax_grp.transAxes, ax_grp.transData)
+            for grp, st, en in zip(panel["present_groups"], starts, ends):
+                ax_grp.text(-0.25, (st + en) / 2.0 - 0.5, str(grp), transform=to_track,
+                            ha="right", va="center", fontsize=label_fontsize)
             for spine in ax_grp.spines.values():
                 spine.set_visible(False)
 
@@ -932,6 +945,24 @@ def layers_continuous_obs(
         plt.show()
 
 
+def _shorten_overlapping_titles(
+    fig: Figure, title_axes: List[Axes], short_titles: List[str]
+) -> None:
+    """Replace every panel title with its short form when two neighbouring titles overlap.
+
+    Panels are as wide as their number of factors, so a layer with few factors can be
+    narrower than the title "Layer i".
+    """
+    try:
+        renderer = fig.canvas.get_renderer()
+        boxes = [ax.title.get_window_extent(renderer) for ax in title_axes]
+    except Exception:  # a backend without a renderer: leave the titles as they are
+        return
+    if any(left.x1 > right.x0 for left, right in zip(boxes, boxes[1:])):
+        for ax, title in zip(title_axes, short_titles):
+            ax.title.set_text(title)
+
+
 def layers_obs(
     model: "scDEF",
     obs_keys: Union[str, List[str]],
@@ -1007,10 +1038,10 @@ def layers_obs(
         gridspec_kw={"width_ratios": n_factors, "height_ratios": n_obs},
     )
     axs = axs.reshape((len(obs_keys), n_layers))
-    for i in layers:
-        axs[0][i].set_title(f"Layer {i}", fontsize=title_fontsize)
+    for col, i in enumerate(layers):
+        axs[0][col].set_title(f"Layer {i}", fontsize=title_fontsize)
         for j, obs_key in enumerate(obs_keys):
-            ax = axs[j][i]
+            ax = axs[j][col]
             mat = obs_mats[obs_key][i]
             mat = mat[obs_clusters[obs_key]][:, layer_factor_orders[i]]
             axplt = ax.pcolormesh(
@@ -1029,7 +1060,7 @@ def layers_obs(
             else:
                 ax.set(xticks=[])
 
-            if i == 0:
+            if col == 0:
                 ylabels = np.array(obs_vals_dict[obs_keys[j]])[
                     obs_clusters[obs_keys[j]]
                 ]
@@ -1040,7 +1071,7 @@ def layers_obs(
             else:
                 ax.set(yticks=[])
 
-            if i == n_layers - 1:
+            if col == n_layers - 1:
                 ax.yaxis.set_label_position("right")
                 ax.set_ylabel(obs_key, rotation=270, labelpad=20.0, fontsize=fontsize)
 
@@ -1049,6 +1080,12 @@ def layers_obs(
 
     cb = fig.colorbar(axplt, ax=axs.ravel().tolist(), pad=pad, shrink=shrink)
     cb.ax.set_title(cb_title, fontsize=cb_title_fontsize)
+    layer_names = getattr(model, "layer_names", None) or []
+    _shorten_overlapping_titles(
+        fig,
+        list(axs[0]),
+        [layer_names[i] if i < len(layer_names) else f"L{i}" for i in layers],
+    )
     if show:
         plt.show()
 
@@ -1249,6 +1286,7 @@ def umap(
     rasterized: bool = True,
     n_legend_cols: int = 1,
     factor_subset: Optional[List[str]] = None,
+    cmap: Optional[str] = None,
     show: bool = True,
 ) -> None:
     """Plot pre-computed UMAPs for different layers.
@@ -1276,6 +1314,8 @@ def umap(
         rasterized: whether to rasterize the plot
         n_legend_cols: number of columns in legend
         factor_subset: subset of factors to plot
+        cmap: colormap for continuous keys; by default ``scdef.plotting.FACTOR_CMAP`` for a factor name and
+            ``scdef.plotting.GENE_CMAP`` for a gene
         show: whether to show the plot
     """
     from scdef.tools.factor import _restore_scanpy_umap_obsm, _snapshot_scanpy_umap_obsm
@@ -1332,6 +1372,7 @@ def umap(
             ax = sc.pl.umap(
                 model.adata,
                 color=[color[row]],
+                color_map=cmap or continuous_cmap(model, color[row]),
                 frameon=False,
                 show=False,
                 ax=ax,

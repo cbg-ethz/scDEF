@@ -22,6 +22,7 @@ def _gene_row_values(expr_vals: np.ndarray, *, normalize: bool) -> np.ndarray:
 
 
 from ..tools.factor import get_stored_confident_signatures
+from ._colors import FACTOR_CMAP
 
 
 def _factor_layer_and_slot(model: "scDEF", factor_name: str) -> Tuple[int, int]:
@@ -174,7 +175,7 @@ def trajectory_heatmap(
     subset_obs_key: Optional[str] = None,
     subset_obs: Optional[Union[str, Sequence[str]]] = None,
     heatmap_cmap: str = "RdYlBu_r",
-    factor_heatmap_cmap: str = "viridis",
+    factor_heatmap_cmap: str = FACTOR_CMAP,
     colorbar_gap: float = 0.16,
     xlabel: str = "Cells",
     normalize: bool = True,
@@ -611,7 +612,7 @@ def path_trajectory_heatmap(
     subset_obs_key: Optional[str] = None,
     subset_obs: Optional[Union[str, Sequence[str]]] = None,
     heatmap_cmap: str = "RdYlBu_r",
-    factor_heatmap_cmap: str = "viridis",
+    factor_heatmap_cmap: str = FACTOR_CMAP,
     colorbar_gap: float = 0.16,
     xlabel: str = "Cells",
     normalize: bool = True,

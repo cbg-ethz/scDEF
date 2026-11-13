@@ -146,6 +146,9 @@ nav:
               - set_confident_signatures: reference/tl.set_confident_signatures.md
               - get_confident_signatures: reference/tl.get_confident_signatures.md
               - get_stored_confident_signatures: reference/tl.get_stored_confident_signatures.md
+              - marker_genes: reference/tl.marker_genes.md
+              - marker_scores: reference/tl.marker_scores.md
+              - marker_scores_from_usages: reference/tl.marker_scores_from_usages.md
               - get_biological_signature: reference/tl.get_biological_signature.md
               - get_technical_signature: reference/tl.get_technical_signature.md
               - get_global_signature: reference/tl.get_global_signature.md

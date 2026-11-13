@@ -819,6 +819,118 @@ def _get_layer_cell_probs(model: "scDEF", layer_idx: int) -> np.ndarray:
     return scores / den
 
 
+def marker_scores_from_usages(counts: Any, usages: np.ndarray) -> np.ndarray:
+    """Marker scores of factors from any count matrix and per-cell factor usages.
+
+    The cNMF "gene spectra scores" (Kotliar et al. 2019, eLife): the coefficients of an
+    ordinary least-squares regression, without intercept, of each gene's standardised
+    expression (counts per million per cell; each gene centred and scaled to unit variance
+    over cells) on the usages. A gene with a large score for a factor is expressed above its
+    average in the cells that use that factor, holding the other factors fixed, so the score
+    contrasts a factor with the others, where the gene loadings describe the programme alone.
+
+    Args:
+        counts: cells x genes counts (dense or scipy sparse).
+        usages: cells x factors non-negative usages (for scDEF, the proportions of the cell
+            weights of one layer).
+
+    Returns:
+        factors x genes array of scores.
+    """
+    import scipy.sparse as sp
+
+    U = np.asarray(usages, dtype=float)
+    n = U.shape[0]
+    if counts.shape[0] != n:
+        raise ValueError("counts and usages must have the same number of cells")
+    if sp.issparse(counts):
+        C = sp.csr_matrix(counts, dtype=np.float64)
+        lib = np.asarray(C.sum(axis=1)).ravel()
+        lib[lib == 0] = 1.0
+        cpm = sp.diags(1e6 / lib) @ C
+        mean = np.asarray(cpm.mean(axis=0)).ravel()
+        sq = np.asarray(cpm.multiply(cpm).mean(axis=0)).ravel()
+        uty = np.asarray((cpm.T @ U).T)
+    else:
+        C = np.asarray(counts, dtype=np.float64)
+        lib = C.sum(axis=1)
+        lib[lib == 0] = 1.0
+        cpm = C * (1e6 / lib)[:, None]
+        mean = cpm.mean(axis=0)
+        sq = (cpm**2).mean(axis=0)
+        uty = U.T @ cpm
+    var = np.clip((sq - mean**2) * n / max(n - 1, 1), 1e-12, None)
+    std = np.sqrt(var)
+    # U^T Z with Z = (cpm - mean) / std, without forming Z
+    utz = (uty - U.sum(axis=0)[:, None] * mean[None, :]) / std[None, :]
+    return np.linalg.pinv(U.T @ U) @ utz
+
+
+def marker_scores(
+    model: "scDEF", layer_idx: int = 0, counts_layer: Optional[str] = None
+) -> pd.DataFrame:
+    """Marker scores of the factors of one layer: genes that distinguish each factor's cells.
+
+    ``marker_scores_from_usages`` on the model's counts and on the proportions of the cell
+    weights of the layer (each cell's weights divided by their sum). The gene loadings
+    (``get_signatures_dict``) describe each factor's programme; the marker scores rank the genes
+    by how much more they are expressed where the factor is used, against the other factors of
+    the layer.
+
+    Args:
+        model: fitted scDEF model (cell weights annotated, ``model.annotate_adata()``).
+        layer_idx: layer index.
+        counts_layer: layer of ``model.adata`` with the counts; defaults to the model's
+            ``counts_layer`` (``adata.X`` when it is None).
+
+    Returns:
+        DataFrame of factors (rows, in ``model.factor_names[layer_idx]`` order) by genes.
+    """
+    probs = _get_layer_cell_probs(model, layer_idx)
+    layer = counts_layer if counts_layer is not None else getattr(model, "counts_layer", None)
+    X = model.adata.layers[layer] if layer else model.adata.X
+    scores = marker_scores_from_usages(X, probs)
+    return pd.DataFrame(
+        scores, index=list(model.factor_names[layer_idx]), columns=list(model.adata.var_names)
+    )
+
+
+def marker_genes(
+    model: "scDEF", top_genes: Optional[int] = None, counts_layer: Optional[str] = None
+) -> Tuple[Dict[str, List[str]], Dict[str, np.ndarray]]:
+    """Marker genes of every factor of every layer with at least two factors, ranked by
+    [`marker_scores`][scdef.tl.marker_scores].
+
+    Example::
+
+        markers, scores = scd.tl.marker_genes(model, top_genes=20)
+        markers["L0_3"]
+
+    Args:
+        model: fitted scDEF model.
+        top_genes: number of genes to keep per factor; all genes if None.
+        counts_layer: layer of ``model.adata`` with the counts; defaults to the model's
+            ``counts_layer``.
+
+    Returns:
+        A pair of dicts: each factor to its genes ranked by marker score (truncated to
+        ``top_genes`` if given), and each factor to the scores of all genes, in
+        ``model.adata.var_names`` order.
+    """
+    genes = np.asarray(model.adata.var_names)
+    ranked, scores = {}, {}
+    for layer_idx in range(model.n_layers):
+        if len(model.factor_names[layer_idx]) < 2:
+            continue
+        df = marker_scores(model, layer_idx=layer_idx, counts_layer=counts_layer)
+        for f, row in df.iterrows():
+            v = row.to_numpy()
+            order = np.argsort(-v)
+            ranked[f] = list(genes[order][:top_genes] if top_genes else genes[order])
+            scores[f] = v
+    return ranked, scores
+
+
 def _soft_factor_membership(
     model: "scDEF",
     layer_idx: int,
@@ -854,6 +966,51 @@ def hard_assignment_name_indices(model: "scDEF", layer_idx: int) -> np.ndarray:
         dtype=float,
     )
     return np.argmax(z, axis=1)
+
+
+def _kept_layer_w(model: "scDEF", layer_idx: int) -> np.ndarray:
+    """``W`` from layer ``layer_idx`` to the layer below, restricted to kept factors on both sides.
+
+    Shape ``(len(factor_lists[layer_idx]), len(factor_lists[layer_idx - 1]))``.
+    """
+    w = np.asarray(model.pmeans[f"{model.layer_names[layer_idx]}W"], dtype=float)
+    rows = np.asarray(model.factor_lists[layer_idx], dtype=int)
+    cols = np.asarray(model.factor_lists[layer_idx - 1], dtype=int)
+    if w.shape[0] != rows.size:
+        w = w[rows]
+    if w.shape[1] != cols.size:
+        w = w[:, cols]
+    return w
+
+
+def tree_assignment_name_indices(model: "scDEF", layer_idx: int) -> np.ndarray:
+    """Per-cell winner index into ``factor_names[layer_idx]``, following the hierarchy.
+
+    Layer 0 is the posterior-mean ``z`` argmax, as in ``hard_assignment_name_indices``. Each upper
+    layer is the
+    parent of the cell's assignment one layer below: the kept upper factor with the largest ``W``
+    weight on that lower factor. A cell therefore stays in one branch of the tree at every layer,
+    as ``make_graph`` draws it.
+
+    The per-layer argmax can instead send a cell whose upper-layer weights are close to whichever
+    factor has the larger overall scale, outside the branch its lower factor belongs to. This is
+    the default for reporting (``annotate_adata``); factor pruning keeps the per-layer argmax.
+
+    In a decomposed model (``model.decomposition_top_layer`` set by ``decompose_batch_effects``)
+    the anchor layer's ``z`` is frozen as the corrected view while the wiring into it is
+    re-learned, and the two can disagree. There the anchor's own ``z`` argmax is used, and the
+    tree is followed again above it.
+    """
+    anchor = getattr(model, "decomposition_top_layer", None)
+    if anchor is None and getattr(model, "adata", None) is not None:
+        anchor = model.adata.uns.get("batch_technical_top_layer")
+    idx = hard_assignment_name_indices(model, 0)
+    for layer in range(1, layer_idx + 1):
+        if anchor is not None and layer == int(anchor):
+            idx = hard_assignment_name_indices(model, layer)
+        else:
+            idx = np.argmax(_kept_layer_w(model, layer), axis=0)[idx]
+    return idx
 
 
 def hard_assignment_factor_slots(model: "scDEF", layer_idx: int) -> np.ndarray:
@@ -1240,12 +1397,12 @@ def factor_diagnostics(
                 break
     if hasattr(model, "logger"):
         if reset_cache:
-            model.logger.info(
+            model.logger.debug(
                 "factor_diagnostics: recomputing cached diagnostics (%s).",
                 "; ".join(reset_reasons),
             )
         else:
-            model.logger.info(
+            model.logger.debug(
                 "factor_diagnostics: using cached diagnostics (fit revision %s).",
                 current_fit_rev,
             )

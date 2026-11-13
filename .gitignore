@@ -30,6 +30,8 @@ _site/
 *.bundle
 *.tar.gz
 scdef_notebooks_revision/
+# Outputs of the paper's figure and benchmark scripts (fits, scores, figures; ~16 GB).
+reproducibility/make_figures/out/
 
 # Exceptions to the blanket ignores above: these are real, tracked project files.
 !docs/requirements.txt

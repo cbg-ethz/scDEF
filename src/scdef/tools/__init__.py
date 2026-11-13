@@ -13,6 +13,9 @@ from .hierarchy import (
     find_sensible_top_factors,
 )
 from .factor import (
+    marker_scores,
+    marker_scores_from_usages,
+    marker_genes,
     assign_confident,
     filter_factors,
     batch_structure_report,

@@ -65,3 +65,36 @@ def test_optimizers_match_the_cached_steps(model):
     assert global_opt.init(model.global_params) is not None
     again = _steps(model)
     assert again[0] is local_opt and again[1] is global_opt
+
+
+def test_resetting_the_gradient_cache_rebuilds_the_steps(model):
+    """The fused steps close over the gradient callables.
+
+    `clear_runtime_cache` and `sscDEF.fit` reset `_learn_jit_cache` so the
+    gradients are re-traced against the current model. A step cached before the
+    reset would keep calling the old gradients, making that reset a no-op.
+    """
+    before = _steps(model)
+    model._learn_jit_cache = None
+    after = _steps(model)
+    assert after[2] is not before[2] and after[3] is not before[3]
+    model.clear_runtime_cache()
+    assert model._learn_step_cache is None
+
+
+def test_save_and_load_after_fit(model, tmp_path):
+    """The step cache holds optax closures, which cannot be pickled.
+
+    `fit` ends by clearing the runtime caches; fill the step cache again so the
+    save sees the worst case.
+    """
+    model.fit(n_epoch=2)
+    assert model._learn_step_cache is None, "fit should clear the step cache"
+    _steps(model)
+    assert model._learn_step_cache is not None
+    model.save(tmp_path / "m", overwrite=True)
+    loaded = scd.scDEF.load(tmp_path / "m", adata=model.adata)
+    assert loaded._learn_step_cache is None and loaded._learn_jit_cache is None
+    assert [list(f) for f in loaded.factor_lists] == [
+        list(f) for f in model.factor_lists
+    ]
