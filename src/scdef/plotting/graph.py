@@ -72,20 +72,41 @@ def _determine_style(filled, wedged, model):
         return "filled"
 
 
-def _get_gene_scores(model, gene_score, drop_factors):
-    """Get gene scores if gene_score is provided."""
+def _get_gene_scores(model, gene_score, drop_factors, scale="factor"):
+    """Get gene scores if gene_score is provided.
+
+    ``scale="factor"``: the score of the gene in each factor relative to the gene with
+    the largest score in that factor (min-max over the genes of the factor).
+    ``scale="layer"``: the score of the gene in each factor relative to its largest
+    score among the factors of the same layer, so the factors that use the gene most
+    are brightest whether or not the gene leads their programme.
+    """
     if gene_score is None:
         return {}
 
     if gene_score not in model.adata.var_names:
         raise ValueError("gene_score must be a gene name in model.adata")
+    if scale not in ("factor", "layer"):
+        raise ValueError("gene_score_scale must be 'factor' or 'layer'")
 
     gene_loc = np.where(model.adata.var_names == gene_score)[0][0]
     scores_dict = model.get_signatures_dict(
-        scores=True, layer_normalize=True, drop_factors=drop_factors
+        scores=True, layer_normalize=(scale == "factor"), drop_factors=drop_factors
     )[1]
+    if scale == "factor":
+        return {n: scores_dict[n][gene_loc] for n in scores_dict}
 
-    return {n: scores_dict[n][gene_loc] for n in scores_dict}
+    out = {}
+    for layer_names in model.factor_names:
+        vals = {
+            n: max(float(scores_dict[n][gene_loc]), 0.0)
+            for n in layer_names
+            if n in scores_dict
+        }
+        top = max(vals.values(), default=0.0)
+        for n, v in vals.items():
+            out[n] = v / top if top > 0 else 0.0
+    return out
 
 
 def _get_hierarchy_nodes(hierarchy, top_factor):
@@ -938,6 +959,7 @@ def make_graph(
     show_label: Optional[bool] = True,
     gene_score: Optional[str] = None,
     gene_cmap: Optional[str] = "viridis",
+    gene_score_scale: str = "factor",
     path: Optional[Union[Sequence[str], Dict[str, Any]]] = None,
     path_color: str = "red",
     path_node_penwidth: float = 2.5,
@@ -978,8 +1000,13 @@ def make_graph(
         node_size_min: minimum node size when scaled by cell numbers
         scale_level: whether to scale node sizes per level instead of across all levels
         show_label: whether to show labels on nodes
-        gene_score: color the nodes by the score they attribute to a gene, normalized by layer. Overrides filled and wedged
+        gene_score: color the nodes by the score they attribute to a gene. Overrides filled and wedged
         gene_cmap: colormap to use for gene_score
+        gene_score_scale: ``"factor"`` (default) colours each node by the score of the gene
+            relative to the gene with the largest score in that factor, so a gene lights up
+            the factors whose programme it leads. ``"layer"`` colours it relative to the
+            largest score of the gene among the factors of the same layer, so the factors
+            that use the gene most are brightest, whatever its rank within them.
         path: ordered factor names along a path, or a dict with key ``"nodes"``
             (e.g. differentiation or transition path ``nodes``). Names outside the
             hierarchy view are dropped when ``hierarchy`` is set. Edge highlights
@@ -1036,7 +1063,9 @@ def make_graph(
         alternate_n_layers=visible_n_layers if ignore_shell_root else None,
     )
     gene_cmap = matplotlib.colormaps[gene_cmap]
-    gene_scores_dict = _get_gene_scores(model, gene_score, drop_factors)
+    gene_scores_dict = _get_gene_scores(
+        model, gene_score, drop_factors, scale=gene_score_scale
+    )
     style = (
         "filled" if gene_score is not None else _determine_style(filled, wedged, model)
     )
@@ -1446,7 +1475,7 @@ def make_technical_hierarchy_graph(
         node_size_min: minimum node size when scaled by cell numbers
         scale_level: whether to scale node sizes per level instead of across all levels
         show_label: whether to show labels on nodes
-        gene_score: color the nodes by the score they attribute to a gene, normalized by layer. Overrides filled and wedged
+        gene_score: color the nodes by the score of a gene in each factor, relative to the gene with the largest score in that factor. Overrides filled and wedged
         gene_cmap: colormap to use for gene_score
         confident_assignments: same as [`make_graph`][scdef.pl.make_graph].
         confident_key: same as [`make_graph`][scdef.pl.make_graph].

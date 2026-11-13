@@ -5,6 +5,7 @@ This module provides factor-related plotting functions for scDEF models.
 
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.transforms as mtransforms
 import matplotlib.colors as mcolors
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
@@ -695,6 +696,9 @@ def obs_cell_factor_heatmap(
                 "group_rgb": group_rgb,
                 "boundaries": boundaries,
                 "ordered_groups": ordered_groups,
+                "present_groups": [
+                    g for g in ordered_groups if bool((group_labels == g).any())
+                ],
                 "cat_to_color": cat_to_color,
                 "n_rows": heatmap.shape[0],
             }
@@ -762,6 +766,14 @@ def obs_cell_factor_heatmap(
             )
             ax_grp.set_xticks([])
             ax_grp.set_yticks([])
+            # name each group beside its block of the track (as text: the y axis is
+            # shared with the heatmap, whose ticks are cleared below)
+            ends = [int(e) for e in panel["boundaries"]]
+            starts = [0] + ends[:-1]
+            to_track = mtransforms.blended_transform_factory(ax_grp.transAxes, ax_grp.transData)
+            for grp, st, en in zip(panel["present_groups"], starts, ends):
+                ax_grp.text(-0.25, (st + en) / 2.0 - 0.5, str(grp), transform=to_track,
+                            ha="right", va="center", fontsize=label_fontsize)
             for spine in ax_grp.spines.values():
                 spine.set_visible(False)
 
