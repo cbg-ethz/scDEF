@@ -637,8 +637,15 @@ def _node_num_cells_for_graph(
     assignments: bool,
     confident_assignments: bool,
 ) -> int:
-    """Cell count for graph labels/sizing; prefers ``factor_obs['n_cells']``."""
-    if assignments and not confident_assignments:
+    """Cell count for graph labels/sizing: the cells the node is wedged by.
+
+    ``factor_obs['n_cells']`` is used only when no cells are attached (e.g. a factor
+    outside the current assignments). Above layer 0 the diagnostics partition cells by
+    each layer's largest weight, while ``adata.obs`` follows the hierarchy
+    (``model.upper_assignment``), so counting from ``factor_obs`` would label a node
+    with a different set of cells than the one its wedges show.
+    """
+    if len(cells) == 0 and assignments and not confident_assignments:
         n_cells = lookup_factor_obs_n_cells(model, assignment_factor_name)
         if n_cells is not None:
             return n_cells

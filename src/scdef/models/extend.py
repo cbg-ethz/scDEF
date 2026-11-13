@@ -837,6 +837,9 @@ def decompose_batch_effects(
     learn_kwargs.setdefault("annotate", True)
     optimize = list(range(top_layer + 1))
     freeze_z = [top_layer]
+    # The anchor must be known before `_learn` annotates the cells: at `top_layer` the
+    # reported clusters come from the frozen `z`, not from the re-learned wiring.
+    model.decomposition_top_layer = int(top_layer)
     model._learn(
         optimize_layers=optimize,
         freeze_z_layers=freeze_z,

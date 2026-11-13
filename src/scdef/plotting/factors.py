@@ -29,6 +29,7 @@ from matplotlib.figure import Figure
 from matplotlib.axes import Axes
 import pandas as pd
 from ..utils import data_utils
+from ._colors import FACTOR_CMAP, continuous_cmap
 
 if TYPE_CHECKING:
     from scdef.models._scdef import scDEF
@@ -47,7 +48,7 @@ def obs_factor_dotplot(
     labelsize: int = 12,
     legend_fontsize: int = 12,
     legend_titlesize: int = 12,
-    cmap: str = "viridis",
+    cmap: str = FACTOR_CMAP,
     logged: bool = False,
     width_ratios: List[float] = [5, 1, 1],
     show_ylabel: bool = True,
@@ -443,7 +444,7 @@ def obs_cell_factor_heatmap(
     figwidth: float = 10.0,
     row_height: float = 0.004,
     group_track_width: float = 0.05,
-    cmap: Union[str, mcolors.Colormap] = "viridis",
+    cmap: Union[str, mcolors.Colormap] = FACTOR_CMAP,
     norm: Optional[mcolors.Normalize] = None,
     vmin: Optional[float] = None,
     vmax: Optional[float] = None,
@@ -1249,6 +1250,7 @@ def umap(
     rasterized: bool = True,
     n_legend_cols: int = 1,
     factor_subset: Optional[List[str]] = None,
+    cmap: Optional[str] = None,
     show: bool = True,
 ) -> None:
     """Plot pre-computed UMAPs for different layers.
@@ -1276,6 +1278,8 @@ def umap(
         rasterized: whether to rasterize the plot
         n_legend_cols: number of columns in legend
         factor_subset: subset of factors to plot
+        cmap: colormap for continuous keys; by default ``scdef.plotting.FACTOR_CMAP`` for a factor name and
+            ``scdef.plotting.GENE_CMAP`` for a gene
         show: whether to show the plot
     """
     from scdef.tools.factor import _restore_scanpy_umap_obsm, _snapshot_scanpy_umap_obsm
@@ -1332,6 +1336,7 @@ def umap(
             ax = sc.pl.umap(
                 model.adata,
                 color=[color[row]],
+                color_map=cmap or continuous_cmap(model, color[row]),
                 frameon=False,
                 show=False,
                 ax=ax,

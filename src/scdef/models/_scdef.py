@@ -159,6 +159,12 @@ class scDEF(object):
         self.batch_gene_scale = bool(batch_gene_scale)
 
         self.seed = seed
+        # How annotate_adata assigns cells at layers above 0: "tree" follows the hierarchy (a
+        # cell's cluster is the parent of its cluster one layer down); "argmax" takes each layer's
+        # largest weight independently, the behaviour before 2026-10.
+        self.upper_assignment = "tree"
+        # Set by decompose_batch_effects: the layer whose z is frozen as the corrected anchor.
+        self.decomposition_top_layer = None
         self.batch_cpal = batch_cpal
         self.layer_cpal = layer_cpal
         self.lightness_mult = lightness_mult
@@ -228,6 +234,7 @@ class scDEF(object):
         self._has_fit = False
         self._fit_revision = 0
         self._learn_jit_cache = None
+        self._learn_step_cache = None
         self._pending_reference_init = None
 
     def __repr__(self):
@@ -376,9 +383,11 @@ class scDEF(object):
         # restoring model state.
         if "graph" in state:
             state["graph"] = None
-        # JIT-compiled callables are runtime-only and not serializable.
-        if "_learn_jit_cache" in state:
-            state["_learn_jit_cache"] = None
+        # JIT-compiled callables (and the optax transforms they close over) are
+        # runtime-only and not serializable.
+        for cache_key in ("_learn_jit_cache", "_learn_step_cache"):
+            if cache_key in state:
+                state[cache_key] = None
         logger_level = (
             self.logger.level
             if hasattr(self, "logger") and self.logger is not None
@@ -457,12 +466,17 @@ class scDEF(object):
         obj = cls.__new__(cls)
         obj.__dict__.update(payload["state"])
         obj._learn_jit_cache = None
+        obj._learn_step_cache = None
         if not hasattr(obj, "marginalize_alpha"):
             obj.marginalize_alpha = False
         if not hasattr(obj, "_marginalize_alpha_init"):
             obj._marginalize_alpha_init = bool(obj.marginalize_alpha)
         if not hasattr(obj, "hierarchy_weight"):
             obj.hierarchy_weight = 1.0
+        if not hasattr(obj, "upper_assignment"):
+            obj.upper_assignment = "tree"
+        if not hasattr(obj, "decomposition_top_layer"):
+            obj.decomposition_top_layer = None
         if not hasattr(obj, "batch_gene_scale"):
             # Models pickled before the cell/gene batch sides were decoupled always
             # had the per-batch gene side whenever batch_key was set.
@@ -1584,6 +1598,7 @@ class scDEF(object):
         init_gene_scale: Optional[np.ndarray] = None,
         nmf_init=False,
         z_init_concentration=0.5,
+        z_init_layer_floor=False,
         **kwargs,
     ):
         """Initialize the variational parameters.
@@ -1710,10 +1725,16 @@ class scDEF(object):
             z_init_layer = _get_layer_init(init_z, layer_idx)
             if z_init_layer is not None and not nmf_init:
                 m = jnp.clip(jnp.asarray(z_init_layer, dtype=jnp.float32), clip, 1e6)
+                # With ``z_init_layer_floor`` (``fit`` with the default concentration),
+                # ``a`` is ``z_init_concentration`` at layer 0, at least 10 above it and
+                # at least 100 at the root; the per-layer values were computed but never
+                # used before 2026-11-04. Otherwise a concentration chosen by the caller
+                # is used at every layer, as before (iscDEF's marker-based inits rely on it).
+                a = max(a, z_init_concentration) if z_init_layer_floor else z_init_concentration
                 m = jnp.clip(
                     tfd.Gamma(
-                        (z_init_concentration),
-                        (z_init_concentration) / m,
+                        a,
+                        a / m,
                     ).sample(
                         seed=rngs[rng_cnt],
                     ),
@@ -2746,9 +2767,11 @@ class scDEF(object):
             z_init_concentration: concentration parameter of a Gamma distribution to
                 sample the initial z values from. Controls the initial spread of
                 cell mass across factors: lower values explore more factors per cell.
-                If ``None`` (default), computed as ``min(0.5, alpha / 10)`` — 10%
-                of the prior concentration, capped at 0.5. Pass an explicit float
-                to override.
+                If ``None`` (default), ``10`` with the hierarchical init, which
+                keeps the initial ``z`` close to its cluster labels, and otherwise
+                ``min(0.5, alpha / 10)`` — 10% of the prior concentration, capped at
+                0.5; with the default, layers above 0 use at least 10 and the root
+                at least 100. An explicit float is used at every layer.
             n_rounds: number of rounds to run the optimization.
             pretraining: whether to run ``pretrain`` before standard fit.
             force_decay_factor: on refit, whether to clip upper-layer sizes to the
@@ -2851,6 +2874,7 @@ class scDEF(object):
         # auto resolves to True only when neither applies, and an explicit
         # `hierarchical_init=True` keeps raising, since the caller asked for it by
         # name and a silent fallback would hide that they did not get it.
+        hierarchical_init_requested = hierarchical_init is True
         if hierarchical_init is None:
             hierarchical_init = not nmf_init and pca_key in self.adata.obsm
             if not hierarchical_init and not nmf_init:
@@ -2868,17 +2892,30 @@ class scDEF(object):
 
         marginalize_alpha_for_main_fit = bool(self.marginalize_alpha)
         self.root_epochs = int(root_epochs)
+        # The per-layer concentrations apply only when the caller left the default.
+        z_init_layer_floor = z_init_concentration is None
         if z_init_concentration is None:
-            # Default: 10% of alpha, capped at 0.5.  Keeps init more diffuse
-            # than the prior (sensitivity to rare populations) without the
-            # extreme mismatch that breeds "zombie" factors on small datasets.
-            z_init_concentration = min(0.5, float(self.alpha) / 10.0)
+            if hierarchical_init:
+                # The hierarchical init's z comes from cluster labels, so draw the
+                # initial means close to them: with the diffuse draw below
+                # (concentration ~0.06 on the planaria) one epoch in, the factors
+                # resolved none of the cell types that the k-means labels resolve
+                # (30 of 51), and the fit rebuilt its clusters from scratch, coarser.
+                z_init_concentration = 10.0
+            else:
+                # Default: 10% of alpha, capped at 0.5.  Keeps init more diffuse
+                # than the prior (sensitivity to rare populations) without the
+                # extreme mismatch that breeds "zombie" factors on small datasets.
+                z_init_concentration = min(0.5, float(self.alpha) / 10.0)
         is_refit = bool(getattr(self, "_has_fit", False))
         if hierarchical_init and is_refit:
-            self.logger.warning(
-                "hierarchical_init=True is ignored on refit; warm-starting from "
-                "the previous posterior instead."
-            )
+            # It still chose the initial concentration above; only the k-means
+            # initialization itself is skipped. Warn only when it was asked for.
+            if hierarchical_init_requested:
+                self.logger.warning(
+                    "hierarchical_init=True is ignored on refit; warm-starting from "
+                    "the previous posterior instead."
+                )
             hierarchical_init = False
         refit_old_keep: Optional[List[int]] = None
         pending_reference_init: Optional[Mapping[str, Any]] = None
@@ -3086,6 +3123,7 @@ class scDEF(object):
             nmf_init=nmf_init,
             max_cells=max_cells_init,
             z_init_concentration=z_init_concentration,
+            z_init_layer_floor=z_init_layer_floor,
         )
         if not is_refit and getattr(self, "_pending_reference_init", None) is not None:
             self._pending_reference_init = None
@@ -3191,6 +3229,89 @@ class scDEF(object):
         self._has_fit = True
         self._fit_revision += 1
 
+    LEARN_FIRST_FILTER = dict(brd_min=1.0, ard_min=0.0, n_eff_parents_max=10.1, filter_up=True)
+    """Arguments of the first filter of [`learn`][scdef.scDEF.learn], passed to
+    [`filter_factors`][scdef.scDEF.filter_factors]: lenient on the hierarchy, since the second fit re-learns it."""
+    LEARN_SECOND_FILTER = dict(
+        brd_min=1.0,
+        ard_min=0.0,
+        n_eff_parents_max=1.5,
+        filter_up=True,
+        min_cells_upper=1,
+        brd_exceptional=4,
+    )
+    """Arguments of the second filter of [`learn`][scdef.scDEF.learn], passed to
+    [`filter_factors`][scdef.scDEF.filter_factors]."""
+
+    def learn(
+        self,
+        first_filter: Optional[Mapping[str, Any]] = None,
+        second_filter: Optional[Mapping[str, Any]] = None,
+        **fit_kwargs: Any,
+    ) -> "scDEF":
+        """Learn the hierarchy with the recommended workflow: fit, filter, fit again, filter again.
+
+        These are the steps used for every data set in the scDEF paper (Methods, "Filtering factors"):
+
+        1. fit from the hierarchical initialisation;
+        2. filter: keep the layer-0 factors whose BRD is at least 1, removing only those with an average
+           effective number of parents above 10.1 (the second fit re-learns the hierarchy), and the upper-layer
+           factors that are no kept factor's strongest parent or hold fewer than 0.1% of the cells;
+        3. fit again from the kept factors;
+        4. filter again: BRD at least 1 and an average effective number of parents of at most 1.5, or a BRD of
+           at least 4; upper-layer factors need at least one cell.
+
+        Both filters are [`scd.tl.filter`][scdef.tl.filter], so the diagnostics and signatures are refreshed
+        after each, with the model's ``batch_key``. Each step can also be run by hand, as the "Getting started"
+        tutorial does.
+
+        The paper fits every data set from five random initialisations and keeps the model with the lowest
+        [`final_loss`][scdef.scDEF.final_loss]::
+
+            models = [scd.scDEF(adata, counts_layer="counts", seed=s).learn() for s in range(5)]
+            model = min(models, key=lambda m: m.final_loss())
+
+        Args:
+            first_filter: arguments that replace those of the first filter
+                ([`LEARN_FIRST_FILTER`][scdef.scDEF.LEARN_FIRST_FILTER]), passed to
+                [`filter_factors`][scdef.scDEF.filter_factors].
+            second_filter: arguments that replace those of the second filter
+                ([`LEARN_SECOND_FILTER`][scdef.scDEF.LEARN_SECOND_FILTER]).
+            **fit_kwargs: passed to both fits; ``hierarchical_init`` defaults to ``True``
+                (the second fit warm-starts from the first, so it receives ``None``,
+                which keeps the same initial concentration).
+
+        Returns:
+            The model itself, fitted and filtered.
+        """
+        from scdef.tools.factor import filter_factors as _filter
+
+        fit_kwargs.setdefault("hierarchical_init", True)
+        self.fit(**fit_kwargs)
+        _filter(self, batch_key=self.batch_key, **{**self.LEARN_FIRST_FILTER, **(first_filter or {})})
+        refit_kwargs = dict(fit_kwargs)
+        if refit_kwargs.get("hierarchical_init") is True:
+            refit_kwargs["hierarchical_init"] = None
+        self.fit(**refit_kwargs)
+        _filter(self, batch_key=self.batch_key, **{**self.LEARN_SECOND_FILTER, **(second_filter or {})})
+        return self
+
+    def final_loss(self, n_iter: int = 100) -> float:
+        """The mean loss (negative ELBO) over the last ``n_iter`` iterations of the latest fit.
+
+        The criterion the paper uses to keep the best of several initialisations (see
+        [`learn`][scdef.scDEF.learn]).
+
+        Args:
+            n_iter: number of final iterations to average over.
+
+        Returns:
+            The mean loss.
+        """
+        if not getattr(self, "elbos", None):
+            raise ValueError("the model has not been fitted")
+        return float(np.asarray(self.elbos[-1])[-n_iter:].mean())
+
     def pretrain(
         self,
         n_epoch: int = 200,
@@ -3237,6 +3358,7 @@ class scDEF(object):
     def clear_runtime_cache(self, clear_jax_cache: bool = False) -> None:
         """Clear runtime-only compiled caches to reduce notebook memory pressure."""
         self._learn_jit_cache = None
+        self._learn_step_cache = None
         if clear_jax_cache:
             jax.clear_caches()
 
@@ -3349,8 +3471,19 @@ class scDEF(object):
             bool(freeze_w),
             int(self.n_layers),
         )
+        # The fused steps close over the gradient callables, so they are only
+        # valid while those are: anything that resets `_learn_jit_cache` (e.g.
+        # `clear_runtime_cache`, `sscDEF.fit`) must also invalidate this cache.
+        local_loss_grad, global_loss_grad = self._get_or_build_learn_grad_fns(
+            num_samples=num_samples
+        )
         cache = getattr(self, "_learn_step_cache", None)
-        if isinstance(cache, dict) and cache.get("key") == key:
+        if (
+            isinstance(cache, dict)
+            and cache.get("key") == key
+            and cache.get("local_loss_grad") is local_loss_grad
+            and cache.get("global_loss_grad") is global_loss_grad
+        ):
             return (
                 cache["local_optimizer"],
                 cache["global_optimizer"],
@@ -3358,9 +3491,6 @@ class scDEF(object):
                 cache["global_update"],
             )
 
-        local_loss_grad, global_loss_grad = self._get_or_build_learn_grad_fns(
-            num_samples=num_samples
-        )
         local_optimizer = optax.adam(local_lr)
         global_optimizer = optax.adam(lr)
 
@@ -3458,6 +3588,8 @@ class scDEF(object):
         global_update_jit = jit(global_update)
         self._learn_step_cache = {
             "key": key,
+            "local_loss_grad": local_loss_grad,
+            "global_loss_grad": global_loss_grad,
             "local_optimizer": local_optimizer,
             "global_optimizer": global_optimizer,
             "local_update": local_update_jit,
@@ -4323,6 +4455,15 @@ class scDEF(object):
         ``obs['<factor>_prob']``, the representation ``obsm['X_<layer>']`` with
         its row-normalized ``_probs``, and the signatures
         ``uns['<layer>_signatures']`` in scanpy's ``rank_genes_groups`` format.
+
+        Above layer 0 the hard assignment follows the hierarchy by default
+        (``self.upper_assignment = "tree"``): a cell's cluster at layer ``l`` is the
+        parent, by largest ``W`` weight, of its cluster at layer ``l - 1``, so the
+        clusters agree with the tree ``make_graph`` draws. In a model made by
+        ``decompose_batch_effects``, the anchor layer (``top_layer``, whose ``z`` is
+        frozen as the corrected view) uses that frozen ``z`` instead, and the tree is
+        followed again above it. Set ``self.upper_assignment = "argmax"`` for the
+        per-layer argmax of ``z``.
         """
         self.adata.obs["cell_scale"] = self.pmeans["cell_scale"]
         # Number of rows actually present in gene_scale, which is 1 whenever the gene
@@ -4343,7 +4484,14 @@ class scDEF(object):
         from scdef.tools.factor import (
             _resolve_signature_drop_factors,
             hard_assignment_name_indices,
+            tree_assignment_name_indices,
         )
+
+        upper_rule = getattr(self, "upper_assignment", "tree")
+        if upper_rule not in ("tree", "argmax"):
+            raise ValueError(
+                f"upper_assignment must be 'tree' or 'argmax', got {upper_rule!r}."
+            )
 
         ranked_genes, ranked_scores = self.get_signatures_dict(
             scores=True,
@@ -4356,7 +4504,10 @@ class scDEF(object):
             self.adata.obsm[f"X_{layer_name}"] = np.array(
                 self.pmeans[f"{layer_name}z"][:, self.factor_lists[idx]]
             )
-            assignments = hard_assignment_name_indices(self, idx)
+            if idx > 0 and upper_rule == "tree":
+                assignments = tree_assignment_name_indices(self, idx)
+            else:
+                assignments = hard_assignment_name_indices(self, idx)
             factor_names = list(self.factor_names[idx])
             self.adata.obs[f"{layer_name}"] = pd.Categorical(
                 [factor_names[a] for a in assignments],
