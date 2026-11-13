@@ -238,6 +238,13 @@ def get_technical_factors(model: "scDEF") -> List[str]:
     returned names are always the *current* ``model.factor_names`` entries, so
     they can be compared directly against the live model. Technical factors that
     are no longer kept by the model are omitted.
+
+    Args:
+        model: fitted scDEF model whose ``factor_obs`` carries the flags.
+
+    Returns:
+        Current factor names flagged technical, or ``[]`` if none are flagged or
+        diagnostics have not been computed.
     """
     factor_obs = model.adata.uns.get("factor_obs")
     if factor_obs is None or "technical" not in factor_obs.columns:
@@ -262,6 +269,9 @@ def get_batch_technical_factors(model: "scDEF") -> List[str]:
     represents: nothing is deleted and nothing propagates —
     [`factor_batch_correction`][scdef.tl.factor_batch_correction] merges or drops it in the corrected
     representation and leaves the model itself untouched.
+
+    Args:
+        model: fitted scDEF model whose ``factor_obs`` carries the flags.
 
     Returns:
         Current layer-0 factor names flagged batch-technical, or ``[]`` if none
@@ -533,7 +543,29 @@ def get_stored_confident_signatures(
         Dict[str, float],
     ],
 ]:
-    """Load precomputed confident signatures (and optional scores) from cache."""
+    """Load precomputed confident signatures (and optional scores) from cache.
+
+    Reads the cache written by [`set_confident_signatures`][scdef.tl.set_confident_signatures],
+    which must have been run first. Stored keys are stable original-index labels and
+    are translated to the current ``model.factor_names``, so factors the model no
+    longer keeps are dropped rather than mislabelled.
+
+    Args:
+        model: fitted scDEF model with a populated
+            ``adata.uns['confident_signatures']`` cache.
+        layer_idx: layer to read signatures for.
+        max_genes: keep at most this many genes per signature, highest-scoring
+            first. Defaults to the full confident list.
+        return_confidences: also return the per-gene posterior confidences.
+        return_combined_scores: also return the per-gene combined scores used to
+            order each signature.
+        return_signature_confidences: also return the per-factor weighted Jaccard
+            confidence — how stable the gene list is across posterior samples.
+
+    Returns:
+        The signatures per factor, alone or followed by whichever of the optional
+        dictionaries were requested, in the order the flags appear above.
+    """
     if layer_idx < 0 or layer_idx >= model.n_layers:
         raise ValueError(f"layer_idx must be in [0, {model.n_layers - 1}].")
     cache = _get_confident_signatures_cache(model)
@@ -614,6 +646,23 @@ def set_confident_signatures(
     weighted signature Jaccard confidences (posterior stability of each
     confident gene list, weighted by ``combined_scores``) in
     ``model.adata.uns['confident_signatures']`` for reuse by plotting.
+
+    Args:
+        model: fitted scDEF model.
+        confidence_threshold: a gene enters a factor's signature when
+            ``P(W > tau)`` reaches this value. Raise it for shorter, more certain
+            signatures; lower it to admit weaker genes.
+        tau_quantile: quantile of the factor's loadings used as the effect
+            threshold ``tau``, so the test asks whether a gene is confidently among
+            the factor's strongest.
+        min_effect: absolute floor on ``tau``, applied when the quantile alone would
+            put it too low to be meaningful. Defaults to no floor.
+        mc_samples: number of posterior samples drawn to estimate the per-gene
+            probabilities and the signature stability.
+        random_seed: seed for those posterior draws, so the cache is reproducible.
+
+    Returns:
+        The confident signature per factor, flattened across all layers.
     """
     cache: Dict[str, object] = {
         "fit_revision": int(getattr(model, "_fit_revision", 0)),
@@ -770,6 +819,124 @@ def _get_layer_cell_probs(model: "scDEF", layer_idx: int) -> np.ndarray:
     return scores / den
 
 
+def marker_scores_from_usages(counts: Any, usages: np.ndarray) -> np.ndarray:
+    """Marker scores of factors from any count matrix and per-cell factor usages.
+
+    The cNMF "gene spectra scores" (Kotliar et al. 2019, eLife): the coefficients of an
+    ordinary least-squares regression, without intercept, of each gene's standardised
+    expression (counts per million per cell; each gene centred and scaled to unit variance
+    over cells) on the usages. A gene with a large score for a factor is expressed above its
+    average in the cells that use that factor, holding the other factors fixed, so the score
+    contrasts a factor with the others, where the gene loadings describe the programme alone.
+
+    Args:
+        counts: cells x genes counts (dense or scipy sparse).
+        usages: cells x factors non-negative usages (for scDEF, the proportions of the cell
+            weights of one layer).
+
+    Returns:
+        factors x genes array of scores.
+    """
+    import scipy.sparse as sp
+
+    U = np.asarray(usages, dtype=float)
+    n = U.shape[0]
+    if counts.shape[0] != n:
+        raise ValueError("counts and usages must have the same number of cells")
+    if sp.issparse(counts):
+        C = sp.csr_matrix(counts, dtype=np.float64)
+        lib = np.asarray(C.sum(axis=1)).ravel()
+        lib[lib == 0] = 1.0
+        cpm = sp.diags(1e6 / lib) @ C
+        mean = np.asarray(cpm.mean(axis=0)).ravel()
+        sq = np.asarray(cpm.multiply(cpm).mean(axis=0)).ravel()
+        uty = np.asarray((cpm.T @ U).T)
+    else:
+        C = np.asarray(counts, dtype=np.float64)
+        lib = C.sum(axis=1)
+        lib[lib == 0] = 1.0
+        cpm = C * (1e6 / lib)[:, None]
+        mean = cpm.mean(axis=0)
+        sq = (cpm**2).mean(axis=0)
+        uty = U.T @ cpm
+    var = np.clip((sq - mean**2) * n / max(n - 1, 1), 1e-12, None)
+    std = np.sqrt(var)
+    # U^T Z with Z = (cpm - mean) / std, without forming Z
+    utz = (uty - U.sum(axis=0)[:, None] * mean[None, :]) / std[None, :]
+    return np.linalg.pinv(U.T @ U) @ utz
+
+
+def marker_scores(
+    model: "scDEF", layer_idx: int = 0, counts_layer: Optional[str] = None
+) -> pd.DataFrame:
+    """Marker scores of the factors of one layer: genes that distinguish each factor's cells.
+
+    ``marker_scores_from_usages`` on the model's counts and on the proportions of the cell
+    weights of the layer (each cell's weights divided by their sum). The gene loadings
+    (``get_signatures_dict``) describe each factor's programme; the marker scores rank the genes
+    by how much more they are expressed where the factor is used, against the other factors of
+    the layer.
+
+    Args:
+        model: fitted scDEF model (cell weights annotated, ``model.annotate_adata()``).
+        layer_idx: layer index.
+        counts_layer: layer of ``model.adata`` with the counts; defaults to the model's
+            ``counts_layer`` (``adata.X`` when it is None).
+
+    Returns:
+        DataFrame of factors (rows, in ``model.factor_names[layer_idx]`` order) by genes.
+    """
+    probs = _get_layer_cell_probs(model, layer_idx)
+    layer = (
+        counts_layer
+        if counts_layer is not None
+        else getattr(model, "counts_layer", None)
+    )
+    X = model.adata.layers[layer] if layer else model.adata.X
+    scores = marker_scores_from_usages(X, probs)
+    return pd.DataFrame(
+        scores,
+        index=list(model.factor_names[layer_idx]),
+        columns=list(model.adata.var_names),
+    )
+
+
+def marker_genes(
+    model: "scDEF", top_genes: Optional[int] = None, counts_layer: Optional[str] = None
+) -> Tuple[Dict[str, List[str]], Dict[str, np.ndarray]]:
+    """Marker genes of every factor of every layer with at least two factors, ranked by
+    [`marker_scores`][scdef.tl.marker_scores].
+
+    Example::
+
+        markers, scores = scd.tl.marker_genes(model, top_genes=20)
+        markers["L0_3"]
+
+    Args:
+        model: fitted scDEF model.
+        top_genes: number of genes to keep per factor; all genes if None.
+        counts_layer: layer of ``model.adata`` with the counts; defaults to the model's
+            ``counts_layer``.
+
+    Returns:
+        A pair of dicts: each factor to its genes ranked by marker score (truncated to
+        ``top_genes`` if given), and each factor to the scores of all genes, in
+        ``model.adata.var_names`` order.
+    """
+    genes = np.asarray(model.adata.var_names)
+    ranked, scores = {}, {}
+    for layer_idx in range(model.n_layers):
+        if len(model.factor_names[layer_idx]) < 2:
+            continue
+        df = marker_scores(model, layer_idx=layer_idx, counts_layer=counts_layer)
+        for f, row in df.iterrows():
+            v = row.to_numpy()
+            order = np.argsort(-v)
+            ranked[f] = list(genes[order][:top_genes] if top_genes else genes[order])
+            scores[f] = v
+    return ranked, scores
+
+
 def _soft_factor_membership(
     model: "scDEF",
     layer_idx: int,
@@ -805,6 +972,51 @@ def hard_assignment_name_indices(model: "scDEF", layer_idx: int) -> np.ndarray:
         dtype=float,
     )
     return np.argmax(z, axis=1)
+
+
+def _kept_layer_w(model: "scDEF", layer_idx: int) -> np.ndarray:
+    """``W`` from layer ``layer_idx`` to the layer below, restricted to kept factors on both sides.
+
+    Shape ``(len(factor_lists[layer_idx]), len(factor_lists[layer_idx - 1]))``.
+    """
+    w = np.asarray(model.pmeans[f"{model.layer_names[layer_idx]}W"], dtype=float)
+    rows = np.asarray(model.factor_lists[layer_idx], dtype=int)
+    cols = np.asarray(model.factor_lists[layer_idx - 1], dtype=int)
+    if w.shape[0] != rows.size:
+        w = w[rows]
+    if w.shape[1] != cols.size:
+        w = w[:, cols]
+    return w
+
+
+def tree_assignment_name_indices(model: "scDEF", layer_idx: int) -> np.ndarray:
+    """Per-cell winner index into ``factor_names[layer_idx]``, following the hierarchy.
+
+    Layer 0 is the posterior-mean ``z`` argmax, as in ``hard_assignment_name_indices``. Each upper
+    layer is the
+    parent of the cell's assignment one layer below: the kept upper factor with the largest ``W``
+    weight on that lower factor. A cell therefore stays in one branch of the tree at every layer,
+    as ``make_graph`` draws it.
+
+    The per-layer argmax can instead send a cell whose upper-layer weights are close to whichever
+    factor has the larger overall scale, outside the branch its lower factor belongs to. This is
+    the default for reporting (``annotate_adata``); factor pruning keeps the per-layer argmax.
+
+    In a decomposed model (``model.decomposition_top_layer`` set by ``decompose_batch_effects``)
+    the anchor layer's ``z`` is frozen as the corrected view while the wiring into it is
+    re-learned, and the two can disagree. There the anchor's own ``z`` argmax is used, and the
+    tree is followed again above it.
+    """
+    anchor = getattr(model, "decomposition_top_layer", None)
+    if anchor is None and getattr(model, "adata", None) is not None:
+        anchor = model.adata.uns.get("batch_technical_top_layer")
+    idx = hard_assignment_name_indices(model, 0)
+    for layer in range(1, layer_idx + 1):
+        if anchor is not None and layer == int(anchor):
+            idx = hard_assignment_name_indices(model, layer)
+        else:
+            idx = np.argmax(_kept_layer_w(model, layer), axis=0)[idx]
+    return idx
 
 
 def hard_assignment_factor_slots(model: "scDEF", layer_idx: int) -> np.ndarray:
@@ -1191,12 +1403,12 @@ def factor_diagnostics(
                 break
     if hasattr(model, "logger"):
         if reset_cache:
-            model.logger.info(
+            model.logger.debug(
                 "factor_diagnostics: recomputing cached diagnostics (%s).",
                 "; ".join(reset_reasons),
             )
         else:
-            model.logger.info(
+            model.logger.debug(
                 "factor_diagnostics: using cached diagnostics (fit revision %s).",
                 current_fit_rev,
             )
@@ -1560,6 +1772,27 @@ def get_obs_score_rankings(
     This reads cached matrices from ``model.adata.uns['obs_scores']`` (written by
     ``scd.pl.obs_scores``). If cache is missing/stale for the requested key/model,
     it is recomputed on demand for the requested ``obs_key`` and ``mode``.
+
+    Args:
+        model: fitted scDEF model.
+        layer: layer to rank factors in, as an index or a name from
+            ``model.layer_names``.
+        obs_key: column in ``model.adata.obs`` holding the annotation to score against.
+        obs_values: one or more values of ``obs_key`` to rank factors for. A single
+            string is treated as a one-element list.
+        mode: which association score to rank by — ``"fracs"`` (fraction of the
+            annotation's cells assigned to the factor), ``"f1"`` (F1 of the
+            assignment), ``"weights"``, ``"prob"``, ``"soft_prec"``, or ``"score"``
+            (mean factor score).
+        ascending: if True, rank from lowest score to highest. Ranking is always
+            grouped by ``obs_values`` in the order given, and sorted by score within
+            each group.
+        recompute: force the score matrix to be recomputed even when a cache entry
+            for this ``obs_key`` and ``mode`` matches the current fit.
+
+    Returns:
+        One row per (``obs_value``, factor) with columns ``factor``, ``layer``,
+        ``layer_idx``, ``obs_key``, ``obs_value``, ``mode`` and ``score``.
     """
     if isinstance(layer, str):
         if layer not in model.layer_names:
@@ -1679,6 +1912,32 @@ def get_obs_value_specific_factors(
     Specificity is defined within the provided ``obs_values`` as:
     ``specificity = score(obs_value) - max(score(other_obs_values))``.
     Higher values indicate stronger specificity for that obs category.
+
+    Note that specificity is relative to the ``obs_values`` given, not to the whole
+    annotation: passing two of five cell types asks which factors separate those
+    two, not which are unique across all five.
+
+    Args:
+        model: fitted scDEF model.
+        layer: layer to search, as an index or a name from ``model.layer_names``.
+        obs_key: column in ``model.adata.obs`` holding the annotation.
+        obs_values: values of ``obs_key`` to find specific factors for. A single
+            string is treated as a one-element list; with one value there is no
+            competitor, so specificity equals the raw score.
+        mode: association score to compute specificity from — see
+            [`get_obs_score_rankings`][scdef.tl.get_obs_score_rankings] for the options.
+        min_specificity: drop factors whose margin over the best competing value
+            falls below this. The default of 0.0 keeps any factor that leads.
+        top_n: keep at most this many factors per value, most specific first.
+            Defaults to all that pass ``min_specificity``.
+        recompute: force the underlying score matrix to be recomputed rather than
+            read from cache.
+        return_scores: return the full table with the specificity margins and the
+            competing value, instead of just the factor names.
+
+    Returns:
+        Factor names per ``obs_value``, or — when ``return_scores`` is True — a
+        DataFrame with the score, the margin, and which value came second.
     """
     if isinstance(obs_values, str):
         obs_values = [obs_values]
@@ -2247,6 +2506,22 @@ def set_cell_entropies(
     Also stores an effective number of factors per cell, defined as
     ``exp(H)`` where ``H`` is the non-normalized Shannon entropy.
 
+    Args:
+        model: fitted scDEF model, with ``annotate_adata`` (or ``fit``) already run
+            so that ``adata.obsm['X_<layer>']`` exists.
+        layers: layers to compute entropy for, as indices or names. Defaults to every
+            layer.
+        key_suffix: suffix of the entropy column written to ``adata.obs``; the full
+            name is ``f"{layer_name}_{key_suffix}"``.
+        effective_suffix: suffix of the effective-number-of-factors column, written as
+            ``f"{layer_name}_{effective_suffix}"``.
+        normalize: divide the entropy by ``log(n_factors)`` in that layer, putting it
+            on a roughly ``[0, 1]`` scale so layers of different widths are
+            comparable. The effective-factor column is always computed from the
+            non-normalized entropy.
+        eps: floor applied before normalizing and before taking logs, to keep zero
+            memberships from producing infinities.
+
     Returns:
         List of created/updated entropy column names.
     """
@@ -2313,6 +2588,23 @@ def compute_within_group_pairwise_dissimilarity(
     within each category of ``obs_key`` and summarized per group.
 
     Results are cached in ``model.adata.uns['within_group_pairwise_dissimilarity']``.
+
+    Args:
+        model: fitted scDEF model, with ``annotate_adata`` (or ``fit``) already run
+            so that ``adata.obsm['X_<layer>']`` exists.
+        layer: layer whose factor memberships represent each cell, as an index or a
+            name from ``model.layer_names``.
+        obs_key: column in ``model.adata.obs`` defining the groups; distances are
+            computed only between cells sharing a value.
+        metric: distance between two cells' membership vectors — ``"jsd"``
+            (Jensen-Shannon, the default, appropriate for the normalized memberships),
+            ``"euclidean"``, or ``"cosine"``.
+        eps: floor applied when normalizing memberships, so that a cell with no
+            assigned factor does not divide by zero.
+
+    Returns:
+        One row per group, summarizing the within-group pairwise distances. Groups
+        with fewer than two cells yield empty distance sets.
     """
     if obs_key not in model.adata.obs.columns:
         raise KeyError(f"obs_key '{obs_key}' not found in model.adata.obs.")
@@ -2737,7 +3029,19 @@ def set_technical_factors(
     if len(technical_factors) > 0:
         model.adata.uns["factor_obs"].loc[technical_factors, "technical"] = True
 
-    model.adata.uns.pop("confident_signatures", None)
+    # The confident-signature cache is deliberately NOT invalidated here. It is
+    # keyed per factor and computed without reference to the technical flags, and
+    # the consumers that care about the flags apply them at read time:
+    # `get_biological_signature` drops flagged factors from the cached lookup, and
+    # `get_technical_signature` / `get_global_signature` read the hierarchies. So
+    # flipping a flag cannot make a cached signature wrong, and dropping the cache
+    # only forced users to re-run `set_confident_signatures` before, for example,
+    # `make_graph(show_signatures=True)`.
+    #
+    # `drop_technical` is a different case and still clears it: that one reassigns
+    # `model.factor_lists`, and the upper-layer signatures are drawn through the
+    # hierarchy (`_hierarchy_gene_scores_draw` reads `factor_lists`), so they go
+    # stale when the set of kept factors changes.
 
     # Propagate upwards: a parent whose children are all technical is technical.
     #
@@ -3913,6 +4217,10 @@ def drop_technical(model: "scDEF") -> None:
             model.make_layercolors(
                 layer_cpal=model.layer_cpal, lightness_mult=model.lightness_mult
             )
+            # Unlike `set_technical_factors`, which only flips flags, this
+            # reassigns `factor_lists`. The upper-layer confident signatures are
+            # drawn through the hierarchy, which reads `factor_lists`, so they
+            # describe a hierarchy that no longer exists and must be rebuilt.
             model.adata.uns.pop("confident_signatures", None)
             model.adata.uns.pop("biological_hierarchy", None)
             model.adata.uns.pop("technical_hierarchy", None)
@@ -4199,6 +4507,29 @@ def gsea(
     ``custom_gene_sets`` so each factor is tested against one combined
     gene-set universe using a single ``gp.enrich`` call. By default, runs
     for all layers and stores per-layer results in ``adata.uns['factor_enrichments']``.
+
+    Args:
+        model: fitted scDEF model with cached confident signatures — run
+            [`set_confident_signatures`][scdef.tl.set_confident_signatures] first.
+        libs: Enrichr library names to fetch and test against. Fetching these
+            requires network access; pass an empty sequence to run fully offline
+            against ``custom_gene_sets`` alone.
+        custom_gene_sets: your own gene sets, merged into the same universe as
+            ``libs``. At least one of the two must be non-empty.
+        organism: organism passed to Enrichr when resolving ``libs``.
+        background_genes: background universe for the enrichment test. Defaults to
+            the genes in the model.
+        layers: layer indices to run. Defaults to every layer.
+        top_genes: use only this many genes per signature, highest-scoring first.
+            Defaults to the whole signature.
+        cutoff: adjusted p-value below which a term is reported as enriched.
+        outdir: directory for gseapy's own output files. Defaults to not writing
+            them.
+
+    Returns:
+        One row per enriched term per factor, concatenated across the requested
+        layers. The same table is stored per layer in
+        ``adata.uns['factor_enrichments']``.
     """
     import gseapy as gp
 

@@ -1,0 +1,14 @@
+/* ===== Navigation tweaks ===== */
+
+/* --- Footer prev/next: section name as heading, page title as subheading --- */
+.md-footer__section {
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--md-footer-fg-color);
+}
+
+.md-footer__link .md-ellipsis {
+  font-weight: 400;
+  opacity: 0.7;
+}

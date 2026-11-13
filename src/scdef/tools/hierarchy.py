@@ -556,6 +556,28 @@ def find_sensible_top_layer(
     as their ``best_parent`` and themselves pass the threshold). The
     transition is accepted only when the fraction of clear parents is at
     least ``min_clear_fraction``.
+
+    Args:
+        model: fitted scDEF model. Diagnostics are computed on the fly if
+            ``adata.uns['factor_obs']`` is missing.
+        n_eff_parents_max: a child is "clear" when its effective number of parents
+            is at most this. Values near 1 mean the child loads on essentially one
+            parent; raise it to accept fuzzier merges.
+        min_best_parent_prob: additionally require a child's best-parent probability
+            to reach this before counting it as clear. Defaults to not requiring it.
+        min_clear_fraction: fraction of a layer's parents that must qualify as clear
+            merge targets for the layer to be accepted as the top.
+        min_clear_children: number of clear best-parent children that on its own
+            qualifies a parent, even when the weighted average misses
+            ``n_eff_parents_max``.
+        ignore_root: skip a width-1 root layer when judging coarseness, since a
+            single root always merges everything and would otherwise always win.
+        use_filtered: judge only the factors the model currently keeps, rather than
+            all fitted factors.
+        store: write the result to ``adata.uns`` for reuse.
+
+    Returns:
+        The chosen layer together with the per-layer evidence behind the choice.
     """
     n_layers = int(model.n_layers)
     visible_n_layers = n_layers
@@ -865,6 +887,29 @@ def find_sensible_top_factors(
     The annotation is computed in ``scdef.tools.factor.factor_diagnostics`` and
     materialized on ``model.adata.uns['factor_obs']`` as
     ``is_sensible_top_factor``.
+
+    The per-factor counterpart of [`find_sensible_top_layer`][scdef.tl.find_sensible_top_layer]:
+    that one picks a layer, this one names the factors within it that carry the
+    merge. The shared thresholds mean the same thing in both.
+
+    Args:
+        model: fitted scDEF model. Diagnostics are computed on the fly if
+            ``adata.uns['factor_obs']`` is missing.
+        n_eff_parents_max: a child counts as clear when its effective number of
+            parents is at most this.
+        min_best_parent_prob: additionally require a child's best-parent probability
+            to reach this. Defaults to not requiring it.
+        min_clear_children: number of clear best-parent children a factor needs to
+            qualify as a sensible top factor.
+        ignore_root: skip a width-1 root layer, which would otherwise always qualify.
+        use_filtered: consider only the factors the model currently keeps.
+        recompute: re-run ``factor_diagnostics`` before reading the annotation,
+            rather than reusing whatever is cached.
+        store: write the refreshed annotation back to ``adata.uns['factor_obs']``.
+            Set False to leave the stored diagnostics untouched.
+
+    Returns:
+        Names of the factors flagged ``is_sensible_top_factor``.
     """
     if bool(recompute) or "factor_obs" not in model.adata.uns:
         from scdef.tools.factor import factor_diagnostics
@@ -888,9 +933,12 @@ def find_sensible_top_factors(
         ignore_root=ignore_root,
         use_filtered=use_filtered,
     )
-    model.adata.uns["factor_obs"] = factor_obs
-    if "factor_obs_full" in model.adata.uns:
-        model.adata.uns["factor_obs_full"] = factor_obs.copy()
+    # `store` was previously accepted and never read, so store=False silently wrote
+    # anyway. Honoured here, matching find_sensible_top_layer.
+    if store:
+        model.adata.uns["factor_obs"] = factor_obs
+        if "factor_obs_full" in model.adata.uns:
+            model.adata.uns["factor_obs_full"] = factor_obs.copy()
     top_factors = factor_obs.index[
         factor_obs["is_sensible_top_factor"].fillna(False).astype(bool)
     ].astype(str)

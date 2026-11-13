@@ -248,7 +248,7 @@ def get_global_factors(
     n_eff_parents_min: float = 1.5,
     exclude_technical: bool = True,
 ) -> List[str]:
-    """Return L{layer_idx} factors shared across lineages (high effective parents).
+    """Return the factors at ``layer_idx`` shared across lineages (high effective parents).
 
     Uses ``avg_n_eff_parents`` for layer 0 when available; otherwise local
     ``n_eff_parents``. Factors with score >= ``n_eff_parents_min`` are returned.

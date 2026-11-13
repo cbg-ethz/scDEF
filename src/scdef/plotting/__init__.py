@@ -1,6 +1,8 @@
 """Plotting utilities for scDEF.
 """
 
+from ._colors import FACTOR_CMAP, GENE_CMAP
+
 from .graph import (
     make_graph,
     technical_hierarchy,

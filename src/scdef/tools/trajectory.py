@@ -68,6 +68,24 @@ def _adjacent_layer_weights(
     return w_full[np.ix_(parent_kept, child_kept)]
 
 
+def _strongest_parent_maps(model: "scDEF") -> Dict[int, np.ndarray]:
+    """For each layer ``k`` below the top, the parent slot (largest ``W``) of each child slot."""
+    maps: Dict[int, np.ndarray] = {}
+    for k in range(model.n_layers - 1):
+        w = _adjacent_layer_weights(model, k)
+        maps[k] = np.argmax(w, axis=0) if w.size else np.zeros(0, dtype=int)
+    return maps
+
+
+def _ancestor_slot(
+    parent_maps: Dict[int, np.ndarray], layer_from: int, slot: int, layer_to: int
+) -> int:
+    """Slot of the ancestor in ``layer_to`` of factor ``slot`` in ``layer_from``, along strongest parents."""
+    for k in range(layer_from, layer_to):
+        slot = int(parent_maps[k][slot])
+    return slot
+
+
 def build_differentiation_paths(
     model: "scDEF",
     rel_parent_weight: float = 0.25,
@@ -82,6 +100,21 @@ def build_differentiation_paths(
     adaptive filtering:
 
     ``w >= max(abs_parent_weight, rel_parent_weight * max_parent_weight_for_child)``.
+
+    Args:
+        model: fitted scDEF model with at least two layers. A single-layer model
+            stores an empty path set and returns ``[]``.
+        rel_parent_weight: keep a parent link whose weight is at least this fraction
+            of the child's strongest link. This adapts per child, so a child with one
+            dominant parent yields one path while an ambiguous child branches.
+        abs_parent_weight: absolute floor on a parent link's weight, applied on top of
+            the relative rule. The default of 0.0 leaves the relative rule in charge.
+        max_paths_per_leaf: cap on the paths generated from each layer-0 factor,
+            bounding the branching when many parents survive filtering.
+        key_added: key in ``adata.uns`` the paths and their parameters are stored under.
+
+    Returns:
+        One list of factor names per path, ordered from the top layer down to the leaf.
     """
     if model.n_layers < 2:
         model.adata.uns[key_added] = {
@@ -187,8 +220,33 @@ def build_transition_paths(
 ) -> List[List[str]]:
     """Build transition paths on a soft inter-layer factor graph.
 
+    Unlike [`build_differentiation_paths`][scdef.tl.build_differentiation_paths], which only
+    walks upward, this treats the inter-layer graph as undirected, so a path may rise
+    through a shared parent and descend again — the shape a transition between two
+    states takes.
+
     De novo mode: ``sources=None`` and ``targets=None`` -> all terminal pairs.
     Targeted mode: provide both ``sources`` and ``targets`` factor-name lists.
+
+    Args:
+        model: fitted scDEF model.
+        rel_parent_weight: keep an edge whose weight is at least this fraction of the
+            child's strongest link.
+        abs_parent_weight: absolute floor on an edge weight, applied on top of the
+            relative rule.
+        max_path_len: maximum number of nodes in a path, at least 2. Longer limits
+            allow routes through more intermediate layers.
+        max_paths_per_pair: cap on paths kept per source/target pair, shortest first
+            (through the lowest common ancestor), then by the product of edge weights.
+        terminal_layer_idx: layer whose factors act as the path endpoints, layer 0
+            (the finest) by default.
+        sources: factor names to start from. Must be given together with ``targets``;
+            leave both unset to use every pair of terminal factors.
+        targets: factor names to end at, paired with ``sources``.
+        key_added: key in ``adata.uns`` the paths and their parameters are stored under.
+
+    Returns:
+        One list of factor names per path, ordered from source to target.
     """
     if terminal_layer_idx < 0 or terminal_layer_idx >= model.n_layers:
         raise ValueError("terminal_layer_idx out of bounds.")
@@ -279,7 +337,10 @@ def build_transition_paths(
             for a, b in zip(p[:-1], p[1:]):
                 prod *= float(edge_w.get(frozenset((a, b)), 1e-12))
             scored.append((prod, p))
-        scored.sort(key=lambda x: x[0], reverse=True)
+        # Shortest first: the path through the lowest common ancestor is the specific one
+        # (a higher apex covers more of the data); the weight product breaks ties. Edge
+        # weights can exceed 1, so ranking by the product alone favoured longer paths.
+        scored.sort(key=lambda x: (len(x[1]), -x[0]))
         keep = scored[: int(max_paths_per_pair)]
 
         for prod, p in keep:
@@ -342,6 +403,41 @@ def score_paths(
       - ``adata.obsm[f"{prefix}_positions"]`` (n_cells, n_paths)
       - ``adata.obsm[f"{prefix}_affinities"]`` (n_cells, n_paths)
       - per-path summary table in ``adata.uns[paths_key]["path_stats"]``.
+
+    *Position* is how far along a path a cell sits; *affinity* is how well the path
+    describes that cell at all. Read them together — a position is only meaningful
+    for a cell whose affinity is high.
+
+    Differentiation paths (root to leaf): the position averages the coordinates of
+    all path nodes, weighted by the cell's scores on them, and the affinity is the
+    share of the cell's total score that falls on the path.
+
+    Transition paths (a terminal factor, up to a shared ancestor, down to another
+    terminal factor): the position uses only the path's terminal-layer nodes, the
+    source at 0 and the target at 1, weighted by the cell's normalised weights on
+    them, because an ancestor carries weight for every cell under it and would pull
+    every cell to the middle. The affinity is the cell's normalised weight on the
+    path's apex (its node in the highest layer), the lineage that connects the two
+    states, read through the tree: the share of the cell's terminal-layer weight on
+    the terminal factors whose strongest-parent chain reaches the apex, as
+    [`make_graph`][scdef.pl.make_graph] draws it. It lies in ``[0, 1]`` whatever the
+    length of the path. Cells in other factors below the apex, such as intermediate
+    states, keep a high affinity and are placed by their remaining weight on the
+    source and target. A path through a high apex covers much of the data, so the
+    shortest path between two states is usually the informative one.
+
+    Args:
+        model: fitted scDEF model.
+        paths_key: ``adata.uns`` key holding paths built by
+            [`build_transition_paths`][scdef.tl.build_transition_paths] or
+            [`build_differentiation_paths`][scdef.tl.build_differentiation_paths].
+        key_added: prefix for the two ``obsm`` matrices written. Defaults to
+            ``paths_key``.
+        normalize_per_layer: scale factor scores within each layer before scoring, so
+            that layers with larger raw scores do not dominate a path's position.
+        min_affinity: floor in ``[0, 1]`` below which a cell is treated as off the
+            path rather than assigned a position on it.
+        eps: small constant guarding the normalizations against division by zero.
     """
     if key_added is None:
         key_added = str(paths_key)
@@ -372,6 +468,14 @@ def score_paths(
         )
         for i in range(model.n_layers)
     }
+    # Transition paths always use weights normalised within each layer (shares).
+    share_mats = {
+        i: _layer_score_matrix(
+            model, layer_idx=i, normalize_per_layer=True, eps=float(eps)
+        )
+        for i in range(model.n_layers)
+    }
+    parent_maps = _strongest_parent_maps(model)
     total_mass = np.zeros(n_cells, dtype=float)
     for i in range(model.n_layers):
         total_mass += np.sum(layer_mats[i], axis=1)
@@ -397,15 +501,45 @@ def score_paths(
             slot_idx = int(slot_maps[layer_idx][n])
             node_scores.append(layer_mats[layer_idx][:, slot_idx])
         s = np.vstack(node_scores).T  # (n_cells, path_len)
-
-        path_mass = np.sum(s, axis=1)
-        affinity = np.clip(path_mass / total_mass, 0.0, 1.0)
-        aff_mat[:, p_idx] = affinity
-
         coords = np.linspace(0.0, 1.0, num=s.shape[1], dtype=float)
-        denom = np.clip(path_mass, float(eps), None)
-        w = s / denom[:, None]
-        pos = np.sum(w * coords[None, :], axis=1)
+        layers_of = [int(node_meta[n]["layer_idx"]) for n in nodes]
+        term_idx = [k for k, l in enumerate(layers_of) if l == min(layers_of)]
+        apex_idx = [k for k, l in enumerate(layers_of) if l == max(layers_of)]
+
+        if str(pobj.get("type", "")) == "transition" and len(term_idx) >= 2:
+            shares = np.vstack(
+                [
+                    share_mats[layers_of[k]][:, slot_maps[layers_of[k]][nodes[k]]]
+                    for k in range(len(nodes))
+                ]
+            ).T
+            t_layer, a_layer = min(layers_of), max(layers_of)
+            apex_slots = {int(slot_maps[a_layer][nodes[k]]) for k in apex_idx}
+            below_apex = np.array(
+                [
+                    _ancestor_slot(parent_maps, t_layer, j, a_layer) in apex_slots
+                    for j in range(share_mats[t_layer].shape[1])
+                ],
+                dtype=bool,
+            )
+            affinity = np.clip(
+                np.sum(share_mats[t_layer][:, below_apex], axis=1), 0.0, 1.0
+            )
+            term = shares[:, term_idx]
+            term_mass = np.sum(term, axis=1)
+            tc = coords[term_idx]
+            tc = (tc - tc.min()) / max(float(tc.max() - tc.min()), float(eps))
+            pos = np.sum(term * tc[None, :], axis=1) / np.clip(
+                term_mass, float(eps), None
+            )
+            pos[term_mass <= float(eps)] = np.nan
+        else:
+            path_mass = np.sum(s, axis=1)
+            affinity = np.clip(path_mass / total_mass, 0.0, 1.0)
+            denom = np.clip(path_mass, float(eps), None)
+            w = s / denom[:, None]
+            pos = np.sum(w * coords[None, :], axis=1)
+        aff_mat[:, p_idx] = affinity
         pos[affinity < float(min_affinity)] = np.nan
         pos_mat[:, p_idx] = pos
 
@@ -442,9 +576,28 @@ def multilevel_paga(
     reuse_pos: bool = True,
     layout: str = "fa",
     random_seed: int = 0,
-    **paga_kwargs,
+    **paga_kwargs: Any,
 ) -> None:
-    """Compute and cache multilevel PAGA results for plotting."""
+    """Compute and cache multilevel PAGA results for plotting.
+
+    Runs PAGA once per layer over a single shared neighbourhood graph, so the
+    coarse and fine graphs describe the same cells at different resolutions. Plot
+    the cached result with [`scdef.pl.multilevel_paga`][scdef.pl.multilevel_paga].
+
+    Args:
+        model: fitted scDEF model, annotated so that ``adata.obs`` carries the layer
+            assignment columns.
+        neighbors_rep: ``adata.obsm`` representation the neighbourhood graph is built
+            from. The layer-0 scores by default.
+        layers: layer indices to run, coarsest first. Defaults to every layer with
+            more than one factor — a single-factor layer has no graph to draw.
+        reuse_pos: initialize each layer's layout from the previous, coarser one, so
+            a group stays in roughly the same place as resolution increases and the
+            layers can be read side by side.
+        layout: graph layout passed to scanpy, ``"fa"`` (ForceAtlas2) by default.
+        random_seed: seed for the layout, so repeated runs place nodes identically.
+        **paga_kwargs: forwarded to ``scanpy.tl.paga``.
+    """
     if layers is None:
         layers = [
             i
